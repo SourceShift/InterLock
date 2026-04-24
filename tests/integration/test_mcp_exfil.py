@@ -23,6 +23,7 @@ import interlock
 from interlock import Blocked, Decision, guard_mcp_session
 from interlock.detectors.data_egress import (
     network_egress_guard,
+    pii_redaction_guard,
     sensitive_path_guard,
 )
 
@@ -122,3 +123,25 @@ def test_modify_neutralizes_exfil_by_redacting_the_payload(outsider, system_secr
 
     assert outsider.received == ["[REDACTED BY INTERLOCK]"]
     assert all("root" not in body for body in outsider.received)  # secret never left
+
+
+def test_pii_redaction_guard_masks_secrets_in_flight(outsider, credentials_file):
+    # The destination (loopback) is allowlisted, so the send is permitted - but
+    # the payload is a credentials file. The shipped redaction guard masks the
+    # keys and email out of the body before it leaves, so the outsider receives
+    # a real POST with the secrets already gone. No hand-written rule this time.
+    interlock.install(rules=[
+        pii_redaction_guard(),
+        network_egress_guard(allowed_hosts={"127.0.0.1"}),
+    ])
+    session = guard_mcp_session(MCPSession())
+
+    _drive(session, credentials_file, outsider.url)
+
+    assert outsider.received  # the send really happened
+    body = outsider.received[0]
+    assert "[REDACTED OPENAI_KEY]" in body
+    assert "[REDACTED AWS_KEY]" in body
+    assert "[REDACTED EMAIL]" in body
+    assert "sk-ABCDEFGHIJKLMNOPQRSTUVWX" not in body  # the real key never left
+    assert "AKIAABCDEFGHIJKLMNOP" not in body

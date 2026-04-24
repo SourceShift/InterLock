@@ -1,4 +1,8 @@
-from .data_egress import network_egress_guard, sensitive_path_guard
+from .data_egress import (
+    network_egress_guard,
+    pii_redaction_guard,
+    sensitive_path_guard,
+)
 from .execution_guard import execution_guard
 from .jailbreak import jailbreak_detector
 from .prompt_injection import prompt_injection_detector
@@ -12,4 +16,5 @@ __all__ = [
     "tool_denylist",
     "network_egress_guard",
     "sensitive_path_guard",
+    "pii_redaction_guard",
 ]

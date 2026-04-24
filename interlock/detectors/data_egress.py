@@ -18,13 +18,20 @@ attacker host. Only a guard sitting on the action sees it.
   the handful of paths that are secrets by definition (``/etc/passwd``, SSH and
   cloud credentials, ``.env``), and stay silent on everything else.
 
-Both decide on the action name plus its arguments, before the effect happens,
-and both return None (no opinion) when they see nothing to object to.
+- :func:`pii_redaction_guard` is the *modify* case, not a block: an outbound
+  action may go through, but any PII or secret in its payload (emails, API
+  tokens, private keys, card numbers) is masked out first. The exfiltration is
+  neutralised without failing the send, which is the allow/modify/block
+  spectrum working end to end rather than only its hard edge.
+
+All three decide on the action name plus its arguments, before the effect
+happens, and all return None (no opinion) when they see nothing to object to.
 """
 from __future__ import annotations
 
 import os
-from typing import Any, Iterable, List, Optional, Set
+import re
+from typing import Any, Callable, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import urlparse
 
 from ..enforce import Decision
@@ -33,6 +40,7 @@ from ..policy.engine import Rule
 
 NETWORK_EGRESS_POLICY_ID = "network_egress"
 SENSITIVE_PATH_POLICY_ID = "sensitive_path"
+PII_REDACTION_POLICY_ID = "pii_redaction"
 
 # Action names that send data off the process. Names that are unambiguously
 # network egress; bare verbs like "get"/"post" are deliberately excluded so the
@@ -63,6 +71,17 @@ DEFAULT_PATH_KEYS = (
     "path", "file", "filename", "filepath", "file_path",
     "src", "source", "target", "location",
 )
+
+# Argument keys that carry a message body / payload the guard scans for PII.
+# Destination keys (url, to, ...) are deliberately excluded: redacting the
+# recipient would break the send, and the recipient is the egress guard's job.
+DEFAULT_CONTENT_KEYS = (
+    "data", "body", "payload", "content", "text",
+    "message", "msg", "value", "attachment", "attachments",
+)
+
+# The mask a redacted match is replaced with; ``{kind}`` names what was found.
+DEFAULT_REDACTION_MARKER = "[REDACTED {kind}]"
 
 # Paths that are secrets by definition. "~" is expanded per call.
 DEFAULT_SENSITIVE_PATHS = (
@@ -214,5 +233,133 @@ def sensitive_path_guard(
                     policy_id=SENSITIVE_PATH_POLICY_ID,
                 )
         return None
+
+    return rule
+
+
+# A PII pattern: a label, the regex that finds it, and an optional validator that
+# confirms a raw match before it is masked (used to Luhn-check card numbers so
+# the pattern does not clobber every long digit string).
+PiiPattern = Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]]]
+
+
+def _luhn_ok(candidate: str) -> bool:
+    """True if the digits in ``candidate`` pass the Luhn checksum.
+
+    Card numbers pass; arbitrary 13-to-19-digit identifiers almost never do, so
+    this keeps the card pattern from redacting ordinary long numbers.
+    """
+    digits = [int(c) for c in candidate if c.isdigit()]
+    if len(digits) < 13:
+        return False
+    checksum = 0
+    parity = len(digits) % 2
+    for i, digit in enumerate(digits):
+        if i % 2 == parity:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        checksum += digit
+    return checksum % 10 == 0
+
+
+# High-precision defaults: each is either structurally unambiguous (a vendor key
+# prefix, a PEM header) or validated (the card number). Callers pass their own
+# tuple to add house-specific secret formats.
+DEFAULT_PII_PATTERNS: Tuple[PiiPattern, ...] = (
+    ("PRIVATE_KEY", re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+        re.DOTALL), None),
+    ("AWS_KEY", re.compile(r"\bAKIA[0-9A-Z]{16}\b"), None),
+    ("OPENAI_KEY", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), None),
+    ("GITHUB_TOKEN", re.compile(r"\bghp_[A-Za-z0-9]{36}\b"), None),
+    ("SLACK_TOKEN", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), None),
+    ("BEARER_TOKEN", re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{20,}"), None),
+    ("SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), None),
+    ("EMAIL", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"), None),
+    ("CREDIT_CARD", re.compile(r"\b\d(?:[ -]?\d){12,18}\b"), _luhn_ok),
+)
+
+
+def _redact_text(
+    text: str, patterns: Sequence[PiiPattern], marker: str
+) -> Tuple[str, bool]:
+    """Mask every PII match in ``text``; return the new text and whether any hit.
+
+    A pattern with a validator only masks matches the validator accepts, so an
+    invalid candidate is left untouched rather than falsely redacted.
+    """
+    hit = False
+
+    for kind, regex, validator in patterns:
+        replacement = marker.format(kind=kind)
+
+        def _sub(match: "re.Match[str]") -> str:
+            nonlocal hit
+            if validator is not None and not validator(match.group(0)):
+                return match.group(0)
+            hit = True
+            return replacement
+
+        text = regex.sub(_sub, text)
+
+    return text, hit
+
+
+def pii_redaction_guard(
+    *,
+    actions: Iterable[str] = DEFAULT_EGRESS_ACTIONS,
+    content_keys: Iterable[str] = DEFAULT_CONTENT_KEYS,
+    patterns: Sequence[PiiPattern] = DEFAULT_PII_PATTERNS,
+    marker: str = DEFAULT_REDACTION_MARKER,
+    reason: Optional[str] = None,
+) -> Rule:
+    """Rule: mask PII/secrets out of an outbound action's payload, don't block it.
+
+    For an action in ``actions`` (network egress by default), every payload field
+    in ``content_keys`` is scanned; any match of ``patterns`` (emails, vendor API
+    keys, private-key blocks, Luhn-valid card numbers) is replaced with
+    ``marker``. When something was masked the rule returns a MODIFY carrying only
+    the rewritten fields, so the send proceeds with the secret stripped. When the
+    payload is clean, or the action is not an egress action, it returns None.
+
+    This is deliberately the softer sibling of :func:`network_egress_guard`: the
+    allowlist decides *whether* data may leave, this decides *what* may be in it.
+    It masks structured secrets inside an otherwise legitimate message; it is not
+    a substitute for the allowlist against a raw file dump to an attacker host.
+    """
+    act = _as_name_set(actions)
+    keys = tuple(content_keys)
+
+    def _redact_value(value: Any) -> Tuple[Any, bool]:
+        if isinstance(value, str):
+            return _redact_text(value, patterns, marker)
+        if isinstance(value, (list, tuple)):
+            out: List[Any] = []
+            hit = False
+            for item in value:
+                new_item, item_hit = _redact_value(item)
+                hit = hit or item_hit
+                out.append(new_item)
+            return (out, hit) if hit else (value, False)
+        return value, False
+
+    def rule(event: SensorEvent) -> Optional[Decision]:
+        if event.action not in act or not isinstance(event.args, dict):
+            return None
+        changed: dict = {}
+        for key in keys:
+            if key not in event.args:
+                continue
+            new_value, hit = _redact_value(event.args[key])
+            if hit:
+                changed[key] = new_value
+        if not changed:
+            return None
+        return Decision.modify(
+            changed,
+            reason or "masked PII/secret from outbound '{}'".format(event.action),
+            policy_id=PII_REDACTION_POLICY_ID,
+        )
 
     return rule

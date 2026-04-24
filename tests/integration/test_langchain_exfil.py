@@ -17,6 +17,7 @@ import interlock
 from interlock import Blocked, Decision, guard_langchain_tools
 from interlock.detectors.data_egress import (
     network_egress_guard,
+    pii_redaction_guard,
     sensitive_path_guard,
 )
 
@@ -127,3 +128,23 @@ def test_modify_redacts_payload_through_langchain(outsider, system_secret_path):
 
     assert outsider.received == ["[REDACTED BY INTERLOCK]"]
     assert all("root" not in body for body in outsider.received)
+
+
+def test_pii_redaction_guard_masks_secrets_through_langchain(outsider, credentials_file):
+    # The shipped redaction guard, driven through real langchain_core tools:
+    # the allowlisted send goes out with the credentials masked in place.
+    interlock.install(rules=[
+        pii_redaction_guard(),
+        network_egress_guard(allowed_hosts={"127.0.0.1"}),
+    ])
+    guarded = guard_langchain_tools(_real_tools())
+
+    _drive(guarded, credentials_file, outsider.url)
+
+    assert outsider.received
+    body = outsider.received[0]
+    assert "[REDACTED OPENAI_KEY]" in body
+    assert "[REDACTED AWS_KEY]" in body
+    assert "[REDACTED EMAIL]" in body
+    assert "sk-ABCDEFGHIJKLMNOPQRSTUVWX" not in body
+    assert "AKIAABCDEFGHIJKLMNOP" not in body

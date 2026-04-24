@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from incident import Outsider
+from incident import CREDENTIALS_BLOB, Outsider
 
 
 @pytest.fixture
@@ -23,3 +23,11 @@ def system_secret_path():
     if not os.access(path, os.R_OK):
         pytest.skip("/etc/passwd is not readable in this environment")
     return path
+
+
+@pytest.fixture
+def credentials_file(tmp_path):
+    """A real on-disk credentials file holding structured, maskable secrets."""
+    path = tmp_path / "credentials.env"
+    path.write_text(CREDENTIALS_BLOB, encoding="utf-8")
+    return str(path)
