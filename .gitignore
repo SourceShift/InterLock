@@ -1,0 +1,23 @@
+# --- internal build apparatus (NOT part of the OSS SDK) ---
+# The RSI harness references private lane scripts (~/ps/scripts/cl_*.sh) and
+# internal strategy. The public repo is the interlock/ package plus tests/.
+rsi/
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# --- os / editor ---
+.DS_Store
+*.swp

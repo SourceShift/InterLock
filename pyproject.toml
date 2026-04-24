@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "interlock-guard"
+version = "0.0.1"
+description = "In-process guardrails for AI agents: hook tool/MCP/model calls and block or modify a bad action before it runs."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Amir Khakshour" }]
+keywords = ["ai", "agents", "guardrails", "mcp", "security", "runtime", "policy"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["wrapt>=1.15"]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["interlock*"]
