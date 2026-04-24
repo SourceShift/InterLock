@@ -1,0 +1,114 @@
+"""M1 keystone: intercept MCP tool calls in-process, block before effect.
+
+An agent that talks to MCP servers makes every tool call through an MCP client
+session: ``session.call_tool(name, arguments)``. :func:`guard_mcp_session` wraps
+that one method so each outbound call is turned into a :class:`SensorEvent`, run
+through the policy engine, and blocked or modified BEFORE it reaches the server.
+No gateway, no proxy, no per-tool decorator. This is what makes interlock a
+runtime guard rather than an opt-in helper: it sees the action the agent
+actually takes, at the point the action happens.
+
+It is dependency-free on purpose. It duck-types on ``.call_tool`` and never
+imports the MCP SDK, so it wraps any client exposing that method and is testable
+with a fake session. The real ``mcp`` package drops in unchanged.
+
+:func:`enforce_tool_call` is the transport-agnostic core: give it a tool name and
+an arguments dict and it returns the arguments to actually use (rewritten by a
+MODIFY verdict) or raises :class:`Blocked`. A LangChain / model-SDK adapter in a
+later milestone funnels through the same function.
+"""
+from __future__ import annotations
+
+import asyncio
+import functools
+import logging
+from typing import Any, Callable, Dict, Optional
+
+from .._runtime import get_engine
+from ..context import current_principal, current_span
+from ..enforce import Blocked, Verdict
+from ..event import SensorEvent
+from ..policy.engine import PolicyEngine
+
+_log = logging.getLogger("interlock")
+
+
+def enforce_tool_call(
+    action: str,
+    arguments: Optional[Dict[str, Any]],
+    *,
+    engine: Optional[PolicyEngine] = None,
+    enforcement: str = "blocking",
+    principal: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Decide on one tool call and enforce the verdict before it runs.
+
+    Returns the arguments to actually use: unchanged on ALLOW, rewritten on
+    MODIFY (``modified_args`` merged in). Raises :class:`Blocked` on BLOCK under
+    the default ``enforcement="blocking"``. Under ``enforcement="monitor"`` it
+    records the would-be decision and never intervenes.
+    """
+    args: Dict[str, Any] = dict(arguments or {})
+    event = SensorEvent(
+        action=action,
+        args=args,
+        principal=principal or current_principal(),
+        span_id=current_span(),
+    )
+    decision = (engine or get_engine()).evaluate(event)
+
+    if decision.verdict == Verdict.ALLOW or enforcement == "monitor":
+        _log.debug(
+            "mcp action=%s verdict=%s observed=%s",
+            action, decision.verdict.name, enforcement == "monitor",
+        )
+        return args
+    if decision.verdict == Verdict.BLOCK:
+        _log.debug("mcp action=%s BLOCK reason=%s", action, decision.reason)
+        raise Blocked(decision, action)
+    if decision.verdict == Verdict.MODIFY and decision.modified_args:
+        args.update(decision.modified_args)
+    return args
+
+
+def guard_mcp_session(
+    session: Any,
+    *,
+    engine: Optional[PolicyEngine] = None,
+    enforcement: str = "blocking",
+    principal: Optional[str] = None,
+) -> Any:
+    """Wrap an MCP client session so every ``call_tool`` is guarded in-process.
+
+    Call once on a freshly created session. Works whether ``call_tool`` is sync
+    or async. Returns the same session for convenience::
+
+        session = guard_mcp_session(await make_client_session())
+        await session.call_tool("write_file", {"path": "/etc/passwd"})  # Blocked
+
+    ``engine`` defaults to the process engine set by :func:`interlock.install`.
+    """
+    original: Callable[..., Any] = session.call_tool
+
+    @functools.wraps(original)
+    async def async_wrapper(name: str, arguments: Optional[Dict[str, Any]] = None,
+                            *rest: Any, **kw: Any) -> Any:
+        safe = enforce_tool_call(
+            name, arguments, engine=engine,
+            enforcement=enforcement, principal=principal,
+        )
+        return await original(name, safe, *rest, **kw)
+
+    @functools.wraps(original)
+    def sync_wrapper(name: str, arguments: Optional[Dict[str, Any]] = None,
+                     *rest: Any, **kw: Any) -> Any:
+        safe = enforce_tool_call(
+            name, arguments, engine=engine,
+            enforcement=enforcement, principal=principal,
+        )
+        return original(name, safe, *rest, **kw)
+
+    session.call_tool = (
+        async_wrapper if asyncio.iscoroutinefunction(original) else sync_wrapper
+    )
+    return session
