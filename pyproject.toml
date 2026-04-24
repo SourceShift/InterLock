@@ -22,7 +22,8 @@ dependencies = []
 
 [project.optional-dependencies]
 mcp = ["wrapt>=1.15"]
-dev = ["pytest>=7"]
+langchain = ["langchain-core>=0.3,<0.4"]
+dev = ["pytest>=7", "langchain-core>=0.3,<0.4"]
 
 [tool.setuptools.packages.find]
 include = ["interlock*"]

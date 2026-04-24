@@ -14,6 +14,7 @@ from .context import current_principal, current_span, new_span, set_principal, s
 from .enforce import Blocked, Decision, Verdict
 from .event import SensorEvent
 from .interceptors.decorator import guard, monitor
+from .interceptors.langchain import guard_langchain_tools
 from .interceptors.mcp import enforce_tool_call, guard_mcp_session
 from .policy.engine import PolicyEngine, Rule, deny_tool, deny_when
 
@@ -25,6 +26,7 @@ __all__ = [
     "monitor",
     "guard_mcp_session",
     "enforce_tool_call",
+    "guard_langchain_tools",
     "PolicyEngine",
     "Rule",
     "deny_tool",
