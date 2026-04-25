@@ -18,6 +18,12 @@ htmlcov/
 .venv/
 venv/
 
+# --- rust (optional native accelerator) ---
+rust/target/
+# a locally built extension dropped on the import path for development
+# (the canonical build is `cd rust && maturin develop`)
+*.so
+
 # --- os / editor ---
 .DS_Store
 *.swp
