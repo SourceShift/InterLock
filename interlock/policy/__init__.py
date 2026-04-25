@@ -1,6 +1,8 @@
 from .engine import PolicyEngine, Rule, deny_tool, deny_when
 from .scopes import (
+    SCOPE_BACKEND,
     Binding,
+    PyScopeTree,
     ScopedEngine,
     ScopeRegistry,
     ScopeTree,
@@ -17,6 +19,8 @@ __all__ = [
     "ScopedEngine",
     "ScopeRegistry",
     "ScopeTree",
+    "PyScopeTree",
+    "SCOPE_BACKEND",
     "Template",
     "principal_scope",
 ]

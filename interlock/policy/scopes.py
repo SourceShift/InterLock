@@ -72,12 +72,17 @@ class Binding:
     enabled: bool = True
 
 
-class ScopeTree:
+class PyScopeTree:
     """Sparse store of bindings by scope path, with per-node versions.
 
     Only nodes that carry bindings exist. Millions of leaves are fine because
     unbound intermediate nodes cost nothing: resolution reads whatever bindings
     happen to sit on the prefixes of a leaf's path and skips the rest.
+
+    This is the pure-Python reference backend. It is always importable and needs
+    no toolchain. When the optional native crate ``interlock_scopes`` is built
+    and installed, ``ScopeTree`` below is rebound to it and this class stays
+    available as the fallback and as the parity oracle in tests.
     """
 
     def __init__(self) -> None:
@@ -130,6 +135,29 @@ class ScopeTree:
         return {t: p for t, p in eff.items() if isinstance(p, dict)}
 
 
+# --- backend selection -------------------------------------------------------
+# The storage layer is the one place memory scales with subject count: millions
+# of bound nodes mean millions of Python tuples, dicts, and Binding instances,
+# each paying Python's per-object header tax. The optional native crate
+# ``interlock_scopes`` reimplements exactly this class (interned segment ids,
+# packed nodes, params as a compact value enum) and materializes Python objects
+# only for the one resolved leaf on a cache miss. Everything above the tree, the
+# ``ScopeRegistry`` cache and the ``ScopedEngine`` dispatch and the
+# ``evaluate(event) -> Decision`` seam, is unchanged: the native tree satisfies
+# the same ``bind`` / ``path_versions`` / ``resolve`` surface.
+try:
+    from interlock_scopes import ScopeTree as _NativeScopeTree  # type: ignore[import-not-found]
+except Exception:  # not built, or build/ABI mismatch: fall back to pure Python
+    _NativeScopeTree = None
+
+if _NativeScopeTree is not None:
+    ScopeTree = _NativeScopeTree
+    SCOPE_BACKEND = "rust"
+else:
+    ScopeTree = PyScopeTree
+    SCOPE_BACKEND = "python"
+
+
 class ScopeRegistry:
     """Compile a leaf's effective policy into a ``PolicyEngine`` once, cache it,
     and recompile only when a node on its path changes version.
@@ -142,7 +170,7 @@ class ScopeRegistry:
 
     def __init__(
         self,
-        tree: ScopeTree,
+        tree: PyScopeTree,  # or the duck-compatible native interlock_scopes.ScopeTree
         templates: Mapping[str, Template],
         *,
         maxsize: int = 10000,
