@@ -1,0 +1,16 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "interlock-scopes"
+version = "0.0.1"
+description = "Optional native accelerator for interlock policy scopes."
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+
+[tool.maturin]
+# Pure-Rust crate (no Python source of its own): the module name is the Cargo
+# lib name, so this installs an importable top-level `interlock_scopes`.
+bindings = "pyo3"
+strip = true

@@ -1,0 +1,23 @@
+[package]
+name = "interlock_scopes"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+description = "Native storage backend for interlock hierarchical policy scopes (memory-optimized ScopeTree)."
+
+[lib]
+# The Python import name is derived from this: `import interlock_scopes`.
+name = "interlock_scopes"
+# cdylib is required to produce a shared library Python can import.
+crate-type = ["cdylib"]
+
+[dependencies.pyo3]
+version = "0.24"
+# abi3-py39 builds against the stable ABI, minimum Python 3.9, matching the
+# interlock-guard package's requires-python. One wheel then loads on 3.9+.
+features = ["extension-module", "abi3-py39"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
