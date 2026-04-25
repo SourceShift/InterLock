@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from . import brace
 from ._runtime import get_engine, set_engine
+from .brace import Sandbox, SandboxProfile, compile_profile
 from .context import current_principal, current_span, new_span, set_principal, span
 from .enforce import Blocked, Decision, Verdict
 from .event import SensorEvent
@@ -35,6 +37,10 @@ __all__ = [
     "Verdict",
     "Blocked",
     "SensorEvent",
+    "brace",
+    "Sandbox",
+    "SandboxProfile",
+    "compile_profile",
     "span",
     "new_span",
     "current_span",
