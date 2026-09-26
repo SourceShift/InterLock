@@ -12,7 +12,7 @@ same policy.
 
 ```mermaid
 flowchart LR
-    agent([agent]) --> call["tool / MCP call"]
+    agent([agent]) --> toolcall["tool / MCP call"]
 
     subgraph inproc["in-process: what interlock sees"]
         direction LR
@@ -27,7 +27,7 @@ flowchart LR
         brace["BRACE sandbox"] --> backends["bubblewrap · Seatbelt · soft"]
     end
 
-    call --> interceptors
+    toolcall --> interceptors
     interceptors --> brace
     engine --> brace
 ```
