@@ -7,6 +7,7 @@ from .scopes import (
     ScopeRegistry,
     ScopeTree,
     Template,
+    delegation_chain,
     principal_scope,
 )
 
@@ -23,4 +24,5 @@ __all__ = [
     "SCOPE_BACKEND",
     "Template",
     "principal_scope",
+    "delegation_chain",
 ]

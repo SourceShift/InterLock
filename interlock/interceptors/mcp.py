@@ -25,7 +25,7 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 from .._runtime import get_engine
-from ..context import current_principal, current_span
+from ..context import current_parent_principal, current_principal, current_span
 from ..enforce import Blocked, Verdict
 from ..event import SensorEvent
 from ..policy.engine import PolicyEngine
@@ -54,6 +54,7 @@ def enforce_tool_call(
         args=args,
         principal=principal or current_principal(),
         span_id=current_span(),
+        parent_principal=current_parent_principal(),
     )
     decision = (engine or get_engine()).evaluate(event)
 

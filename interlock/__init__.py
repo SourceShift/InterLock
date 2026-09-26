@@ -12,7 +12,14 @@ from typing import List, Optional
 from . import brace
 from ._runtime import get_engine, set_engine
 from .brace import Sandbox, SandboxProfile, compile_profile
-from .context import current_principal, current_span, new_span, set_principal, span
+from .context import (
+    current_parent_principal,
+    current_principal,
+    current_span,
+    new_span,
+    set_principal,
+    span,
+)
 from .enforce import Blocked, Decision, Verdict
 from .event import SensorEvent
 from .interceptors.decorator import guard, monitor
@@ -45,6 +52,7 @@ __all__ = [
     "new_span",
     "current_span",
     "current_principal",
+    "current_parent_principal",
     "set_principal",
     "set_engine",
     "get_engine",

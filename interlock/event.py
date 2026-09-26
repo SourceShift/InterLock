@@ -22,3 +22,4 @@ class SensorEvent:
     principal: Optional[str] = None
     span_id: Optional[str] = None
     ts: float = field(default_factory=time.time)
+    parent_principal: Optional[str] = None  # audit trail: who spawned this principal

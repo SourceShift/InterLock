@@ -14,7 +14,7 @@ import logging
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from .._runtime import get_engine
-from ..context import current_principal, current_span
+from ..context import current_parent_principal, current_principal, current_span
 from ..enforce import Blocked, Decision, Verdict
 from ..event import SensorEvent
 
@@ -38,6 +38,7 @@ def _event_for(
         args=arg_map,
         principal=principal or current_principal(),
         span_id=current_span(),
+        parent_principal=current_parent_principal(),
     )
 
 
