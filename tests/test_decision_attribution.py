@@ -276,6 +276,10 @@ CASES = [
      lambda: dmod("mcp_server_allowlist").mcp_server_allowlist(
          ["api.example.com"]),
      "mcp.connect", {"uri": "https://evil.example/x"}, "uri", Verdict.BLOCK),
+    ("mcp_server_attestation",
+     lambda: dmod("mcp_server_attestation").mcp_server_attestation(
+         {"github": "identity-token-4f2b7c9a"}),
+     "mcp.call", {"__origin__": "github"}, "__attestation__", Verdict.BLOCK),
     ("mcp_tool_pinning",
      lambda: dmod("mcp_tool_pinning"),
      "search", {"__schema__": "schema-v2"}, "__schema__", Verdict.BLOCK),
