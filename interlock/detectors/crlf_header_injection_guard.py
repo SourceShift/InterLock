@@ -54,6 +54,7 @@ def crlf_header_injection_guard() -> Rule:
                 return Decision.block(
                     reason="crlf_injection: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
         return None
 

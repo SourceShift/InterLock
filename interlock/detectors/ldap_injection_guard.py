@@ -80,6 +80,7 @@ def ldap_injection_guard() -> Rule:
                 return Decision.block(
                     reason="ldap_injection: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

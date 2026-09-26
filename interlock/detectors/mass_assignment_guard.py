@@ -62,11 +62,13 @@ def mass_assignment_guard() -> Rule:
                 return Decision.block(
                     reason="mass_assignment: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
             if isinstance(value, str) and PATTERN.search(value):
                 return Decision.block(
                     reason="mass_assignment: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

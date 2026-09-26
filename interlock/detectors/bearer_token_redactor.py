@@ -90,7 +90,8 @@ def bearer_token_redactor() -> Rule:
         if not changed:
             return None
         return Decision.modify(
-            changed, reason="bearer_token_redact", policy_id=POLICY_ID
+            changed, reason="bearer_token_redact", policy_id=POLICY_ID,
+            attributed_to=next(iter(changed)),
         )
 
     return rule

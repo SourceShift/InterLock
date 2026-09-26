@@ -79,6 +79,7 @@ def canary_leak_guard(canaries: Iterable[str]) -> Rule:
                     return Decision.block(
                         reason="canary_leak_guard: canary token in egress",
                         policy_id=POLICY_ID,
+                        attributed_to=key,
                     )
         return None
 

@@ -90,13 +90,14 @@ def base64_payload_scan() -> Rule:
         args: Any = getattr(event, "args", None)
         if not isinstance(args, dict):
             return None
-        for value in args.values():
+        for name, value in args.items():
             if not isinstance(value, str):
                 continue
             if _first_marker(value) is not None:
                 return Decision.block(
                     reason="base64_payload_scan: decoded injection",
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
         return None
 

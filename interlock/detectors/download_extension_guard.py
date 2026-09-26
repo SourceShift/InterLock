@@ -67,6 +67,7 @@ def download_extension_guard() -> Rule:
                 return Decision.block(
                     reason="download_extension: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

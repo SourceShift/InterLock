@@ -106,6 +106,7 @@ def mcp_sampling_model_guard(allowed_models: Iterable[str]) -> Rule:
                 model if model is not None else _MISSING_MODEL
             ),
             policy_id=POLICY_ID,
+            attributed_to=_MODEL_KEY,
         )
 
     return rule

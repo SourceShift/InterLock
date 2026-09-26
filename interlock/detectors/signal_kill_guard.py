@@ -66,6 +66,7 @@ def signal_kill_guard() -> Rule:
                 return Decision.block(
                     reason="signal_kill: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

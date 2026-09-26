@@ -67,6 +67,7 @@ def ansi_escape_output_guard() -> Rule:
                 return Decision.block(
                     reason="ansi_escape_output: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

@@ -65,6 +65,7 @@ def ssti_guard() -> Rule:
                 return Decision.block(
                     reason="ssti: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

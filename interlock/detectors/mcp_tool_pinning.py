@@ -111,6 +111,7 @@ def mcp_tool_pinning(pins: Dict[str, str]) -> Rule:
         return Decision.block(
             "mcp_tool_pinning: schema drift for {}".format(action),
             policy_id=POLICY_ID,
+            attributed_to=_SCHEMA_KEY,
         )
 
     return rule

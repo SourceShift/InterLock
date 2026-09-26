@@ -116,6 +116,7 @@ def mcp_server_allowlist(allowed_hosts: Iterable[str]) -> Rule:
                 POLICY_ID, host if host is not None else _UNKNOWN_HOST
             ),
             policy_id=POLICY_ID,
+            attributed_to=_URI_KEY,
         )
 
     return rule

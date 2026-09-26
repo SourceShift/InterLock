@@ -25,8 +25,19 @@ class PolicyEngine:
         return self
 
     def evaluate(self, event: SensorEvent) -> Decision:
-        """First rule to return a non-ALLOW verdict wins. Default: allow."""
+        """First rule to return a non-ALLOW verdict wins. Default: allow.
+
+        Phase separation: a rule tagged ``phase="result"`` (set the attribute
+        on the callable) sees only result-phase events; an untagged rule is
+        call-side - the side every existing rule was written for - and sees
+        only call-phase events. A call-side rule therefore never re-judges a
+        result payload under the same action name, and a result-side rule
+        never fires on the arguments being sent.
+        """
+        is_result = getattr(event, "phase", "call") == "result"
         for rule in self._rules:
+            if (getattr(rule, "phase", "call") == "result") != is_result:
+                continue
             decision = rule(event)
             if decision is not None and decision.verdict != Verdict.ALLOW:
                 return decision

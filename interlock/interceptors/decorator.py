@@ -14,9 +14,11 @@ import logging
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from .._runtime import get_engine
-from ..context import current_principal, current_span
+from ..context import current_parent_principal, current_principal, current_span
 from ..enforce import Blocked, Decision, Verdict
 from ..event import SensorEvent
+from ..receipt import emit_receipt
+from .mcp import enforce_tool_result
 
 _log = logging.getLogger("interlock")
 
@@ -38,19 +40,23 @@ def _event_for(
         args=arg_map,
         principal=principal or current_principal(),
         span_id=current_span(),
+        parent_principal=current_parent_principal(),
     )
 
 
 def _emit(event: SensorEvent, decision: Decision, observed: bool = False) -> None:
-    # M4 replaces this with signed receipts + an audit sink.
     _log.debug(
-        "action=%s verdict=%s reason=%s span=%s observed=%s",
+        "action=%s verdict=%s reason=%s span=%s observed=%s attributed_to=%s",
         event.action,
         decision.verdict.name,
         decision.reason,
         event.span_id,
         observed,
+        decision.attributed_to,
     )
+    # M4: the decision also becomes a chained receipt in the audit sink, when
+    # one is installed; with no sink this writes nothing.
+    emit_receipt(event, decision)
 
 
 def _enforce(
@@ -90,6 +96,11 @@ def guard(
     enforcement="blocking" (default) raises Blocked on a deny and applies
     modifications. enforcement="monitor" only records the would-be decision.
     Works on both sync and async callables.
+
+    The return value is also checked on the way back: result-phase rules see
+    it as a phase="result" event, and may rewrite it (MODIFY) or withhold it
+    (Blocked - the tool already ran, but the caller never receives the
+    payload).
     """
 
     def decorator(func: Callable) -> Callable:
@@ -98,14 +109,22 @@ def guard(
             event = _event_for(func, args, kwargs, principal)
             decision = get_engine().evaluate(event)
             args, kwargs = _enforce(decision, args, kwargs, enforcement, event)
-            return func(*args, **kwargs)
+            result = func(*args, **kwargs)
+            return enforce_tool_result(
+                event.action, result,
+                enforcement=enforcement, principal=principal,
+            )
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             event = _event_for(func, args, kwargs, principal)
             decision = get_engine().evaluate(event)
             args, kwargs = _enforce(decision, args, kwargs, enforcement, event)
-            return await func(*args, **kwargs)
+            result = await func(*args, **kwargs)
+            return enforce_tool_result(
+                event.action, result,
+                enforcement=enforcement, principal=principal,
+            )
 
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
 

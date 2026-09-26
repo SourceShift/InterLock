@@ -78,6 +78,7 @@ def xxe_guard() -> Rule:
                 return Decision.block(
                     reason="xxe: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

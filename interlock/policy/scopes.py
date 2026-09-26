@@ -65,11 +65,30 @@ class Binding:
 
     ``enabled=False`` is a tombstone: it removes the inherited binding for this
     template at and below this node, until a deeper node re-binds it.
+
+    ``delegated_from`` records the scope that granted this binding: ``None`` means
+    the binding was granted directly by the root. When set, ``ScopeRegistry.resolve``
+    verifies that what this binding contributes is a subset of what its
+    ``delegated_from`` scope resolves to, so a delegate cannot hand itself a
+    capability its delegator never had.
     """
 
     template_id: str
     params: Mapping[str, Any] = field(default_factory=dict)
     enabled: bool = True
+    delegated_from: Optional[Scope] = None
+
+
+class DelegationError(Exception):
+    """A binding's delegation check failed at resolve time."""
+
+
+class DelegationOverGrant(DelegationError):
+    """A delegated binding grants more than its delegator resolves to."""
+
+
+class DelegationDepthExceeded(DelegationError):
+    """Delegation chain exceeded the configured ``max_delegation_depth``."""
 
 
 class PyScopeTree:
@@ -174,10 +193,12 @@ class ScopeRegistry:
         templates: Mapping[str, Template],
         *,
         maxsize: int = 10000,
+        max_delegation_depth: int = 16,
     ) -> None:
         self.tree = tree
         self.templates = dict(templates)
         self.maxsize = maxsize
+        self.max_delegation_depth = max_delegation_depth
         self._cache: "OrderedDict[Scope, Tuple[Tuple[int, ...], PolicyEngine]]" = (
             OrderedDict()
         )
@@ -189,7 +210,47 @@ class ScopeRegistry:
         return tmpl.union_params if tmpl is not None else frozenset()
 
     def resolve(self, leaf: Scope) -> Dict[str, Dict[str, Any]]:
-        """Effective params per template for a leaf, ignoring unknown templates."""
+        """Effective params per template for a leaf, ignoring unknown templates.
+
+        Walks the leaf's parent chain and verifies that every delegated binding
+        along the path (i.e. whose ``Binding.delegated_from`` is not None)
+        resolves to a subset of what its ``delegated_from`` scope resolves to.
+        A violation is a resolve-time error, not a runtime surprise: a delegate
+        cannot grant itself a capability its delegator never had. A
+        ``delegated_from`` of None is a no-op for that binding, so every
+        pre-existing policy resolves exactly as before. The chain is bounded
+        by ``max_delegation_depth`` so a delegation loop or unbounded fan-out
+        fails closed rather than recursing forever.
+        """
+        return self._resolve_checked(leaf, depth=0)
+
+    def _resolve_checked(self, leaf: Scope, *, depth: int) -> Dict[str, Dict[str, Any]]:
+        if depth > self.max_delegation_depth:
+            raise DelegationDepthExceeded(
+                f"delegation chain depth {depth} exceeds bound "
+                f"{self.max_delegation_depth} resolving {leaf!r}"
+            )
+        # Walk root -> leaf, verifying every delegated binding on the path.
+        # Each binding's effective contribution at its level is the merge
+        # result for its template_id at that prefix.
+        for i in range(1, len(leaf) + 1):
+            prefix = leaf[:i]
+            prefix_eff = self.tree.resolve(prefix, self._union_lookup)
+            for b in self.tree.bindings_at(prefix):
+                if not b.enabled or b.delegated_from is None:
+                    continue
+                b_eff = prefix_eff.get(b.template_id)
+                delegator_eff = self._resolve_checked(
+                    tuple(b.delegated_from), depth=depth + 1
+                )
+                d_eff = delegator_eff.get(b.template_id)
+                if not _delegation_subset(b_eff, d_eff):
+                    raise DelegationOverGrant(
+                        f"delegation over-grant at {prefix!r}: template "
+                        f"{b.template_id!r} binds {b_eff!r} which is not a "
+                        f"subset of delegated_from {tuple(b.delegated_from)!r} "
+                        f"({d_eff!r})"
+                    )
         resolved = self.tree.resolve(leaf, self._union_lookup)
         return {t: p for t, p in resolved.items() if t in self.templates}
 
@@ -222,6 +283,13 @@ class ScopeRegistry:
         self._cache.pop(leaf, None)
 
 
+def _split_principal(principal: Optional[str]) -> Scope:
+    """Split ``"acme/payments/agent42"`` into ``("acme", "payments", "agent42")``."""
+    if not principal:
+        return ()
+    return tuple(part for part in principal.split("/") if part)
+
+
 def principal_scope(event: SensorEvent) -> Scope:
     """Default scope deriver: split the principal on '/' into a path.
 
@@ -229,10 +297,56 @@ def principal_scope(event: SensorEvent) -> Scope:
     ``("acme", "payments", "agent42")``. No principal yields the empty scope.
     Supply your own deriver to key on tenant, span, or anything else.
     """
-    p = event.principal
-    if not p:
-        return ()
-    return tuple(part for part in p.split("/") if part)
+    return _split_principal(event.principal)
+
+
+def delegation_chain(event: SensorEvent) -> Tuple[Scope, ...]:
+    """The scopes this event acts through, delegator first.
+
+    Reads the ``parent_principal`` link the interceptors carry from the
+    context: an agent running under a delegated span yields
+    ``(parent_scope, own_scope)``, and a non-delegated event yields exactly
+    ``(principal_scope(event),)`` — so nothing that never delegates changes
+    shape. Empty entries are dropped.
+    """
+    chain = []
+    parent = _split_principal(event.parent_principal)
+    if parent:
+        chain.append(parent)
+    own = _split_principal(event.principal)
+    if own:
+        chain.append(own)
+    return tuple(chain)
+
+
+def _delegation_subset(
+    binding_eff: Optional[Dict[str, Any]],
+    delegator_eff: Optional[Dict[str, Any]],
+) -> bool:
+    """True iff ``binding_eff`` is a subset of ``delegator_eff`` under the
+    union/override contract the rest of the registry uses.
+
+    A missing binding (``None``, e.g. tombstoned at this level) is trivially
+    a subset. Otherwise every key the binding sets must exist on the
+    delegator, and its value must be a subset (set-like) or equal (override).
+    """
+    if binding_eff is None:
+        return True
+    if delegator_eff is None:
+        return False
+    for k, v in binding_eff.items():
+        if k not in delegator_eff:
+            return False
+        d = delegator_eff[k]
+        if isinstance(v, (set, frozenset, list, tuple)):
+            if not isinstance(d, (set, frozenset, list, tuple)):
+                return False
+            if not set(v).issubset(set(d)):
+                return False
+        else:
+            if v != d:
+                return False
+    return True
 
 
 class ScopedEngine:

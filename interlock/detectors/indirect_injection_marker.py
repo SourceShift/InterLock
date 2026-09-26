@@ -11,6 +11,10 @@ action name without a separating space. Non-str arg values (None, int, nested
 dicts/lists) are skipped rather than coerced, so structural data never
 produces a spurious match. With nothing to scan the rule stays silent
 (returns None), leaving the engine's default-allow path untouched.
+
+Call-side by design: the rule inspects the arguments being SENT
+(phase="call"), so it never fires on a result-phase event. The result-side
+twin is ``tool_result_injection_guard``.
 """
 from __future__ import annotations
 
@@ -70,6 +74,8 @@ def indirect_injection_marker(
     patterns = list(dict.fromkeys(patterns))
 
     def rule(event: SensorEvent) -> Optional[Decision]:
+        if getattr(event, "phase", "call") != "call":
+            return None  # call-side scanner; results are the twin rule's job
         text = _scan_text(event)
         if not text:
             return None

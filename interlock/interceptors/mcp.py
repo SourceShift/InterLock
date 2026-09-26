@@ -25,10 +25,11 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 from .._runtime import get_engine
-from ..context import current_principal, current_span
+from ..context import current_parent_principal, current_principal, current_span
 from ..enforce import Blocked, Verdict
 from ..event import SensorEvent
 from ..policy.engine import PolicyEngine
+from ..receipt import emit_receipt
 
 _log = logging.getLogger("interlock")
 
@@ -54,21 +55,95 @@ def enforce_tool_call(
         args=args,
         principal=principal or current_principal(),
         span_id=current_span(),
+        parent_principal=current_parent_principal(),
     )
     decision = (engine or get_engine()).evaluate(event)
 
     if decision.verdict == Verdict.ALLOW or enforcement == "monitor":
         _log.debug(
-            "mcp action=%s verdict=%s observed=%s",
+            "mcp action=%s verdict=%s observed=%s attributed_to=%s",
             action, decision.verdict.name, enforcement == "monitor",
+            decision.attributed_to,
         )
+        emit_receipt(event, decision)
         return args
     if decision.verdict == Verdict.BLOCK:
-        _log.debug("mcp action=%s BLOCK reason=%s", action, decision.reason)
+        _log.debug(
+            "mcp action=%s BLOCK reason=%s attributed_to=%s",
+            action, decision.reason, decision.attributed_to,
+        )
+        emit_receipt(event, decision)
         raise Blocked(decision, action)
-    if decision.verdict == Verdict.MODIFY and decision.modified_args:
-        args.update(decision.modified_args)
+    if decision.verdict == Verdict.MODIFY:
+        # The MODIFY branch had no log site at all: the one verdict a policy
+        # rewrote the call with went unrecorded. It is a receipt site now.
+        # Emit before the merge: args aliases event.args, and the receipt
+        # digests the arguments the caller passed, not the rewritten ones.
+        emit_receipt(event, decision)
+        if decision.modified_args:
+            args.update(decision.modified_args)
     return args
+
+
+def enforce_tool_result(
+    action: str,
+    result: Any,
+    *,
+    engine: Optional[PolicyEngine] = None,
+    enforcement: str = "blocking",
+    principal: Optional[str] = None,
+) -> Any:
+    """Decide on one tool result and enforce the verdict before it is returned.
+
+    Transport-agnostic core of the result path, the twin of
+    :func:`enforce_tool_call`. The result payload is observed as a
+    ``phase="result"`` SensorEvent: a dict result is carried as itself, any
+    other shape rides under the ``"result"`` key.
+
+    Returns the value the caller actually receives: the original result on
+    ALLOW, ``decision.modified_result`` on MODIFY (the whole return value is
+    replaced - ``modified_args`` rewrites the request, not the response).
+    Under ``enforcement="monitor"`` the would-be decision is recorded and the
+    original result passes through untouched.
+
+    BLOCK on the result path does NOT un-run the tool: the call already
+    happened and its side effects stand. It raises :class:`Blocked` in place
+    of delivering the payload, so the caller sees the policy refusal, never
+    what the tool said.
+    """
+    payload: Dict[str, Any] = dict(result) if isinstance(result, dict) else {"result": result}
+    event = SensorEvent(
+        action=action,
+        args=payload,
+        principal=principal or current_principal(),
+        span_id=current_span(),
+        parent_principal=current_parent_principal(),
+        phase="result",
+    )
+    decision = (engine or get_engine()).evaluate(event)
+
+    if decision.verdict == Verdict.ALLOW or enforcement == "monitor":
+        _log.debug(
+            "mcp result action=%s verdict=%s observed=%s attributed_to=%s",
+            action, decision.verdict.name, enforcement == "monitor",
+            decision.attributed_to,
+        )
+        emit_receipt(event, decision)
+        return result
+    if decision.verdict == Verdict.BLOCK:
+        _log.debug(
+            "mcp result action=%s BLOCK reason=%s attributed_to=%s",
+            action, decision.reason, decision.attributed_to,
+        )
+        emit_receipt(event, decision)
+        raise Blocked(decision, action)
+    if decision.verdict == Verdict.MODIFY:
+        # Same hole as the call side: this MODIFY branch never recorded
+        # anything, and it is the verdict that rewrites what the caller gets.
+        emit_receipt(event, decision)
+        if decision.modified_result is not None:
+            return decision.modified_result
+    return result
 
 
 def guard_mcp_session(
@@ -97,7 +172,11 @@ def guard_mcp_session(
             name, arguments, engine=engine,
             enforcement=enforcement, principal=principal,
         )
-        return await original(name, safe, *rest, **kw)
+        out = await original(name, safe, *rest, **kw)
+        return enforce_tool_result(
+            name, out, engine=engine,
+            enforcement=enforcement, principal=principal,
+        )
 
     @functools.wraps(original)
     def sync_wrapper(name: str, arguments: Optional[Dict[str, Any]] = None,
@@ -106,7 +185,11 @@ def guard_mcp_session(
             name, arguments, engine=engine,
             enforcement=enforcement, principal=principal,
         )
-        return original(name, safe, *rest, **kw)
+        out = original(name, safe, *rest, **kw)
+        return enforce_tool_result(
+            name, out, engine=engine,
+            enforcement=enforcement, principal=principal,
+        )
 
     session.call_tool = (
         async_wrapper if asyncio.iscoroutinefunction(original) else sync_wrapper

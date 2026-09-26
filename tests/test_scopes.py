@@ -13,6 +13,8 @@ from interlock.context import span
 from interlock.event import SensorEvent
 from interlock.policy.scopes import (
     Binding,
+    DelegationDepthExceeded,
+    DelegationOverGrant,
     ScopedEngine,
     ScopeRegistry,
     ScopeTree,
@@ -279,3 +281,125 @@ def test_scoped_engine_routes_through_guard_by_principal():
             http_post(host="beta.example")  # not on acme's allowlist
     with span(principal="root/beta/b1"):
         assert http_post(host="beta.example") == "sent"  # same call, other subject
+
+
+# --- delegation chains: provenance, per-hop attenuation, depth bound --------
+# The acceptance case from the ROADMAP: a child binding delegated from a
+# sibling that holds strictly less than what the child claims. ``resolve``
+# must raise at resolve time, before any rule runs.
+
+
+def _delegation_tree() -> ScopeTree:
+    """Root grants egress for [api.internal]; a sibling grants [acme.example];
+    a child claims [acme.example, extra.example] while delegating from the
+    sibling — over-grant."""
+    t = ScopeTree()
+    t.bind(
+        ("root",),
+        [Binding("egress_allowlist", {"allowed_hosts": ["api.internal"]})],
+    )
+    t.bind(
+        ("acme", "payments"),
+        [Binding("egress_allowlist", {"allowed_hosts": ["acme.example"]})],
+    )
+    t.bind(
+        ("acme", "payments", "agent42"),
+        [
+            Binding(
+                "egress_allowlist",
+                {"allowed_hosts": ["acme.example", "extra.example"]},
+                delegated_from=("acme", "payments"),
+            )
+        ],
+    )
+    return t
+
+
+def test_delegation_over_grant_raises_at_resolve_time():
+    reg = ScopeRegistry(_delegation_tree(), TEMPLATES)
+    with pytest.raises(DelegationOverGrant):
+        reg.resolve(("acme", "payments", "agent42"))
+
+
+def test_delegation_unaffected_when_not_delegated():
+    """A non-delegated binding resolves exactly as before."""
+    t = ScopeTree()
+    t.bind(
+        ("root",),
+        [Binding("egress_allowlist", {"allowed_hosts": ["api.internal"]})],
+    )
+    t.bind(
+        ("root", "acme"),
+        [Binding("egress_allowlist", {"allowed_hosts": ["acme.example"]})],
+    )
+    t.bind(
+        ("root", "acme", "agent42"),
+        [Binding("egress_allowlist", {"allowed_hosts": ["agent42.local"]})],
+    )
+    reg = ScopeRegistry(t, TEMPLATES)
+    eff = reg.resolve(("root", "acme", "agent42"))
+    assert set(eff["egress_allowlist"]["allowed_hosts"]) == {
+        "api.internal",
+        "acme.example",
+        "agent42.local",
+    }
+
+
+def test_delegation_subset_at_grant_time_resolves_cleanly():
+    """A child that grants a *subset* of its delegator's grant resolves fine."""
+    t = ScopeTree()
+    t.bind(
+        ("acme", "payments"),
+        [Binding("egress_allowlist", {"allowed_hosts": ["a.example", "b.example"]})],
+    )
+    t.bind(
+        ("acme", "payments", "agent42"),
+        [
+            Binding(
+                "egress_allowlist",
+                {"allowed_hosts": ["a.example"]},
+                delegated_from=("acme", "payments"),
+            )
+        ],
+    )
+    reg = ScopeRegistry(t, TEMPLATES)
+    eff = reg.resolve(("acme", "payments", "agent42"))
+    assert set(eff["egress_allowlist"]["allowed_hosts"]) == {"a.example", "b.example"}
+
+
+def test_delegation_depth_bound_fails_closed():
+    """A chain deeper than ``max_delegation_depth`` raises, not recurses.
+
+    Each hop grants a subset of its parent (so the over-grant check is
+    satisfied), but the chain is long enough that the recursive delegation
+    walk exceeds the bound and fails closed with ``DelegationDepthExceeded``.
+    """
+    t = ScopeTree()
+    prev = ("root",)
+    t.bind(prev, [Binding("rate_limiter", {"limit": 1})])
+    for i in range(20):
+        cur = prev + (f"n{i}",)
+        t.bind(
+            cur,
+            [
+                Binding(
+                    "rate_limiter",
+                    {"limit": 1},
+                    delegated_from=prev,
+                )
+            ],
+        )
+        prev = cur
+    reg = ScopeRegistry(t, TEMPLATES, max_delegation_depth=4)
+    with pytest.raises(DelegationDepthExceeded):
+        reg.resolve(prev)
+
+
+def test_sensor_event_carries_parent_principal():
+    """The optional parent_principal field records who spawned this principal."""
+    ev = SensorEvent(
+        action="x", principal="agent42", parent_principal="auditor"
+    )
+    assert ev.parent_principal == "auditor"
+    # And absent by default so every existing caller stays unaffected.
+    assert SensorEvent(action="x").parent_principal is None

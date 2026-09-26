@@ -51,6 +51,7 @@ def script_tag_output_guard() -> Rule:
                 return Decision.block(
                     reason="script_tag_output: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
         return None
 

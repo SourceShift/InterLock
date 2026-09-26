@@ -68,6 +68,7 @@ def sql_injection_guard() -> Rule:
                 return Decision.block(
                     reason="sql_injection: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

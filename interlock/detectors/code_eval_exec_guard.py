@@ -63,6 +63,7 @@ def code_eval_exec_guard() -> Rule:
                 return Decision.block(
                     reason="code_eval_exec: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

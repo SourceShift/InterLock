@@ -94,7 +94,8 @@ def basic_auth_url_redactor() -> Rule:
         if not changed:
             return None
         return Decision.modify(
-            changed, reason="basic_auth_url_redact", policy_id=POLICY_ID
+            changed, reason="basic_auth_url_redact", policy_id=POLICY_ID,
+            attributed_to=next(iter(changed)),
         )
 
     return rule

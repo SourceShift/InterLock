@@ -57,6 +57,7 @@ def html_comment_injection_guard() -> Rule:
                 return Decision.block(
                     reason="html_comment_injection: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
         return None
 

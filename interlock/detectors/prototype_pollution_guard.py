@@ -61,6 +61,7 @@ def prototype_pollution_guard() -> Rule:
                 return Decision.block(
                     reason="prototype_pollution: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

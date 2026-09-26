@@ -67,6 +67,7 @@ def git_credential_guard() -> Rule:
                 return Decision.block(
                     reason="git_credential_read: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

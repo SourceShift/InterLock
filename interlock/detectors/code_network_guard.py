@@ -70,6 +70,7 @@ def code_network_guard() -> Rule:
                 return Decision.block(
                     reason="code_network: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

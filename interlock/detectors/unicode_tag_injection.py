@@ -72,7 +72,7 @@ def unicode_tag_injection() -> Rule:
         args: Any = getattr(event, "args", None)
         if not isinstance(args, dict):
             return None
-        for value in args.values():
+        for name, value in args.items():
             if not isinstance(value, str):
                 continue
             code = _first_hidden(value)
@@ -82,6 +82,7 @@ def unicode_tag_injection() -> Rule:
                         code
                     ),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
         return None
 

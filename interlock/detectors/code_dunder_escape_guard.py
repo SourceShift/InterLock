@@ -71,6 +71,7 @@ def code_dunder_escape_guard() -> Rule:
                 return Decision.block(
                     reason="code_dunder_escape: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

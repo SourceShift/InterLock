@@ -85,6 +85,7 @@ struct RBinding {
     template_id: u32,
     enabled: bool,
     params: Vec<(u32, Value)>,
+    delegated_from: Option<Vec<u32>>,
 }
 
 #[derive(Default)]
@@ -127,6 +128,7 @@ impl ScopeTree {
             let template_id: String = b.getattr("template_id")?.extract()?;
             let enabled: bool = b.getattr("enabled")?.extract()?;
             let params_obj = b.getattr("params")?;
+            let delegated_from_obj = b.getattr("delegated_from")?;
             let tid = self.symbols.intern(&template_id);
 
             let pd = params_obj.downcast::<PyDict>()?;
@@ -137,10 +139,17 @@ impl ScopeTree {
                 let val = py_to_value(&mut self.symbols, &v)?;
                 params.push((ksym, val));
             }
+            // `delegated_from` is Optional[Scope]; Scope is Tuple[str, ...].
+            // Extract as Option<Vec<String>> so None round-trips, then intern.
+            let delegated_from_py: Option<Vec<String>> = delegated_from_obj.extract()?;
+            let delegated_from = delegated_from_py.map(|segs| {
+                segs.iter().map(|s| self.symbols.intern(s)).collect()
+            });
             rbindings.push(RBinding {
                 template_id: tid,
                 enabled,
                 params,
+                delegated_from,
             });
         }
 
@@ -271,6 +280,13 @@ impl ScopeTree {
             }
             let kwargs = PyDict::new(py);
             kwargs.set_item("enabled", b.enabled)?;
+            if let Some(delegated_from) = &b.delegated_from {
+                let segs: Vec<String> = delegated_from
+                    .iter()
+                    .map(|s| self.symbols.name(*s).to_owned())
+                    .collect();
+                kwargs.set_item("delegated_from", PyTuple::new(py, segs)?)?;
+            }
             let obj = binding_cls.call(
                 (self.symbols.name(b.template_id), params),
                 Some(&kwargs),

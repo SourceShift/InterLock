@@ -71,6 +71,7 @@ def nosql_injection_guard() -> Rule:
                 return Decision.block(
                     reason="nosql_injection: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

@@ -63,6 +63,7 @@ def dynamic_import_guard() -> Rule:
                 return Decision.block(
                     reason="dynamic_import: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

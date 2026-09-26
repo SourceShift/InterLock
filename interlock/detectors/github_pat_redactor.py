@@ -95,7 +95,8 @@ def github_pat_redactor() -> Rule:
         if not changed:
             return None
         return Decision.modify(
-            changed, reason="github_pat_redact", policy_id=POLICY_ID
+            changed, reason="github_pat_redact", policy_id=POLICY_ID,
+            attributed_to=next(iter(changed)),
         )
 
     return rule

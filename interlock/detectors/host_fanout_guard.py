@@ -42,6 +42,9 @@ POLICY_ID = "host_fanout"
 
 DEFAULT_LIMIT = 5
 
+# The one argument key this guard reads; named so a denial can attribute it.
+_URL_KEY = "url"
+
 # Egress action names this guard recognises. Kept to verbs that unambiguously
 # leave the process, so a same-named in-house tool is not shadowed.
 EGRESS_ACTIONS = frozenset({
@@ -58,7 +61,7 @@ def _host_of(args: object) -> Optional[str]:
     """
     if not isinstance(args, dict):
         return None
-    url = args.get("url")
+    url = args.get(_URL_KEY)
     if not isinstance(url, str):
         return None
     try:
@@ -97,6 +100,7 @@ def host_fanout_guard(limit: int = DEFAULT_LIMIT) -> Rule:
             return Decision.block(
                 reason="host_fanout_guard: too many distinct hosts",
                 policy_id=POLICY_ID,
+                attributed_to=_URL_KEY,
             )
         seen.add(host)
         return None

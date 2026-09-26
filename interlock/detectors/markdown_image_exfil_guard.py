@@ -70,6 +70,7 @@ def markdown_image_exfil_guard() -> Rule:
                 return Decision.block(
                     reason="markdown_image_exfil: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

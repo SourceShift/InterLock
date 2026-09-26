@@ -17,6 +17,10 @@ from interlock.policy import (
     ScopeTree,
     Template,
 )
+from interlock.policy.scopes import (
+    DelegationDepthExceeded,
+    DelegationOverGrant,
+)
 
 try:
     from interlock_scopes import ScopeTree as NativeScopeTree  # type: ignore
@@ -146,3 +150,91 @@ def test_native_path_versions_invalidate():
     assert reg.for_scope(leaf) is e1  # warm cache hit
     tree.bind(("root", "acme"), [Binding("rate_limiter", {"limit": 9})])
     assert reg.for_scope(leaf) is not e1  # ancestor bump forces recompile
+
+
+# --- delegated-binding parity ----------------------------------------------
+# A native tree that drops `Binding.delegated_from` would still pass every
+# resolve-time parity test above (delegated_from is irrelevant when the
+# registry never checks it), so without this section the "native carries
+# the field" claim would be unverified. The cases below exercise BOTH the
+# round-trip through `bindings_at` (so the field survives bind → bindings_at)
+# AND the resolve-time over-grant check on both backends.
+
+def _delegated_seed(tree):
+    """A tree where the leaf grants more than its delegator allows.
+
+    Root grants ``egress_allowlist`` for ``["api.internal"]``. The
+    ``("acme",)`` node re-binds it for ``["acme.example"]`` (a sibling of
+    the leaf under root). The leaf ``("acme", "payments", "agent42")``
+    claims ``["acme.example", "extra.example"]`` while declaring
+    ``delegated_from=("acme", "payments")``, which only resolves to
+    ``["acme.example"]`` — so the leaf over-grants.
+    """
+    tree.bind(
+        ("root",),
+        [Binding("egress_allowlist", {"allowed_hosts": ["api.internal"]})],
+    )
+    tree.bind(
+        ("acme", "payments"),
+        [Binding("egress_allowlist", {"allowed_hosts": ["acme.example"]})],
+    )
+    tree.bind(
+        ("acme", "payments", "agent42"),
+        [
+            Binding(
+                "egress_allowlist",
+                {"allowed_hosts": ["acme.example", "extra.example"]},
+                delegated_from=("acme", "payments"),
+            )
+        ],
+    )
+    return tree
+
+
+@pytest.mark.skipif(NativeScopeTree is None, reason="native interlock_scopes not built")
+def test_native_bindings_at_round_trip_delegated_from():
+    """`bindings_at` on the native tree must reconstruct `delegated_from`."""
+    py_tree = _delegated_seed(PyScopeTree())
+    rs_tree = _delegated_seed(NativeScopeTree())
+    py_bs = py_tree.bindings_at(("acme", "payments", "agent42"))
+    rs_bs = rs_tree.bindings_at(("acme", "payments", "agent42"))
+    assert len(py_bs) == len(rs_bs) == 1
+    assert py_bs[0].template_id == rs_bs[0].template_id == "egress_allowlist"
+    assert py_bs[0].delegated_from == rs_bs[0].delegated_from == ("acme", "payments")
+    # And a non-delegated binding on the same tree stays None on both sides.
+    py_root = py_tree.bindings_at(("root",))
+    rs_root = rs_tree.bindings_at(("root",))
+    assert py_root[0].delegated_from is None
+    assert rs_root[0].delegated_from is None
+
+
+@pytest.mark.skipif(NativeScopeTree is None, reason="native interlock_scopes not built")
+def test_native_overgrant_parity():
+    """The over-grant must raise on both backends, with the same kind."""
+    py_reg = ScopeRegistry(_delegated_seed(PyScopeTree()), TEMPLATES)
+    rs_reg = ScopeRegistry(_delegated_seed(NativeScopeTree()), TEMPLATES)
+    leaf = ("acme", "payments", "agent42")
+    with pytest.raises(DelegationOverGrant):
+        py_reg.resolve(leaf)
+    with pytest.raises(DelegationOverGrant):
+        rs_reg.resolve(leaf)
+
+
+@pytest.mark.skipif(NativeScopeTree is None, reason="native interlock_scopes not built")
+def test_native_non_delegated_unaffected():
+    """A binding without `delegated_from` resolves identically on both backends."""
+    t = ScopeTree()
+    t.bind(
+        ("root",),
+        [Binding("egress_allowlist", {"allowed_hosts": ["a.example"]})],
+    )
+    t.bind(
+        ("root", "leaf"),
+        [Binding("egress_allowlist", {"allowed_hosts": ["b.example"]})],
+    )
+    rs_t = NativeScopeTree()
+    rs_t.bind(("root",), [Binding("egress_allowlist", {"allowed_hosts": ["a.example"]})])
+    rs_t.bind(("root", "leaf"), [Binding("egress_allowlist", {"allowed_hosts": ["b.example"]})])
+    py_reg = ScopeRegistry(t, TEMPLATES)
+    rs_reg = ScopeRegistry(rs_t, TEMPLATES)
+    assert _norm(py_reg.resolve(("root", "leaf"))) == _norm(rs_reg.resolve(("root", "leaf")))

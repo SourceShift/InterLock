@@ -53,6 +53,7 @@ def open_redirect_guard() -> Rule:
                 return Decision.block(
                     reason="open_redirect: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
         return None
 

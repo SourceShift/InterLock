@@ -88,6 +88,9 @@ def slack_webhook_redactor() -> Rule:
 
         if not changed:
             return None
-        return Decision.modify(changed, reason="slack_webhook_redact", policy_id=POLICY_ID)
+        return Decision.modify(
+            changed, reason="slack_webhook_redact", policy_id=POLICY_ID,
+            attributed_to=next(iter(changed)),
+        )
 
     return rule
