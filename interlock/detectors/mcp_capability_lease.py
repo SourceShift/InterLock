@@ -160,6 +160,26 @@ class LeaseRegistry:
             self._leases[(subject, capability)] = lease
         return lease
 
+    def revoke(self, subject: str) -> int:
+        """Withdraw every lease issued for `subject`; return how many died.
+
+        A grant is issued against what was reviewed - and when the reviewed
+        thing changes underneath it (``mcp_surface_baseline`` fires because a
+        server's tool surface drifted after admission), the grant must die
+        with the old surface rather than quietly covering calls to the new
+        one. Subject-wide on purpose: the admission that lapsed was the
+        server's, not one capability's, and an caller able to revoke could
+        not name the capabilities anyway. Unlike :meth:`renew`, revoking a
+        subject with no leases is not an error - there is nothing to inherit,
+        which is the state revocation exists to reach. Returns the count so
+        an operator log can say how many grants a re-admission killed.
+        """
+        with self._lock:
+            doomed = [key for key in self._leases if key[0] == subject]
+            for key in doomed:
+                del self._leases[key]
+            return len(doomed)
+
     def inspect(
         self, subject: str, capability: str, at: float
     ) -> Tuple[Optional[Lease], Optional[Lease]]:
