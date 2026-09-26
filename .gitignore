@@ -27,3 +27,9 @@ rust/target/
 # --- os / editor ---
 .DS_Store
 *.swp
+
+# --- mini-ork (vendored orchestrator, same category as rsi/ above) ---
+# A working copy of the framework plus its run state, re-creatable with one
+# rsync from /Volumes/docker-ssd/ps/mini-ork. Kept out of the tree so the
+# public repo stays the interlock/ package plus tests/.
+.mini-ork/

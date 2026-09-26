@@ -1,0 +1,264 @@
+{
+ "hits": {
+  "Injection defense at the tool/observation boundary": 2,
+  "Capability / least-privilege permissioning": 4,
+  "Pre-execution action verification / gating": 2,
+  "Formal / provable guarantees": 3,
+  "Provenance / attestation / signed receipts": 2,
+  "Guard model / classifier / detector": 2,
+  "Trajectory anomaly detection": 2,
+  "Red teaming / adaptive evaluation": 3,
+  "Policy language / declarative rules": 2,
+  "Sandbox / OS-level isolation": 1,
+  "Runtime verification / conformance / invariants": 1,
+  "Information flow / taint tracking": 1,
+  "Structured/constrained decoding as a guard": 1,
+  "Egress / exfiltration control": 1
+ },
+ "evidence": {
+  "Injection defense at the tool/observation boundary": [
+   [
+    "2603.10749",
+    "We propose a new paradigm, action-level causal attribution, which secures agents by asking why a particular tool call is produced."
+   ],
+   [
+    "2603.10749",
+    "This counterfactual stability constitutes the verifiable attribu- tion signal that AttriGuard uses to gate upcoming tool calls."
+   ],
+   [
+    "2605.29251",
+    "Based on this observation, we separate the safety-critical subset of execution from the overall behavioral process and model and verify it through formal constraints."
+   ],
+   [
+    "2605.29251",
+    "As shown in Provably Secure Agent Guardrail Untrusted AI Agent LLM Policy \ud835\udf45\ud835\udfce Generates intentions (natural language/tokens) Action Proposal e.g., (\u201ctool\u201d:\u201csend_emall\u201c, to:\u201dalice@corp.com\u201c, attachment\": \"report.pdf\") Observation &Feedback Success/Failure/ Blocked (reason) ePCA Reference Monitor (Trusted Computing Base) 1."
+   ]
+  ],
+  "Capability / least-privilege permissioning": [
+   [
+    "2603.10749",
+    "While they have the capability to intercept execution traces (e.g., At,Ot) and orchestrate additional inference steps for verification, they generally treat the underlying LLM as a black-box API."
+   ],
+   [
+    "2603.10749",
+    "Consequently, we consider such fine-tuning capabilities to be within the scope of our threat model, and in- clude training-based defenses in our comparative evaluation."
+   ],
+   [
+    "2603.30016",
+    "As LLM- powered agents are deployed in increasingly high-stakes set- tings and granted greater autonomy, prompt injection becomes a primary barrier to safe and reliable adoption."
+   ],
+   [
+    "2603.30016",
+    "Instead, it should only see narrowly scoped, structured artifacts and be used for a constrained task (e.g., assessing whether a proposed plan or policy change is malicious)."
+   ],
+   [
+    "2604.15579",
+    "Keywords AI Agents, Software Security, Agent Safety, Agent Security, Sym- bolic Guardrails Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page."
+   ],
+   [
+    "2604.15579",
+    "In contrast, domain- specific agents are designed for a narrow scope of tasks, with access only to task-relevant tools, as shown in Figure 2b."
+   ],
+   [
+    "2605.29251",
+    "From Empirical Security to Provable Security in Agent Systems. such as context forgetting and incorrect permission grant- ing."
+   ],
+   [
+    "2605.29251",
+    "In contrast, the multi-step planning, tool invocation, and permission operations performed by agents in open envi- ronments essentially constitute a highly dynamic and state- dependent behavioral process."
+   ]
+  ],
+  "Pre-execution action verification / gating": [
+   [
+    "2603.10749",
+    "This counterfactual stability constitutes the verifiable attribu- tion signal that AttriGuard uses to gate upcoming tool calls."
+   ],
+   [
+    "2603.10749",
+    "We operationalize this paradigm with AttriGuard, a runtime defense that attributes 13 and gates tool calls using parallel counterfactual tests."
+   ],
+   [
+    "2605.29251",
+    "This layer deterministically evaluates whether an action satisfies predefined safety con- straints before execution, thereby preventing unsafe state transitions at runtime."
+   ],
+   [
+    "2605.29251",
+    "This layer deterministically evaluates whether an action satisfies predefined safety con- straints before execution, thereby preventing unsafe state transitions at runtime."
+   ]
+  ],
+  "Formal / provable guarantees": [
+   [
+    "2603.10749",
+    "Following established formalizations [69], an agent is defined by a policy \u03c0 implemented by an LLM, and a toolset F = {f1,..., fn} designed to query or modify external resources (e.g., web browsers or email clients)."
+   ],
+   [
+    "2603.10749",
+    "Next, we introduce control effect and control potency to quantify when the obser- vation stream supplies the necessary influence for a tool call, and to formalize what it means to attenuate such influence."
+   ],
+   [
+    "2604.15579",
+    "Symbolic Guardrails for Domain-Specific Agents: Stronger Safety and Security Guarantees Without Sacrificing Utility Yining Hong Carnegie Mellon University Pittsburgh, PA, USA yhong3@andrew.cmu.edu Yining She Carnegie Mellon University Pittsburgh, PA, USA yiningsh@andrew.cmu.edu Eunsuk Kang Carnegie Mellon University Pittsburgh, PA, USA eunsukk@andrew.cmu.edu Christopher S."
+   ],
+   [
+    "2604.15579",
+    "We study symbolic guardrails as a practical path toward strong safety and security guarantees for AI agents."
+   ],
+   [
+    "2605.29251",
+    "Based on this paradigm, we further introduce an executable Proof-Constrained Ac- tion (ePCA) framework with a neural symbolic isolation architecture."
+   ],
+   [
+    "2605.29251",
+    "Empirical evalua- tions of macroscopic and microscopic two-dimensional dy- namic adversarial systems demonstrate that our formal ver- ification mechanism achieves zero attack success rate and zero false positive rate across the evaluated scenarios, with extremely low computational latency."
+   ]
+  ],
+  "Provenance / attestation / signed receipts": [
+   [
+    "2603.10749",
+    "Following established formalizations [69], an agent is defined by a policy \u03c0 implemented by an LLM, and a toolset F = {f1,..., fn} designed to query or modify external resources (e.g., web browsers or email clients)."
+   ],
+   [
+    "2603.10749",
+    "A learned prompt-guard model designed to mitigate \u201cover-defense\u201d (false positives on benign con- tent with trigger words) while maintaining strong injection- detection performance; deployed as a binary/triage filter on observations. \u2022 DataSentinel [27]."
+   ],
+   [
+    "2605.29251",
+    "Attribute-based access control (ABAC) methods evaluate operations in isolation, suffer from time- forgotten problems, leading to cumulative quota violations and out-of-context policy tampering."
+   ],
+   [
+    "2605.29251",
+    "Specifically, formal constraints can be used to limit the legality of be- havior at the logical level, but cannot prevent direct tamper- ing with the underlying execution environment."
+   ]
+  ],
+  "Guard model / classifier / detector": [
+   [
+    "2603.10749",
+    "We include PI Detector [39], PromptGuard [10], PIGuard [23], DataSentinel [27], PromptArmor [46], and MELON [69]. \u2777Prompting-based defenses rely on in-context instructions (e.g., delimiters or role separation) to help the model distinguish untrusted data from instructions."
+   ],
+   [
+    "2603.10749",
+    "Detection-based defenses aim to identify potentially malicious instructions in untrusted obser- vations before they are incorporated into the agent context, typically by running a classifier or an auxiliary detector on tool-returned content. 19 \u2022 PI Detector [39]."
+   ],
+   [
+    "2604.15579",
+    "For example, an LLM judge may detect and reduce hallucinations, where symbolic guardrails fail."
+   ],
+   [
+    "2604.15579",
+    "The metric \ud835\udc5f\ud835\udc5d\ud835\udc5c\ud835\udc59\ud835\udc56\ud835\udc50\ud835\udc66evaluates whether each task follows the policy all the time, partially relying on an LLM judge."
+   ]
+  ],
+  "Trajectory anomaly detection": [
+   [
+    "2603.10749",
+    "The attack is considered successful if the resulting exe- cution trajectory \u03c4 = ( which the same policy \u03c0 may generate a sub- sequent action A\u2032 t+1 \u223c\u03c0(\u00b7 | H\u2032 t+1) that advances execution toward Tm rather than serving Tu."
+   ],
+   [
+    "2603.10749",
+    "To map this record into a numeric score, we use a defense- specific scorer prompt whose content is instantiated from three placeholders: Defense description (the defense\u2019s logic/mitigation behavior), defense_state schema (the runtime fields exposed by the defense), and SCORING (the rule that combines attack_success, defense_state, and messages)."
+   ],
+   [
+    "2605.29251",
+    "A logical paradox refers to the inconsistency of the formal logic of behavior, where an agent\u2019s intended action simultaneously requires and violates system safety Provably Secure Agent Guardrail invariants, resulting in a provable deadlock that blocks ex- ecution."
+   ],
+   [
+    "2605.29251",
+    "In contrast, the multi-step planning, tool invocation, and permission operations performed by agents in open envi- ronments essentially constitute a highly dynamic and state- dependent behavioral process."
+   ]
+  ],
+  "Red teaming / adaptive evaluation": [
+   [
+    "2603.30016",
+    "For example, the most popular AgentDojo benchmark [7] only contains 6 (out of 97) tasks that require policy update/replanning [15]."
+   ],
+   [
+    "2603.30016",
+    "We illustrate this with the AgentDojo [7] benchmark\u2019s send_money tool and a static tool-level policy used in CaMeL [6]."
+   ],
+   [
+    "2604.15579",
+    "Our three-part study includes a systematic review of 80 state-of-the-art agent safety and security benchmarks to identify the policies they evaluate, an analysis of which policy requirements can be guaranteed by symbolic guardrails, and an evaluation of how symbolic guardrails affect safety, security, and agent success on \ud835\udf0f2-Bench, CAR-bench, and MedAgentBench."
+   ],
+   [
+    "2604.15579",
+    "We find that 85% of benchmarks lack concrete policies, relying instead on underspeci- fied high-level goals or common sense."
+   ],
+   [
+    "2605.29251",
+    "Empirical evalua- tions of macroscopic and microscopic two-dimensional dy- namic adversarial systems demonstrate that our formal ver- ification mechanism achieves zero attack success rate and zero false positive rate across the evaluated scenarios, with extremely low computational latency."
+   ],
+   [
+    "2605.29251",
+    "Consequently, the role of empirical evaluation in this work is not to measure security in a statistical sense, but to in- stantiate and expose the behavior of the formal mechanism under representative conditions."
+   ]
+  ],
+  "Policy language / declarative rules": [
+   [
+    "2604.15579",
+    "We also annotated the specificity of the safety and security policies each benchmark considers by examining the policies given to the evalu- ated agent, namely the safety or security instructions, guidelines, or rules it receives."
+   ],
+   [
+    "2604.15579",
+    "We treat these policies as lying on a spectrum of specificity and classify them into four categories: No Policy, Goal- Setting, Concrete Rules, and Task-Specific."
+   ],
+   [
+    "2605.29251",
+    "Un- der this framework, unlike filtering mechanisms that rely on semantic understanding or contextual judgment, this con- straint is checked at the execution level through formal rules, thereby reducing reliance on probabilistic reasoning."
+   ],
+   [
+    "2605.29251",
+    "To enforce the system, a security axiom network inter- woven with five core algebraic rules is hard-coded at the system\u2019s underlying layer."
+   ]
+  ],
+  "Sandbox / OS-level isolation": [
+   [
+    "2605.29251",
+    "Based on this paradigm, we further introduce an executable Proof-Constrained Ac- tion (ePCA) framework with a neural symbolic isolation architecture."
+   ],
+   [
+    "2605.29251",
+    "Furthermore, in the Cross-Domain Data Exfiltration sandbox, our system not only completely prevented unauthorized operations but also induced a forced termination of the agent\u2019s reasoning process."
+   ]
+  ],
+  "Runtime verification / conformance / invariants": [
+   [
+    "2605.29251",
+    "A logical paradox refers to the inconsistency of the formal logic of behavior, where an agent\u2019s intended action simultaneously requires and violates system safety Provably Secure Agent Guardrail invariants, resulting in a provable deadlock that blocks ex- ecution."
+   ],
+   [
+    "2605.29251",
+    "Instead of encoding the full system state, the verification state space \ud835\udc46ver is defined as a tuple of security-relevant attributes: \ud835\udc60= \u27e8\ud835\udefc1, \ud835\udefc2, . . . , \ud835\udefc\ud835\udc58\u27e9\u2208\ud835\udc46\ud835\udc63\ud835\udc52\ud835\udc5f where each attribute captures a dimension necessary for en- forcing global invariants, such as privilege, information flow status, or execution context."
+   ]
+  ],
+  "Information flow / taint tracking": [
+   [
+    "2605.29251",
+    "Instead of encoding the full system state, the verification state space \ud835\udc46ver is defined as a tuple of security-relevant attributes: \ud835\udc60= \u27e8\ud835\udefc1, \ud835\udefc2, . . . , \ud835\udefc\ud835\udc58\u27e9\u2208\ud835\udc46\ud835\udc63\ud835\udc52\ud835\udc5f where each attribute captures a dimension necessary for en- forcing global invariants, such as privilege, information flow status, or execution context."
+   ],
+   [
+    "2605.29251",
+    "While authorizing the read based on \ud835\udc34\ud835\udc65\ud835\udc56\ud835\udc5c\ud835\udc5a_\ud835\udc35, the system silently injects a global session taint state to meet the prerequisites for internal data access."
+   ]
+  ],
+  "Structured/constrained decoding as a guard": [
+   [
+    "2605.29251",
+    "In this architecture, the structured grammar of the payload \ud835\udc57essentially acts as a \u201ctheorem\u201d of the agent\u2019s intent, converting unpredictable neural outputs into verifiable symbolic representations."
+   ],
+   [
+    "2605.29251",
+    "The system first enforces semantic stripping, extracting discrete parameters to form \u27e6\ud835\udc57\ud835\udc58+1\u27e7\ud835\udc46\ud835\udc40\ud835\udc47. 2Recent advances in structured decoding, program synthesis, and neural- symbolic methods have made substantial progress in constraining language model outputs into formal representations, improving reliability in practical settings [15, 20]."
+   ]
+  ],
+  "Egress / exfiltration control": [
+   [
+    "2605.29251",
+    "Furthermore, in the Cross-Domain Data Exfiltration sandbox, our system not only completely prevented unauthorized operations but also induced a forced termination of the agent\u2019s reasoning process."
+   ],
+   [
+    "2605.29251",
+    "Adversarial strategies necessarily violate these in- variants and are mapped to UNSAT, while benign executions remain within the satisfiable region. 6.4 Enterprise Sandbox Data Exfiltration 6.4.1 Attack Trajectory."
+   ]
+  ]
+ }
+}

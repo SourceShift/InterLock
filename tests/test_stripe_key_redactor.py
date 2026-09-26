@@ -13,9 +13,9 @@ from interlock.detectors.stripe_key_redactor import (
     stripe_key_redactor,
 )
 
-# A real, structurally valid Stripe live secret key: the "sk_live_" prefix plus a
-# 24-character alphanumeric body.
-KEY = "sk_live_51H8zABCDEFGHIJKLMNOPqrst"
+# A structurally valid key shape for the redactor to match, with a deliberately
+# non-random body: a placeholder, so secret scanners do not read it as a live key.
+KEY = "sk_live_ABCDEF1234567890abcdef"
 
 
 def _event(action="http_post", **args):
@@ -67,7 +67,7 @@ def test_several_content_keys_changed_at_once():
 
 def test_restricted_and_test_keys_are_masked_too():
     guard = stripe_key_redactor()
-    for key in ("rk_live_51H8zABCDEFGHIJKLMNOPqrst", "sk_test_51H8zABCDEFGHIJKLMNOPqrst"):
+    for key in ("rk_live_ABCDEF1234567890abcdef", "sk_test_ABCDEF1234567890abcdef"):
         decision = guard(_event(data="key " + key))
         assert decision is not None, key
         assert decision.verdict is Verdict.MODIFY, key
@@ -119,7 +119,7 @@ def test_non_dict_args_get_no_opinion():
 def test_short_body_is_not_a_match():
     # "sk_live_" with fewer than 16 body characters is prose, not a key.
     guard = stripe_key_redactor()
-    assert guard(_event(data="the prefix sk_live_51H8zABC alone")) is None
+    assert guard(_event(data="the prefix sk_live_ABCDEF12 alone")) is None
 
 
 # --- constants --------------------------------------------------------------

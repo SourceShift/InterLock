@@ -1,0 +1,743 @@
+{
+ "hits": {
+  "guard model / classifier": 5,
+  "red teaming / eval harness": 37,
+  "formal / runtime verification": 18,
+  "governance / compliance": 24,
+  "sandbox / kernel isolation": 36,
+  "injection/jailbreak detection": 65,
+  "adversarial robustness of guard": 25,
+  "runtime interception / hooks": 20,
+  "critical-path minimize / task decomposition": 7,
+  "secrets / credential protection": 10,
+  "anomaly / behavior monitoring": 10,
+  "oversight scaling / debate": 30,
+  "cost / rate / resource limits": 8,
+  "tool/MCP surface hardening": 57,
+  "multi-agent trust": 68,
+  "provenance / audit / attestation": 24,
+  "taint tracking / IFC": 11,
+  "capability / least privilege": 4,
+  "plan / action verification": 2,
+  "egress / exfil control": 7,
+  "human-in-the-loop / approval": 15,
+  "data provenance / RAG source": 7,
+  "policy / rule engine": 4,
+  "defense in depth / layered": 4
+ },
+ "examples": {
+  "guard model / classifier": [
+   [
+    "2601.18491",
+    "2026-01-26",
+    "AgentDoG: A Diagnostic Guardrail Framework for AI Agent Safety and Security"
+   ],
+   [
+    "2604.12284",
+    "2026-04-14",
+    "WebAgentGuard: A Reasoning-Driven Guard Model for Detecting Prompt Injection Attacks in Web Agents"
+   ],
+   [
+    "2609.01046",
+    "2026-09-01",
+    "HiveTraceGuard-Pro: A Compact Generative Guardrail for Prompt Injection, Jailbreaks, and Adversarial Obfuscation"
+   ],
+   [
+    "2602.01750",
+    "2026-02-02",
+    "Adversarial Reward Auditing for Active Detection and Mitigation of Reward Hacking"
+   ],
+   [
+    "2609.15134",
+    "2026-09-14",
+    "HazardAuditor: From Executable Threats to Safer Computer-Use Agents"
+   ]
+  ],
+  "red teaming / eval harness": [
+   [
+    "2604.24826",
+    "2026-04-27",
+    "A Comparative Evaluation of AI Agent Security Guardrails"
+   ],
+   [
+    "2606.03271",
+    "2026-06-02",
+    "Agentic Relationship Harm: Benchmarking and Gating Relational Manipulation in AI Agents"
+   ],
+   [
+    "2603.28166",
+    "2026-03-30",
+    "Evaluating Privilege Usage of Agents with Real-World Tools"
+   ],
+   [
+    "2603.02277",
+    "2026-03-01",
+    "Quantifying Frontier LLM Capabilities for Container Sandbox Escape"
+   ],
+   [
+    "2602.11224",
+    "2026-02-11",
+    "Agent-Diff: Benchmarking LLM Agents on Enterprise API Tasks via Code Execution with State-Diff-Based Evaluation"
+   ],
+   [
+    "2606.18356",
+    "2026-06-16",
+    "SafeClawBench: Separating Semantic, Audit-Evidence, and Sandbox Harm in Tool-Using LLM Agents"
+   ]
+  ],
+  "formal / runtime verification": [
+   [
+    "2603.05786",
+    "2026-03-06",
+    "Proof-of-Guardrail in AI Agents and What (Not) to Trust from It"
+   ],
+   [
+    "2604.01483",
+    "2026-04-01",
+    "Type-Checked Compliance: Deterministic Guardrails for Agentic Financial Systems Using Lean 4 Theorem Proving"
+   ],
+   [
+    "2603.20356",
+    "2026-03-20",
+    "Agentproof: Static Verification of Agent Workflow Graphs"
+   ],
+   [
+    "2606.12022",
+    "2026-06-10",
+    "Runtime Enforcement of Hybrid System Properties"
+   ],
+   [
+    "2607.05397",
+    "2026-04-26",
+    "Proof of Execution: Runtime Verification for Governed AI Agent Actions"
+   ],
+   [
+    "2607.21325",
+    "2026-07-23",
+    "Toward cryptographically verifiable authorization for autonomous AI agents: A security hypothesis, preliminary formal model, and proof-of-concept implementation"
+   ]
+  ],
+  "governance / compliance": [
+   [
+    "2604.01483",
+    "2026-04-01",
+    "Type-Checked Compliance: Deterministic Guardrails for Agentic Financial Systems Using Lean 4 Theorem Proving"
+   ],
+   [
+    "2604.05229",
+    "2026-04-06",
+    "From Governance Norms to Enforceable Controls: A Layered Translation Method for Runtime Guardrails in Agentic AI"
+   ],
+   [
+    "2604.16870",
+    "2026-04-18",
+    "Governed MCP: Kernel-Level Tool Governance for AI Agents via Logit-Based Safety Primitives"
+   ],
+   [
+    "2606.01991",
+    "2026-06-01",
+    "SafeMCP: Proactive Power Regulation for LLM Agent Defense via Environment-Grounded Look-Ahead Reasoning"
+   ],
+   [
+    "2605.05868",
+    "2026-05-07",
+    "SkillScope: Toward Fine-Grained Least-Privilege Enforcement for Agent Skills"
+   ],
+   [
+    "2609.00267",
+    "2026-08-31",
+    "Delegation Without Trust: An Empirical Gap Analysis of Identity, Authorization, and Runtime Governance in Multi-Agent LLM Systems"
+   ]
+  ],
+  "sandbox / kernel isolation": [
+   [
+    "2606.03271",
+    "2026-06-02",
+    "Agentic Relationship Harm: Benchmarking and Gating Relational Manipulation in AI Agents"
+   ],
+   [
+    "2604.04872",
+    "2026-04-06",
+    "Synthetic Sandbox for Training Machine Learning Engineering Agents"
+   ],
+   [
+    "2601.16206",
+    "2026-01-22",
+    "Computer Environments Elicit General Agentic Intelligence in LLMs"
+   ],
+   [
+    "2601.13981",
+    "2026-01-20",
+    "VirtualCrime: Evaluating Criminal Potential of Large Language Models via Sandbox Simulation"
+   ],
+   [
+    "2607.23933",
+    "2026-07-27",
+    "SpecBox: Speculative Sandbox Scheduling for Efficient LLM Agent Serving"
+   ],
+   [
+    "2604.13120",
+    "2026-04-13",
+    "AgentForge: Execution-Grounded Multi-Agent LLM Framework for Autonomous Software Engineering"
+   ]
+  ],
+  "injection/jailbreak detection": [
+   [
+    "2607.13081",
+    "2026-07-13",
+    "SingGuard-NSFA: Extensible Guardrails for Agentic AI via Generative Reasoning and Real-Time Classification"
+   ],
+   [
+    "2606.14517",
+    "2026-06-12",
+    "From Shield to Target: Denial-of-Service Attacks on LLM-Based Agent Guardrails"
+   ],
+   [
+    "2603.01414",
+    "2026-03-02",
+    "Jailbreaking Embodied LLMs via Action-level Manipulation"
+   ],
+   [
+    "2608.11878",
+    "2026-08-12",
+    "ToolHazard: Scaling Adversarial Environments for Security Evaluation and Alignment of LLM-based Agents"
+   ],
+   [
+    "2608.04053",
+    "2026-08-04",
+    "AgentAntibody: An Adaptive Immune System for Defending LLM Agents against Prompt Injection"
+   ],
+   [
+    "2601.04795",
+    "2026-01-08",
+    "Defense Against Indirect Prompt Injection via Tool Result Parsing"
+   ]
+  ],
+  "adversarial robustness of guard": [
+   [
+    "2606.14517",
+    "2026-06-12",
+    "From Shield to Target: Denial-of-Service Attacks on LLM-Based Agent Guardrails"
+   ],
+   [
+    "2609.07131",
+    "2026-09-07",
+    "AgentLeak: Cloning Stronger LLM Agent Capabilities onto Weaker Agents Beyond Skill Stealing"
+   ],
+   [
+    "2606.18356",
+    "2026-06-16",
+    "SafeClawBench: Separating Semantic, Audit-Evidence, and Sandbox Harm in Tool-Using LLM Agents"
+   ],
+   [
+    "2601.04795",
+    "2026-01-08",
+    "Defense Against Indirect Prompt Injection via Tool Result Parsing"
+   ],
+   [
+    "2602.05066",
+    "2026-02-04",
+    "Bypassing AI Control Protocols via Agent-as-a-Proxy Attacks"
+   ],
+   [
+    "2608.05108",
+    "2026-08-05",
+    "Agent Against Agent: An Agentic System for Automatic Prompt Injection Red Teaming"
+   ]
+  ],
+  "runtime interception / hooks": [
+   [
+    "2604.05229",
+    "2026-04-06",
+    "From Governance Norms to Enforceable Controls: A Layered Translation Method for Runtime Guardrails in Agentic AI"
+   ],
+   [
+    "2608.05695",
+    "2026-08-06",
+    "DreamGuard: Efficient Runtime Guardrail for LLM Agents via Risk-Aware World Model"
+   ],
+   [
+    "2603.20356",
+    "2026-03-20",
+    "Agentproof: Static Verification of Agent Workflow Graphs"
+   ],
+   [
+    "2609.14987",
+    "2026-09-14",
+    "ActGuard: Pre-execution Action Auditing against Indirect Prompt Injection in LLM Agents"
+   ],
+   [
+    "2604.07551",
+    "2026-04-08",
+    "MCP-DPT: A Defense-Placement Taxonomy and Coverage Analysis for Model Context Protocol Security"
+   ],
+   [
+    "2607.22868",
+    "2026-07-24",
+    "What Can Be Enforced? A Theory of Certified Runtime Safety for Tool-Using Agents"
+   ]
+  ],
+  "critical-path minimize / task decomposition": [
+   [
+    "2609.16694",
+    "2026-09-15",
+    "Toward Secure AI-Powered Penetration Testing Agents: Security Threats, Guardrails, and Architectural Perspectives"
+   ],
+   [
+    "2608.02011",
+    "2026-08-03",
+    "Before Reasoning Fails: Pre-Evidence Procedural Failures in Agentic RAG"
+   ],
+   [
+    "2603.11445",
+    "2026-03-12",
+    "Verified Multi-Agent Orchestration: A Plan-Execute-Verify-Replan Framework for Complex Query Resolution"
+   ],
+   [
+    "2609.24242",
+    "2026-09-21",
+    "Anticipatory Human Oversight of Agentic AI: A Philosophical Account"
+   ],
+   [
+    "2601.12231",
+    "2026-01-18",
+    "Wavelet-Aware Anomaly Detection in Multi-Channel User Logs via Deviation Modulation and Resolution-Adaptive Attention"
+   ],
+   [
+    "2605.17480",
+    "2026-05-17",
+    "The Capability Paradox: How Smarter Auditors Make Multi-Agent Systems Less Secure"
+   ]
+  ],
+  "secrets / credential protection": [
+   [
+    "2605.14454",
+    "2026-05-14",
+    "LiSA: Lifelong Safety Adaptation via Conservative Policy Induction"
+   ],
+   [
+    "2601.01241",
+    "2026-01-03",
+    "MCP-SandboxScan: WASM-based Secure Execution and Runtime Analysis for MCP Tools"
+   ],
+   [
+    "2607.22445",
+    "2026-07-24",
+    "Dynamic Capability Scoping for Enterprise AI Agents: A Synthetic Dataset and Three-Source Permission Architecture"
+   ],
+   [
+    "2609.15422",
+    "2026-09-14",
+    "Empirical Evaluation of Task-Based Permission Scoping Architecture for AI Agents"
+   ],
+   [
+    "2609.00267",
+    "2026-08-31",
+    "Delegation Without Trust: An Empirical Gap Analysis of Identity, Authorization, and Runtime Governance in Multi-Agent LLM Systems"
+   ],
+   [
+    "2605.04785",
+    "2026-05-06",
+    "AgentTrust: Runtime Safety Evaluation and Interception for AI Agent Tool Use"
+   ]
+  ],
+  "anomaly / behavior monitoring": [
+   [
+    "2607.02121",
+    "2026-07-02",
+    "Behind the Refusal: Determining Guardrail Activation via Behavioral Monitoring"
+   ],
+   [
+    "2606.28467",
+    "2026-06-26",
+    "An Agentic AI Pipeline for Appliance-Level Energy Anomaly Detection and LLM-Driven Recommendations"
+   ],
+   [
+    "2608.03779",
+    "2026-08-04",
+    "AgenticVAU: Multi-Agent Explore-Verify Reasoning for Video Anomaly Understanding"
+   ],
+   [
+    "2604.19538",
+    "2026-04-21",
+    "Integrating Anomaly Detection into Agentic AI for Proactive Risk Management in Human Activity"
+   ],
+   [
+    "2605.30140",
+    "2026-05-28",
+    "AnomalyAgent: Training-Free Agentic Models for Zero-/Few-Shot Anomaly Detection"
+   ],
+   [
+    "2609.06835",
+    "2026-09-06",
+    "Skynet: Workflow-Level Anomaly Detection for Agentic AI via Semantic and Structural Modeling"
+   ]
+  ],
+  "oversight scaling / debate": [
+   [
+    "2607.02121",
+    "2026-07-02",
+    "Behind the Refusal: Determining Guardrail Activation via Behavioral Monitoring"
+   ],
+   [
+    "2608.04053",
+    "2026-08-04",
+    "AgentAntibody: An Adaptive Immune System for Defending LLM Agents against Prompt Injection"
+   ],
+   [
+    "2602.05066",
+    "2026-02-04",
+    "Bypassing AI Control Protocols via Agent-as-a-Proxy Attacks"
+   ],
+   [
+    "2608.05108",
+    "2026-08-05",
+    "Agent Against Agent: An Agentic System for Automatic Prompt Injection Red Teaming"
+   ],
+   [
+    "2602.20708",
+    "2026-02-24",
+    "ICON: Indirect Prompt Injection Defense for Agents based on Inference-Time Correction"
+   ],
+   [
+    "2605.17634",
+    "2026-05-17",
+    "AI Agents May Always Fall for Prompt Injections"
+   ]
+  ],
+  "cost / rate / resource limits": [
+   [
+    "2609.12216",
+    "2026-09-10",
+    "Guardrailed Meta-Agent Loops: Stress-Testing Policy Pinning, Budget Bounds, and Crash Recovery"
+   ],
+   [
+    "2603.17673",
+    "2026-03-18",
+    "Post-Training Local LLM Agents for Linux Privilege Escalation with Verifiable Rewards"
+   ],
+   [
+    "2603.02788",
+    "2026-03-03",
+    "Agentified Assessment of Logical Reasoning Agents"
+   ],
+   [
+    "2607.24779",
+    "2026-06-17",
+    "HOBA: Hierarchical On-Policy Bidding Agents for Adaptive Online Advertising"
+   ],
+   [
+    "2609.25913",
+    "2026-09-22",
+    "When Does Execution Provenance Help Agent Memory Retrieval?"
+   ],
+   [
+    "2607.21676",
+    "2026-07-23",
+    "Directed Symbolic Execution for Vulnerability Discovery: An LLM-Guided Approach in KLEE"
+   ]
+  ],
+  "tool/MCP surface hardening": [
+   [
+    "2607.23933",
+    "2026-07-27",
+    "SpecBox: Speculative Sandbox Scheduling for Efficient LLM Agent Serving"
+   ],
+   [
+    "2605.10787",
+    "2026-05-11",
+    "ComplexMCP: Evaluation of LLM Agents in Dynamic, Interdependent, and Large-Scale Tool Sandbox"
+   ],
+   [
+    "2601.04795",
+    "2026-01-08",
+    "Defense Against Indirect Prompt Injection via Tool Result Parsing"
+   ],
+   [
+    "2601.07395",
+    "2026-01-12",
+    "MCP-ITP: An Automated Framework for Implicit Tool Poisoning in MCP"
+   ],
+   [
+    "2603.22489",
+    "2026-03-23",
+    "Model Context Protocol Threat Modeling and Analyzing Vulnerabilities to Prompt Injection with Tool Poisoning"
+   ],
+   [
+    "2603.21642",
+    "2026-03-23",
+    "Are AI-assisted Development Tools Immune to Prompt Injection?"
+   ]
+  ],
+  "multi-agent trust": [
+   [
+    "2604.13120",
+    "2026-04-13",
+    "AgentForge: Execution-Grounded Multi-Agent LLM Framework for Autonomous Software Engineering"
+   ],
+   [
+    "2603.17694",
+    "2026-03-18",
+    "MALLES: A Multi-agent LLMs-based Economic Sandbox with Consumer Preference Alignment"
+   ],
+   [
+    "2604.03870",
+    "2026-04-04",
+    "Your Agent is More Brittle Than You Think: Uncovering Indirect Injection Vulnerabilities in Agentic LLMs"
+   ],
+   [
+    "2609.22949",
+    "2026-09-19",
+    "Beyond Single-Model Injection: A Threat Model and Defense Architecture for Prompt Injection in Multi-Agent Systems"
+   ],
+   [
+    "2606.15008",
+    "2026-06-12",
+    "Security Engineering of OpenClaw: Analyzing Attack Surface Expansion and Trust-Boundary Violations"
+   ],
+   [
+    "2608.01425",
+    "2026-08-02",
+    "Training Small LLMs as Spatial Multi-Agent Policies"
+   ]
+  ],
+  "provenance / audit / attestation": [
+   [
+    "2605.26298",
+    "2026-05-25",
+    "Sandlock: Confining AI Agent Code with Unprivileged Linux Primitives"
+   ],
+   [
+    "2605.24248",
+    "2026-05-22",
+    "Attested Tool-Server Admission: A Security Extension to the Model Context Protocol"
+   ],
+   [
+    "2609.02690",
+    "2026-09-02",
+    "ACLE-MCP: Attested Capability Leases for Execution-Time Trust in Remote LLM Tool Use"
+   ],
+   [
+    "2607.05397",
+    "2026-04-26",
+    "Proof of Execution: Runtime Verification for Governed AI Agent Actions"
+   ],
+   [
+    "2607.13716",
+    "2026-07-15",
+    "CAVA: Canonical Action Verification and Attestation for Runtime Governance of Agentic AI Systems"
+   ],
+   [
+    "2609.12727",
+    "2026-09-11",
+    "Fresh-Challenge VDF Attestations for Model-Relative Response Latency"
+   ]
+  ],
+  "taint tracking / IFC": [
+   [
+    "2606.26479",
+    "2026-06-25",
+    "Adaptive Evaluation of Out-of-Band Defenses Against Prompt Injection in LLM Agents"
+   ],
+   [
+    "2605.21392",
+    "2026-05-20",
+    "VIPER-MCP: Detecting and Exploiting Taint-Style Vulnerabilities in Model Context Protocol Servers"
+   ],
+   [
+    "2607.07461",
+    "2026-07-08",
+    "Mitigating Taint-Style Vulnerabilities in MCP Servers via Security-Aware Tool Descriptions"
+   ],
+   [
+    "2607.24625",
+    "2026-07-27",
+    "Agentic Permissions Policy Algebra for Taint Confinement in LLM Agents"
+   ],
+   [
+    "2606.00717",
+    "2026-05-30",
+    "Multi-Agent Conformal Prediction with Personalized Statistical Validity"
+   ],
+   [
+    "2609.14003",
+    "2026-09-12",
+    "Confuse the Model, Control the Flow: Understanding and Mitigating Privacy Leakage from LLM Agents with Information Flow Control"
+   ]
+  ],
+  "capability / least privilege": [
+   [
+    "2607.09744",
+    "2026-07-03",
+    "A Theory of Least Autonomy in AI"
+   ],
+   [
+    "2601.23157",
+    "2026-01-30",
+    "No More, No Less: Least-Privilege Language Models"
+   ],
+   [
+    "2603.25393",
+    "2026-03-26",
+    "ALPS: Automated Least-Privilege Enforcement for Securing Serverless Functions"
+   ],
+   [
+    "2601.11893",
+    "2026-01-17",
+    "Taming Various Privilege Escalation in LLM-Based Agent Systems: A Mandatory Access Control Framework"
+   ]
+  ],
+  "plan / action verification": [
+   [
+    "2609.11957",
+    "2026-08-09",
+    "Look Before You Leap: Pre-Action Verification for LLM Agents"
+   ],
+   [
+    "2607.13716",
+    "2026-07-15",
+    "CAVA: Canonical Action Verification and Attestation for Runtime Governance of Agentic AI Systems"
+   ]
+  ],
+  "egress / exfil control": [
+   [
+    "2605.04785",
+    "2026-05-06",
+    "AgentTrust: Runtime Safety Evaluation and Interception for AI Agent Tool Use"
+   ],
+   [
+    "2607.18847",
+    "2026-07-21",
+    "Data Leakage Prevention in Agentic Applications via Preemptive Hardening"
+   ],
+   [
+    "2604.05432",
+    "2026-04-07",
+    "Your LLM Agent Can Leak Your Data: Data Exfiltration via Backdoored Tool Use"
+   ],
+   [
+    "2604.19657",
+    "2026-04-21",
+    "An AI Agent Execution Environment to Safeguard User Data"
+   ],
+   [
+    "2606.17114",
+    "2026-06-15",
+    "An Evaluation of Data Leakage Risks in Tool-Using LLM Agents in Realistic Scenarios"
+   ],
+   [
+    "2606.04141",
+    "2026-06-02",
+    "Caught in the Act(ivation): Toward Pre-Output and Multi-Turn Detection of Credential Exfiltration by LLM Agents"
+   ]
+  ],
+  "human-in-the-loop / approval": [
+   [
+    "2609.18411",
+    "2026-09-16",
+    "The Verifiable Action Card: Trustworthy Human-in-the-Loop Control for Secure Autonomous Agents"
+   ],
+   [
+    "2609.08015",
+    "2026-09-07",
+    "From Version Conflicts to Decision Conflicts: Selective Revalidation for Long-Running AI Agents"
+   ],
+   [
+    "2607.21325",
+    "2026-07-23",
+    "Toward cryptographically verifiable authorization for autonomous AI agents: A security hypothesis, preliminary formal model, and proof-of-concept implementation"
+   ],
+   [
+    "2609.19391",
+    "2026-09-16",
+    "MAGS: Multi-agent Auto-formalization Guarantees Safety for Agentic Outputs"
+   ],
+   [
+    "2609.21081",
+    "2026-09-17",
+    "Loopjacking: Hijacking Human-in-the-Loop Approval"
+   ],
+   [
+    "2606.05391",
+    "2026-06-03",
+    "Human oversight of agentic systems in practice: Examining the oversight work, challenges, and heuristics of developers using software agents"
+   ]
+  ],
+  "data provenance / RAG source": [
+   [
+    "2608.02011",
+    "2026-08-03",
+    "Before Reasoning Fails: Pre-Evidence Procedural Failures in Agentic RAG"
+   ],
+   [
+    "2605.17034",
+    "2026-05-16",
+    "Privacy Policy Enforcement Guardrails for Data-Sensitive Retrieval-Augmented Generation"
+   ],
+   [
+    "2607.14811",
+    "2026-07-16",
+    "Is External Database Protection Static in Retrieval-Augmented Generation? Rethinking Privacy Preservation under Dynamic Queries"
+   ],
+   [
+    "2608.08100",
+    "2026-08-08",
+    "Defending Retrieval-Augmented Intrusion Detection Against Knowledge Poisoning and Prompt Injection"
+   ],
+   [
+    "2604.09747",
+    "2026-04-10",
+    "ADAM: A Systematic Data Extraction Attack on Agent Memory via Adaptive Querying"
+   ],
+   [
+    "2608.25935",
+    "2026-08-26",
+    "TAU-Agent: An Agentic Retrieval-Augmented Framework for Traffic Anomaly Understanding"
+   ]
+  ],
+  "policy / rule engine": [
+   [
+    "2605.17034",
+    "2026-05-16",
+    "Privacy Policy Enforcement Guardrails for Data-Sensitive Retrieval-Augmented Generation"
+   ],
+   [
+    "2605.31073",
+    "2026-05-29",
+    "ConsisGuard: Aligning Safety Deliberation with Policy Enforcement in LLM Guardrails"
+   ],
+   [
+    "2602.16708",
+    "2026-02-18",
+    "Policy Compiler for Secure Agentic Systems"
+   ],
+   [
+    "2607.05743",
+    "2026-07-07",
+    "The Balkanization of Execution-Security Research for AI Coding Agents: Isolation, Access Control, and Time-of-Check-to-Time-of-Use Vulnerabilities"
+   ]
+  ],
+  "defense in depth / layered": [
+   [
+    "2606.04141",
+    "2026-06-02",
+    "Caught in the Act(ivation): Toward Pre-Output and Multi-Turn Detection of Credential Exfiltration by LLM Agents"
+   ],
+   [
+    "2604.21953",
+    "2026-04-23",
+    "Performance Anomaly Detection in Athletics: A Benchmarking System with Visual Analytics"
+   ],
+   [
+    "2606.01567",
+    "2026-06-01",
+    "Defenses & Enablers For Skill Injection Attacks on Terminal Based Agents"
+   ],
+   [
+    "2608.16295",
+    "2026-08-17",
+    "Executable Code Knowledge: Code as a Native, Validation-Carrying Knowledge Representation for AI Coding Agents"
+   ]
+  ]
+ }
+}

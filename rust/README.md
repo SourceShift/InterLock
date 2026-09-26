@@ -11,7 +11,7 @@ interlock does **not** require this crate. `pip install interlock-guard` ships a
 pure-Python `ScopeTree` that needs no toolchain. When this module is importable,
 `interlock.policy.scopes` rebinds `ScopeTree` to it automatically and
 `SCOPE_BACKEND == "rust"`; otherwise `SCOPE_BACKEND == "python"`. The
-`evaluate(event) -> Decision` seam, the `ScopeRegistry` cache, and all 96
+`evaluate(event) -> Decision` seam, the `ScopeRegistry` cache, and all 105
 detectors are identical either way.
 
 ## Build
