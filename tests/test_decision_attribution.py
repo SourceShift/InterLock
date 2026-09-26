@@ -260,6 +260,10 @@ CASES = [
      "parse", {"data": '<!DOCTYPE b [<!ENTITY x SYSTEM "file:///c">]>'},
      "data", Verdict.BLOCK),
     # --- specific-key guards: the key is a module constant ------------------
+    ("mcp_capability_lease",
+     lambda: dmod("mcp_capability_lease").mcp_capability_lease(
+         dmod("mcp_capability_lease").LeaseRegistry()),
+     "mcp.call", {"__origin__": "github"}, "__origin__", Verdict.BLOCK),
     ("mcp_resource_uri_guard",
      lambda: dmod("mcp_resource_uri_guard").mcp_resource_uri_guard(
          ["internal://"]),
