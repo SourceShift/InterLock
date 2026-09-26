@@ -71,6 +71,7 @@ def memory_write_size_guard(max_bytes: int = DEFAULT_MAX_BYTES) -> Rule:
         return Decision.block(
             reason="memory_write_size_guard: value too large",
             policy_id=POLICY_ID,
+            attributed_to=VALUE_KEY,
         )
 
     return rule

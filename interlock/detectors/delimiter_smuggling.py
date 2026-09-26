@@ -55,6 +55,7 @@ def delimiter_smuggling() -> Rule:
                 return Decision.block(
                     reason="delimiter_smuggling: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
         return None
 

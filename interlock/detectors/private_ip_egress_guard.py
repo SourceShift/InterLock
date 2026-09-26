@@ -18,7 +18,7 @@ never raises on odd input.
 from __future__ import annotations
 
 import ipaddress
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 from urllib.parse import urlparse
 
 from ..enforce import Decision
@@ -37,18 +37,19 @@ EGRESS_ACTIONS = frozenset({
 DESTINATION_KEYS = ("url", "endpoint", "uri", "host", "address")
 
 
-def _destination(args: Any) -> Optional[str]:
-    """First usable destination string in *args*, else None.
+def _destination(args: Any) -> Optional[Tuple[str, str]]:
+    """First usable (argument name, destination) pair in *args*, else None.
 
     A key whose value is not a non-blank string (None, an int, a nested
-    container) is skipped rather than stringified.
+    container) is skipped rather than stringified. The argument name rides
+    along so a denial can name the input that triggered it.
     """
     if not isinstance(args, dict):
         return None
     for key in DESTINATION_KEYS:
         value = args.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return key, value.strip()
     return None
 
 
@@ -112,9 +113,10 @@ def private_ip_egress_guard() -> Rule:
         if getattr(event, "action", None) not in EGRESS_ACTIONS:
             return None
 
-        destination = _destination(getattr(event, "args", None))
-        if destination is None:
+        dest = _destination(getattr(event, "args", None))
+        if dest is None:
             return None
+        dest_key, destination = dest
 
         host = _host_of(destination)
         if not host:
@@ -131,6 +133,7 @@ def private_ip_egress_guard() -> Rule:
         return Decision.block(
             reason="{}: {}".format(POLICY_ID, why),
             policy_id=POLICY_ID,
+            attributed_to=dest_key,
         )
 
     return rule

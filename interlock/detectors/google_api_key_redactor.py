@@ -93,7 +93,8 @@ def google_api_key_redactor() -> Rule:
         if not changed:
             return None
         return Decision.modify(
-            changed, reason="google_key_redact", policy_id=POLICY_ID
+            changed, reason="google_key_redact", policy_id=POLICY_ID,
+            attributed_to=next(iter(changed)),
         )
 
     return rule

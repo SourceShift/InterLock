@@ -92,6 +92,7 @@ def pinned_context_guard(protected: Iterable[str]) -> Rule:
             return Decision.block(
                 reason="pinned_context_guard: protected key {}".format(key),
                 policy_id=POLICY_ID,
+                attributed_to=field_name,
             )
         return None
 

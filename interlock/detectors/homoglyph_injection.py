@@ -98,7 +98,7 @@ def homoglyph_injection(
         args: Any = getattr(event, "args", None)
         if not isinstance(args, dict):
             return None
-        for value in args.values():
+        for name, value in args.items():
             if not isinstance(value, str):
                 continue
             skeleton = _normalize(value)
@@ -107,6 +107,7 @@ def homoglyph_injection(
                     return Decision.block(
                         reason="homoglyph_injection: {}".format(pattern),
                         policy_id=POLICY_ID,
+                        attributed_to=name,
                     )
         return None
 

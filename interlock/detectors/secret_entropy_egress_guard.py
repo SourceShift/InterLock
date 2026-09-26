@@ -109,6 +109,7 @@ def secret_entropy_egress_guard(
                     return Decision.block(
                         reason="secret_entropy_egress_guard: high-entropy token",
                         policy_id=POLICY_ID,
+                        attributed_to=key,
                     )
         return None
 

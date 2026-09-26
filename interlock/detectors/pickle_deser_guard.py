@@ -66,6 +66,7 @@ def pickle_deser_guard() -> Rule:
                 return Decision.block(
                     reason="pickle_deser: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

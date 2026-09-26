@@ -66,6 +66,7 @@ def sensitive_file_write_guard() -> Rule:
                 return Decision.block(
                     reason="sensitive_write: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

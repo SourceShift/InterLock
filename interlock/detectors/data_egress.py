@@ -128,23 +128,24 @@ def _host_allowed(host: str, allowed: Set[str]) -> bool:
     return any(host == a or host.endswith("." + a) for a in allowed)
 
 
-def _destinations(args: Any, keys: Iterable[str]) -> List[str]:
-    """Every destination string found under the given argument keys.
+def _destinations(args: Any, keys: Iterable[str]) -> List[Tuple[str, str]]:
+    """Every (argument name, destination) pair found under the given keys.
 
     A key may hold one address or a list of them (multiple recipients); all are
-    collected so a single disallowed recipient is enough to deny the send.
+    collected so a single disallowed recipient is enough to deny the send. The
+    argument name rides along so a denial can name the input that triggered it.
     """
     if not isinstance(args, dict):
         return []
-    found: List[str] = []
+    found: List[Tuple[str, str]] = []
     for key in keys:
         if key not in args:
             continue
         val = args[key]
         if isinstance(val, str):
-            found.append(val)
+            found.append((key, val))
         elif isinstance(val, (list, tuple, set)):
-            found.extend(v for v in val if isinstance(v, str))
+            found.extend((key, v) for v in val if isinstance(v, str))
     return found
 
 
@@ -181,13 +182,14 @@ def network_egress_guard(
                 "fail-closed".format(event.action),
                 policy_id=NETWORK_EGRESS_POLICY_ID,
             )
-        for dest in dests:
+        for key, dest in dests:
             host = _host_of(dest)
             if host is None or not _host_allowed(host, allowed):
                 return Decision.block(
                     reason or "egress to '{}' is not on the destination "
                     "allowlist".format(host or dest),
                     policy_id=NETWORK_EGRESS_POLICY_ID,
+                    attributed_to=key,
                 )
         return None
 
@@ -231,6 +233,7 @@ def sensitive_path_guard(
                 return Decision.block(
                     reason or "read of sensitive path '{}' is denied".format(val),
                     policy_id=SENSITIVE_PATH_POLICY_ID,
+                    attributed_to=key,
                 )
         return None
 
@@ -360,6 +363,7 @@ def pii_redaction_guard(
             changed,
             reason or "masked PII/secret from outbound '{}'".format(event.action),
             policy_id=PII_REDACTION_POLICY_ID,
+            attributed_to=next(iter(changed)),
         )
 
     return rule

@@ -66,6 +66,7 @@ def destructive_command_guard() -> Rule:
                 return Decision.block(
                     reason="destructive_command: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

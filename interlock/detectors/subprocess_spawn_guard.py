@@ -63,6 +63,7 @@ def subprocess_spawn_guard() -> Rule:
                 return Decision.block(
                     reason="subprocess_spawn: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

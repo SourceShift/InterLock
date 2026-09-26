@@ -78,8 +78,10 @@ def rag_source_allowlist(allowed: Iterable[str]) -> Rule:
             )
 
         source = args.get("source")
+        src_key = "source"
         if source is None:
             source = args.get("collection")
+            src_key = "collection"
 
         if isinstance(source, str) and source in permitted:
             return None
@@ -89,6 +91,7 @@ def rag_source_allowlist(allowed: Iterable[str]) -> Rule:
                 _render(source)
             ),
             policy_id=POLICY_ID,
+            attributed_to=src_key,
         )
 
     return rule

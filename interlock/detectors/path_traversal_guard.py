@@ -66,6 +66,7 @@ def path_traversal_guard() -> Rule:
                 return Decision.block(
                     reason="path_traversal: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

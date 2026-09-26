@@ -22,7 +22,7 @@ input.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 from urllib.parse import urlparse
 
 from ..enforce import Decision
@@ -44,18 +44,19 @@ DESTINATION_KEYS = ("url", "endpoint", "uri", "host", "address")
 ALLOWED_SCHEMES = frozenset({"http", "https"})
 
 
-def _destination(args: Any) -> Optional[str]:
-    """First usable destination string in *args*, else None.
+def _destination(args: Any) -> Optional[Tuple[str, str]]:
+    """First usable (argument name, destination) pair in *args*, else None.
 
     A key whose value is not a non-blank string (None, an int, a nested
-    container) is skipped rather than stringified.
+    container) is skipped rather than stringified. The argument name rides
+    along so a denial can name the input that triggered it.
     """
     if not isinstance(args, dict):
         return None
     for key in DESTINATION_KEYS:
         value = args.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return key, value.strip()
     return None
 
 
@@ -85,9 +86,10 @@ def url_scheme_guard() -> Rule:
         if getattr(event, "action", None) not in EGRESS_ACTIONS:
             return None
 
-        destination = _destination(getattr(event, "args", None))
-        if destination is None:
+        dest = _destination(getattr(event, "args", None))
+        if dest is None:
             return None
+        dest_key, destination = dest
 
         try:
             scheme = _scheme_of(destination)
@@ -101,6 +103,7 @@ def url_scheme_guard() -> Rule:
         return Decision.block(
             reason="{}: {}".format(POLICY_ID, why),
             policy_id=POLICY_ID,
+            attributed_to=dest_key,
         )
 
     return rule

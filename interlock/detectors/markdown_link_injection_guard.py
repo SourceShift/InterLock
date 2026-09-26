@@ -70,6 +70,7 @@ def markdown_link_injection_guard() -> Rule:
                 return Decision.block(
                     reason="markdown_link_injection: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

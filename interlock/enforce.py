@@ -22,14 +22,23 @@ class Decision:
     reason: str = ""
     policy_id: Optional[str] = None
     modified_args: Optional[Dict[str, Any]] = None  # populated only for MODIFY
+    # The NAME of the argument that tripped the policy ("command", "path",
+    # "url") - never the argument's value, which would turn a diagnostic
+    # field into a data-exfiltration surface.
+    attributed_to: Optional[str] = None
 
     @classmethod
     def allow(cls, reason: str = "", policy_id: Optional[str] = None) -> "Decision":
         return cls(Verdict.ALLOW, reason, policy_id)
 
     @classmethod
-    def block(cls, reason: str, policy_id: Optional[str] = None) -> "Decision":
-        return cls(Verdict.BLOCK, reason, policy_id)
+    def block(
+        cls,
+        reason: str,
+        policy_id: Optional[str] = None,
+        attributed_to: Optional[str] = None,
+    ) -> "Decision":
+        return cls(Verdict.BLOCK, reason, policy_id, attributed_to=attributed_to)
 
     @classmethod
     def modify(
@@ -37,8 +46,12 @@ class Decision:
         modified_args: Dict[str, Any],
         reason: str = "",
         policy_id: Optional[str] = None,
+        attributed_to: Optional[str] = None,
     ) -> "Decision":
-        return cls(Verdict.MODIFY, reason, policy_id, modified_args)
+        return cls(
+            Verdict.MODIFY, reason, policy_id, modified_args,
+            attributed_to=attributed_to,
+        )
 
 
 class Blocked(Exception):

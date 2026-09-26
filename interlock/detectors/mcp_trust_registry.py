@@ -112,11 +112,16 @@ def mcp_trust_registry(trusted: Iterable[str]) -> Rule:
         origin = _resolve_origin(event)
         if origin is not None and origin in registry:
             return None
+        # Only an explicit origin label names a triggering argument; an
+        # origin inferred from the dotted action name has none to attribute.
         return Decision.block(
             "mcp_trust_registry: untrusted origin {}".format(
                 origin if origin is not None else _UNRESOLVED
             ),
             policy_id=POLICY_ID,
+            attributed_to=(
+                _ORIGIN_KEY if _origin_from_args(event.args) is not None else None
+            ),
         )
 
     return rule

@@ -44,12 +44,13 @@ def _event_for(
 def _emit(event: SensorEvent, decision: Decision, observed: bool = False) -> None:
     # M4 replaces this with signed receipts + an audit sink.
     _log.debug(
-        "action=%s verdict=%s reason=%s span=%s observed=%s",
+        "action=%s verdict=%s reason=%s span=%s observed=%s attributed_to=%s",
         event.action,
         decision.verdict.name,
         decision.reason,
         event.span_id,
         observed,
+        decision.attributed_to,
     )
 
 

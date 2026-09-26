@@ -96,7 +96,8 @@ def output_email_redactor() -> Rule:
         if not changed:
             return None
         return Decision.modify(
-            changed, reason="output_email_redact", policy_id=POLICY_ID
+            changed, reason="output_email_redact", policy_id=POLICY_ID,
+            attributed_to=next(iter(changed)),
         )
 
     return rule

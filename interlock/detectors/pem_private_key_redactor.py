@@ -99,6 +99,9 @@ def pem_private_key_redactor() -> Rule:
 
         if not changed:
             return None
-        return Decision.modify(changed, reason="pem_key_redact", policy_id=POLICY_ID)
+        return Decision.modify(
+            changed, reason="pem_key_redact", policy_id=POLICY_ID,
+            attributed_to=next(iter(changed)),
+        )
 
     return rule

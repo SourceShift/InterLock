@@ -102,6 +102,7 @@ def mcp_resource_uri_guard(allowed_prefixes: Iterable[str]) -> Rule:
                 _REASON_LEAD, uri if isinstance(uri, str) else _MISSING_URI
             ),
             policy_id=POLICY_ID,
+            attributed_to=_URI_KEY,
         )
 
     return rule

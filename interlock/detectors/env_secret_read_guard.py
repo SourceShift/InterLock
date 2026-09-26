@@ -61,6 +61,7 @@ def env_secret_read_guard() -> Rule:
                 return Decision.block(
                     reason="env_secret_read: {}".format(name),
                     policy_id=POLICY_ID,
+                    attributed_to=name,
                 )
 
         return None

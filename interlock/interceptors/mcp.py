@@ -59,12 +59,16 @@ def enforce_tool_call(
 
     if decision.verdict == Verdict.ALLOW or enforcement == "monitor":
         _log.debug(
-            "mcp action=%s verdict=%s observed=%s",
+            "mcp action=%s verdict=%s observed=%s attributed_to=%s",
             action, decision.verdict.name, enforcement == "monitor",
+            decision.attributed_to,
         )
         return args
     if decision.verdict == Verdict.BLOCK:
-        _log.debug("mcp action=%s BLOCK reason=%s", action, decision.reason)
+        _log.debug(
+            "mcp action=%s BLOCK reason=%s attributed_to=%s",
+            action, decision.reason, decision.attributed_to,
+        )
         raise Blocked(decision, action)
     if decision.verdict == Verdict.MODIFY and decision.modified_args:
         args.update(decision.modified_args)
