@@ -17,6 +17,7 @@ from .._runtime import get_engine
 from ..context import current_parent_principal, current_principal, current_span
 from ..enforce import Blocked, Decision, Verdict
 from ..event import SensorEvent
+from ..receipt import emit_receipt
 from .mcp import enforce_tool_result
 
 _log = logging.getLogger("interlock")
@@ -44,7 +45,6 @@ def _event_for(
 
 
 def _emit(event: SensorEvent, decision: Decision, observed: bool = False) -> None:
-    # M4 replaces this with signed receipts + an audit sink.
     _log.debug(
         "action=%s verdict=%s reason=%s span=%s observed=%s attributed_to=%s",
         event.action,
@@ -54,6 +54,9 @@ def _emit(event: SensorEvent, decision: Decision, observed: bool = False) -> Non
         observed,
         decision.attributed_to,
     )
+    # M4: the decision also becomes a chained receipt in the audit sink, when
+    # one is installed; with no sink this writes nothing.
+    emit_receipt(event, decision)
 
 
 def _enforce(

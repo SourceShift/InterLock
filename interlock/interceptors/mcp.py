@@ -29,6 +29,7 @@ from ..context import current_parent_principal, current_principal, current_span
 from ..enforce import Blocked, Verdict
 from ..event import SensorEvent
 from ..policy.engine import PolicyEngine
+from ..receipt import emit_receipt
 
 _log = logging.getLogger("interlock")
 
@@ -64,15 +65,23 @@ def enforce_tool_call(
             action, decision.verdict.name, enforcement == "monitor",
             decision.attributed_to,
         )
+        emit_receipt(event, decision)
         return args
     if decision.verdict == Verdict.BLOCK:
         _log.debug(
             "mcp action=%s BLOCK reason=%s attributed_to=%s",
             action, decision.reason, decision.attributed_to,
         )
+        emit_receipt(event, decision)
         raise Blocked(decision, action)
-    if decision.verdict == Verdict.MODIFY and decision.modified_args:
-        args.update(decision.modified_args)
+    if decision.verdict == Verdict.MODIFY:
+        # The MODIFY branch had no log site at all: the one verdict a policy
+        # rewrote the call with went unrecorded. It is a receipt site now.
+        # Emit before the merge: args aliases event.args, and the receipt
+        # digests the arguments the caller passed, not the rewritten ones.
+        emit_receipt(event, decision)
+        if decision.modified_args:
+            args.update(decision.modified_args)
     return args
 
 
@@ -119,15 +128,21 @@ def enforce_tool_result(
             action, decision.verdict.name, enforcement == "monitor",
             decision.attributed_to,
         )
+        emit_receipt(event, decision)
         return result
     if decision.verdict == Verdict.BLOCK:
         _log.debug(
             "mcp result action=%s BLOCK reason=%s attributed_to=%s",
             action, decision.reason, decision.attributed_to,
         )
+        emit_receipt(event, decision)
         raise Blocked(decision, action)
-    if decision.verdict == Verdict.MODIFY and decision.modified_result is not None:
-        return decision.modified_result
+    if decision.verdict == Verdict.MODIFY:
+        # Same hole as the call side: this MODIFY branch never recorded
+        # anything, and it is the verdict that rewrites what the caller gets.
+        emit_receipt(event, decision)
+        if decision.modified_result is not None:
+            return decision.modified_result
     return result
 
 
