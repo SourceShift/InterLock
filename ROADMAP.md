@@ -64,7 +64,7 @@ worse at both jobs.
 | R10 | Declarative YAML/JSON policies | `not started` | L | carried from M0 → M2 |
 | R11 | Automatic interception (import hooks) | `not started` | L | carried from M0 → M1/M3 |
 | R12 | Overhead benchmark suite, with methodology | `not started` | S | carried from M0 |
-| R13 | Node.js sensor | `not started` | L | carried from M0 |
+| R13 | Node.js sensor | `in progress` | L | carried from M0 |
 
 ---
 
@@ -854,6 +854,12 @@ with one methodology rather than several ad-hoc scripts.
   `RemoteEngine` over a unix socket, against the in-process engine as baseline.
   This is the round trip plus two JSON encodes that R13's viability turns on, and
   it must be measured before the JS interceptors are built rather than after.
+  R13 stage 2 added a JS-side smoke figure for it
+  (`node js/bench/roundtrip.mjs`: the guarded round trip against a no-guard
+  baseline, one reused connection — ~47 µs/call vs ~0.4 µs/call on the dev
+  machine, ~26 µs on a less loaded run). It is a smoke number, not a methodology:
+  it exists so the sidecar's viability has a JS figure while this item owns the
+  real harness, the p50/p99 split, and the regression gate.
 - Machine-readable output, so R5's regression gate and CI can consume the same
   numbers a human reads.
 
@@ -881,8 +887,10 @@ not just individual detectors. No dependencies.
 
 ## R13 · Node.js sensor
 
-**Status:** `in progress` — stage 1 (the Python sidecar and the conformance
-corpus) has landed; the JS client is stage 2 and not started.
+**Status:** `in progress` — stages 1 (the Python sidecar and the conformance
+corpus) and 2 (the `js/` client, the MCP interceptor, and the corpus replay) have
+landed; stage 3 (the native fs/exec/http and model-SDK interceptors) is not
+started.
 **Size:** L
 **Pull:** internal.
 
@@ -917,11 +925,18 @@ data file rather than a module.
   is generated from `interlock.testing.conformance`, and a test asserts the file
   matches the generator. It is the interface between the stages: the JS suite
   encodes these events and asserts these verdicts.
-- **Stage 2 (not started): the JS client.** A `js/` tree in the monorepo
-  (outside the `interlock*` package glob, so it never enters the wheel), speaking
-  the wire protocol, plus the MCP interceptor. Stage 3 adds the model-SDK and
-  native fs/exec/http interceptors. Nothing about policy crosses the language
-  boundary.
+- **Stage 2 (landed): the JS client.** A `js/` tree in the monorepo (outside the
+  `interlock*` package glob, so it never enters the wheel), speaking the wire
+  protocol, plus the MCP interceptor. One npm package (`interlock-guard`,
+  subpath exports), `tsc` + `node:test`, zero runtime dependencies. The
+  acceptance test is `js/test/corpus.test.ts`: it replays the same
+  `tests/conformance/events.json` the Python suite replays (13 cases, 9
+  negatives) against a spawned real daemon, and the suite **fails** rather than
+  skips if no daemon can start. `evaluate` is async (Node has no synchronous
+  unix-socket client), so a synchronous JS tool call cannot be guarded — MCP's
+  `callTool` is already async, so the interceptor fits. Stage 3 adds the
+  model-SDK and native fs/exec/http interceptors. Nothing about policy crosses
+  the language boundary.
 - The interceptors are the JS-native part; the engine is the part that is not
   reimplemented — it is not a second implementation at all, it is the same
   process.

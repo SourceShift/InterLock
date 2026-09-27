@@ -1,0 +1,52 @@
+{
+  "name": "interlock-guard",
+  "version": "0.0.1",
+  "description": "Guard a Node.js agent's MCP tool calls with the same policy engine the Python interlock SDK uses. The JS side enforces; a Python sidecar decides.",
+  "license": "Apache-2.0",
+  "author": "Amir Khakshour",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./wire": {
+      "types": "./dist/wire.d.ts",
+      "default": "./dist/wire.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
+    "bench": "node bench/roundtrip.mjs",
+    "clean": "rm -rf dist dist-test *.tsbuildinfo"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "guardrails",
+    "mcp",
+    "security",
+    "runtime",
+    "policy"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
