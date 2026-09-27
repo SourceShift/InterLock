@@ -18,6 +18,13 @@ htmlcov/
 .venv/
 venv/
 
+# --- node / typescript (the R13 js/ tree; outside the wheel either way, since
+# pyproject globs only "interlock*") ---
+node_modules/
+dist-test/
+*.tsbuildinfo
+# note: js/dist/ is already covered by the generic dist/ above
+
 # --- rust (optional native accelerator) ---
 rust/target/
 # a locally built extension dropped on the import path for development
