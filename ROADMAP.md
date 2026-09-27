@@ -850,6 +850,10 @@ with one methodology rather than several ad-hoc scripts.
 - Scenarios per interception path (`enforce_tool_call`, `@guard`, BRACE spawn)
   and per backend, so the numbers are comparable across items rather than
   per-feature folklore.
+- **The sidecar scenario (added with R13 stage 1):** the same event mix through a
+  `RemoteEngine` over a unix socket, against the in-process engine as baseline.
+  This is the round trip plus two JSON encodes that R13's viability turns on, and
+  it must be measured before the JS interceptors are built rather than after.
 - Machine-readable output, so R5's regression gate and CI can consume the same
   numbers a human reads.
 
@@ -877,8 +881,8 @@ not just individual detectors. No dependencies.
 
 ## R13 · Node.js sensor
 
-**Status:** `not started` — the native path covers the scope store, not a policy
-engine (carried from M0).
+**Status:** `in progress` — stage 1 (the Python sidecar and the conformance
+corpus) has landed; the JS client is stage 2 and not started.
 **Size:** L
 **Pull:** internal.
 
@@ -890,40 +894,68 @@ policy engine, detectors, and interception core exist only in Python.
 
 ### Why now
 
-Not urgent, and listed honestly as such — the ordering above it is the answer to
-"why not now". It becomes urgent when a real JS integration appears, and the
-sequencing matters: porting the *engine* after the policy schema (R10) stabilizes
-is far cheaper than porting it twice, because the schema is the portable
-artifact and Python predicates are not.
+Not urgent for a *policyless* JS sensor, but the ordering assumption that made it
+wait has been removed. The original sequencing was: port the engine only after
+the policy schema (R10) stabilizes, because the schema is the portable artifact
+and Python predicates are not. That assumed the policy had to *travel* to JS.
+Stage 1 showed it does not: the decision surface is already a narrow RPC
+boundary (`PolicyEngine.evaluate(event) -> Decision`), so a process answering
+that call over a socket **is** the single engine and JS only enforces. Only
+evaluation moves; rules stay Python closures and the daemon ships the rules
+module. R13 therefore no longer depends on R10 — it removes the dependency rather
+than pre-empting it. R10 still matters for the caller who wants the policy as a
+data file rather than a module.
 
 ### What changes
 
-- Reuse the same engine and policies, per the original goal — a JS sensor over
-  the same declarative policy (R10) and the same `enforce_tool_call` contract,
-  ideally backed by the native core rather than a second implementation.
-- The interceptors are the JS-native part (MCP client, model SDKs in JS); the
-  engine is the part that should not be reimplemented.
-- Language-neutral test fixtures: the event/decision fixtures from the Python
-  suite become the conformance suite the JS sensor must pass, so "same policies"
-  is verified rather than asserted.
+- **Stage 1 (landed): the Python sidecar.** One daemon owns the one engine and
+  answers NDJSON frames over a `0600` unix socket in a `0700` directory. It
+  refuses to start on an empty rule set — `get_engine()` lazily *creates* an
+  empty engine, and an empty engine allows everything, so inheriting that default
+  would be a guard that looks healthy while enforcing nothing.
+- **Stage 1 (landed): the conformance corpus.** `tests/conformance/events.json`
+  is generated from `interlock.testing.conformance`, and a test asserts the file
+  matches the generator. It is the interface between the stages: the JS suite
+  encodes these events and asserts these verdicts.
+- **Stage 2 (not started): the JS client.** A `js/` tree in the monorepo
+  (outside the `interlock*` package glob, so it never enters the wheel), speaking
+  the wire protocol, plus the MCP interceptor. Stage 3 adds the model-SDK and
+  native fs/exec/http interceptors. Nothing about policy crosses the language
+  boundary.
+- The interceptors are the JS-native part; the engine is the part that is not
+  reimplemented — it is not a second implementation at all, it is the same
+  process.
 
 ### Impact
 
-Doubles the addressable integrations. Carries a permanent maintenance cost — two
-implementations, two release trains — which is the reason this is the last item
-and not the fifth.
+Doubles the addressable integrations with **one** engine rather than two, so the
+"two implementations, two release trains" cost the original plan feared does not
+materialise. The cost that does: a Python process must be *deployed* beside the
+JS agent, and fail-closed turns "is the daemon up?" into a hard availability
+dependency. That is the trade, recorded rather than hidden.
 
 ### Acceptance
 
-A JS agent using an MCP client is guarded by the same policy file as the Python
-equivalent, and the shared conformance fixtures pass on both.
+Amended from the original "guarded by the same policy **file**". A JS agent using
+an MCP client is guarded by the same engine as the Python equivalent — the
+*spirit* of the original criterion — and the shared conformance fixtures pass on
+both. It is **not** guarded by the same policy *file*: the policy is a Python
+module of closures, not a YAML file, and the literal file-portability claim is
+R10's to make, not this one's.
 
 ### Risks & dependencies
 
-A second implementation of the policy engine is the risk; the mitigation is
-making the native core the single engine and JS a binding to it. Depends on R10
-(the declarative schema is what makes the policy portable at all) and on R11's
-lessons about which interception points are stable.
+- **IPC + JSON encoding cost.** Every guarded call gains a round trip and two
+  encodes. For high-frequency JS effects (fs/exec on a hot path) this is the item
+  that decides whether the sidecar is viable at all, and it is R12's latency
+  question, not R13's. Stage 1 measures it rather than assuming it.
+- **Protocol drift.** The wire is now a compatibility surface with its own `v`;
+  unknown values are refused rather than guessed, so drift fails loudly.
+- **A widened trust boundary.** The socket carries cleartext arguments, so its
+  path is part of the boundary — `0600` socket, `0700` directory, no core dumps,
+  no value logging, digest-only receipts.
+- ~~Depends on R10~~ — decoupled by stage 1 (see *Why now*). Depends on R11's
+  lessons about which interception points are stable.
 
 ---
 

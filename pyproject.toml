@@ -25,5 +25,8 @@ mcp = ["wrapt>=1.15"]
 langchain = ["langchain-core>=0.3,<0.4"]
 dev = ["pytest>=7", "langchain-core>=0.3,<0.4"]
 
+[project.scripts]
+interlock-sidecar = "interlock.sidecar.__main__:main"
+
 [tool.setuptools.packages.find]
 include = ["interlock*"]

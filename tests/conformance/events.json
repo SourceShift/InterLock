@@ -1,0 +1,331 @@
+{
+  "cases": [
+    {
+      "event": {
+        "action": "ping",
+        "args": {},
+        "phase": "call"
+      },
+      "expect": {
+        "attributed_to": null,
+        "modified_args": null,
+        "modified_result": null,
+        "note": "",
+        "policy_id": null,
+        "reason": "",
+        "verdict": "ALLOW"
+      },
+      "name": "allow-with-no-opinion",
+      "note": "No rule speaks for this action, so the engine's default holds."
+    },
+    {
+      "event": {
+        "action": "read_file",
+        "args": {
+          "path": "/etc/passwd"
+        },
+        "phase": "call"
+      },
+      "expect": {
+        "attributed_to": "path",
+        "modified_args": null,
+        "modified_result": null,
+        "note": "",
+        "policy_id": "p.no-etc",
+        "reason": "etc is off limits",
+        "verdict": "BLOCK"
+      },
+      "name": "block-names-the-triggering-argument",
+      "note": "attributed_to is the argument NAME ('path'). The value (/etc/passwd) must not appear in any field of the decision, which is why this case also asserts the absence of the value."
+    },
+    {
+      "event": {
+        "action": "rm_rf",
+        "args": {},
+        "phase": "call"
+      },
+      "expect": {
+        "attributed_to": null,
+        "modified_args": null,
+        "modified_result": null,
+        "note": "",
+        "policy_id": null,
+        "reason": "tool not permitted",
+        "verdict": "BLOCK"
+      },
+      "name": "block-with-no-attribution",
+      "note": "deny_tool denies a whole action; there is no argument to name."
+    },
+    {
+      "event": {
+        "action": "write_file",
+        "args": {
+          "path": "/etc/hosts"
+        },
+        "phase": "call"
+      },
+      "expect": {
+        "attributed_to": "path",
+        "modified_args": {
+          "path": "/tmp/quarantine"
+        },
+        "modified_result": null,
+        "note": "",
+        "policy_id": "p.quarantine",
+        "reason": "path quarantined",
+        "verdict": "MODIFY"
+      },
+      "name": "modify-rewrites-the-request",
+      "note": "modified_args rewrites the outgoing call."
+    },
+    {
+      "event": {
+        "action": "fetch_url",
+        "args": {
+          "result": "token secret"
+        },
+        "phase": "result"
+      },
+      "expect": {
+        "attributed_to": "result",
+        "modified_args": null,
+        "modified_result": "redacted",
+        "note": "",
+        "policy_id": "p.result-redact",
+        "reason": "secret in result",
+        "verdict": "MODIFY"
+      },
+      "name": "modify-replaces-a-non-dict-result",
+      "note": "A non-dict result rides the event under the 'result' key (interceptors.mcp wraps it that way), so the rule can name 'result' as what it reacted to."
+    },
+    {
+      "event": {
+        "action": "read_dict",
+        "args": {
+          "secret": "s",
+          "title": "a"
+        },
+        "phase": "result"
+      },
+      "expect": {
+        "attributed_to": "secret",
+        "modified_args": null,
+        "modified_result": {
+          "title": "a"
+        },
+        "note": "",
+        "policy_id": "p.result-strip",
+        "reason": "secret stripped",
+        "verdict": "MODIFY"
+      },
+      "name": "modify-replaces-a-dict-result",
+      "note": "A dict result is carried as itself, not wrapped - the two shapes must not be conflated across the wire."
+    },
+    {
+      "event": {
+        "action": "read_binary",
+        "args": {
+          "result": "ignored"
+        },
+        "phase": "result"
+      },
+      "expect": {
+        "attributed_to": null,
+        "modified_args": null,
+        "modified_result": {
+          "hex": "0001ff",
+          "kind": "bytes"
+        },
+        "note": "",
+        "policy_id": "p.result-binary",
+        "reason": "binary replaced",
+        "verdict": "MODIFY"
+      },
+      "name": "bytes-survive-the-round-trip",
+      "note": "JSON has no bytes. A binary result replaced by a rule must arrive as the same bytes, not as a string or a lossy repr."
+    },
+    {
+      "event": {
+        "action": "read_set",
+        "args": {
+          "result": "ignored"
+        },
+        "phase": "result"
+      },
+      "expect": {
+        "attributed_to": null,
+        "modified_args": null,
+        "modified_result": [
+          1,
+          2,
+          3
+        ],
+        "note": "",
+        "policy_id": "p.result-set",
+        "reason": "set normalised",
+        "verdict": "MODIFY"
+      },
+      "name": "a-set-is-normalised-to-a-sorted-list",
+      "note": "JSON has no set either, and unlike bytes a set is represented rather than escaped: sorted, so the same set always serialises the same way."
+    },
+    {
+      "event": {
+        "action": "read_null",
+        "args": {
+          "result": "ignored"
+        },
+        "phase": "result"
+      },
+      "expect": {
+        "attributed_to": null,
+        "modified_args": null,
+        "modified_result": null,
+        "note": "",
+        "policy_id": "p.result-null",
+        "reason": "no replacement",
+        "verdict": "MODIFY"
+      },
+      "name": "a-null-replacement-means-no-replacement",
+      "note": "A rule returning modified_result=None has asked for no replacement, which is how the in-process path reads it too (interceptors.mcp applies a MODIFY result only when it is not None). The wire invents no semantics Python lacks."
+    },
+    {
+      "event": {
+        "action": "read_opaque",
+        "args": {
+          "result": "ignored"
+        },
+        "phase": "result"
+      },
+      "expect": {
+        "error": "unrepresentable",
+        "note": ""
+      },
+      "name": "an-untransmittable-rewrite-is-refused",
+      "note": "A rule rewrote the result to a value with no JSON form. The daemon cannot say what it decided, so it says so: an error frame, which the client must treat as a block. Silently dropping the rewrite would return the unredacted payload."
+    },
+    {
+      "event": {
+        "action": "read_file",
+        "args": {
+          "path": "/tmp/notes"
+        },
+        "phase": "result"
+      },
+      "expect": {
+        "attributed_to": null,
+        "modified_args": null,
+        "modified_result": null,
+        "note": "",
+        "policy_id": null,
+        "reason": "",
+        "verdict": "ALLOW"
+      },
+      "name": "call-side-rules-do-not-judge-results",
+      "note": "The same action name at phase='result' must not trip the call-side rules that deny read_file. Two rules on one action name make the phase partition observable from outside."
+    },
+    {
+      "event": {
+        "action": "ping",
+        "args": {},
+        "phase": "call",
+        "principal": "untrusted-agent"
+      },
+      "expect": {
+        "attributed_to": null,
+        "modified_args": null,
+        "modified_result": null,
+        "note": "",
+        "policy_id": "p.untrusted-principal",
+        "reason": "untrusted principal",
+        "verdict": "BLOCK"
+      },
+      "name": "principal-crosses-the-wire",
+      "note": "A rule reads event.principal; a wire that drops it changes the verdict."
+    },
+    {
+      "event": {
+        "action": "ping",
+        "args": {},
+        "parent_principal": "root-agent",
+        "phase": "call"
+      },
+      "expect": {
+        "attributed_to": null,
+        "modified_args": null,
+        "modified_result": null,
+        "note": "",
+        "policy_id": "p.root-agent-parent",
+        "reason": "spawned by root-agent",
+        "verdict": "BLOCK"
+      },
+      "name": "parent-principal-crosses-the-wire",
+      "note": "parent_principal is the delegation field - the one a spawned-principal rule consults and the one easiest to forget in a hand-written protocol."
+    }
+  ],
+  "corpus_version": 1,
+  "negatives": [
+    {
+      "error": "bad_version",
+      "kind": "frame",
+      "line": "{\"event\":{\"action\":\"ping\",\"args\":{}},\"id\":\"n-version\",\"v\":2}",
+      "name": "unknown-protocol-version",
+      "note": "A version the daemon does not speak is refused, not guessed at."
+    },
+    {
+      "error": "bad_request",
+      "kind": "frame",
+      "line": "{\"event\":{\"action\":\"ping\",\"arg\":{}},\"id\":\"n-typo\",\"v\":1}",
+      "name": "misspelled-args-key-is-refused-not-ignored",
+      "note": "'arg' is not 'args'. Dropping it silently would show the engine an event with no arguments - and an engine with no opinion allows."
+    },
+    {
+      "error": "bad_request",
+      "kind": "frame",
+      "line": "{\"event\":{\"action\":\"ping\"},\"id\":\"n-noargs\",\"v\":1}",
+      "name": "missing-args-is-refused",
+      "note": "Absent arguments are refused rather than defaulted to an empty object."
+    },
+    {
+      "error": "bad_request",
+      "kind": "frame",
+      "line": "{\"event\":{\"action\":\"ping\",\"args\":[]},\"id\":\"n-args-type\",\"v\":1}",
+      "name": "args-must-be-an-object",
+      "note": "A list where an object belongs is a client bug worth surfacing."
+    },
+    {
+      "error": "bad_request",
+      "kind": "frame",
+      "line": "{\"event\":{\"action\":\"ping\",\"args\":{},\"phase\":\"Result\"},\"id\":\"n-phase\",\"v\":1}",
+      "name": "phase-is-case-sensitive",
+      "note": "'Result' is not 'result'; accepting it would silently run a result rule as call-side."
+    },
+    {
+      "error": "bad_request",
+      "kind": "frame",
+      "line": "{\"event\":{\"action\":\"ping\",\"args\":{},\"extra\":1},\"id\":\"n-extra\",\"v\":1}",
+      "name": "unknown-event-key-is-refused",
+      "note": "An unrecognised key is a typo the far end cannot see; refusing makes it visible."
+    },
+    {
+      "error": "bad_request",
+      "kind": "frame",
+      "line": "{\"event\":{\"action\":\"ping\",\"args\":{}},\"id\":\"\",\"v\":1}",
+      "name": "missing-id-is-refused",
+      "note": "Without an id a response cannot be matched to its request."
+    },
+    {
+      "error": "bad_request",
+      "kind": "frame",
+      "line": "{\"v\":1,\"id\":\"n-json\",\"event\":",
+      "name": "malformed-json-is-refused",
+      "note": "Not JSON at all."
+    },
+    {
+      "error": "too_large",
+      "kind": "oversized",
+      "name": "oversized-frame-is-refused",
+      "note": "The size check runs before parsing, so a frame over the limit is refused without being parsed. The reader cannot report unrepresentable types in the decisions it is asked about. The connection is then closed."
+    }
+  ],
+  "rules": "interlock.testing.fixtures:CONFORMANCE_ENGINE"
+}

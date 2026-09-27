@@ -24,6 +24,16 @@ class PolicyEngine:
         self._rules.append(rule)
         return self
 
+    def __len__(self) -> int:
+        """How many rules are installed.
+
+        Public because "is this engine empty?" is a safety question, not an
+        implementation detail: an empty engine allows everything, so a component
+        that must not run unguarded (the sidecar daemon) asks this instead of
+        reaching into ``_rules``.
+        """
+        return len(self._rules)
+
     def evaluate(self, event: SensorEvent) -> Decision:
         """First rule to return a non-ALLOW verdict wins. Default: allow.
 
