@@ -1,0 +1,55 @@
+name: CodeQL
+
+# interlock is a security library, so its own code is worth scanning with a
+# security scanner. Two languages are covered:
+#
+#   python                  -> interlock/
+#   javascript-typescript   -> js/
+#
+# The Rust crate (rust/, `interlock_scopes`) is NOT covered: CodeQL has no
+# Rust support. That gap is real -- the accelerator reimplements the same
+# resolution semantics as the pure-Python tree ("interned segment ids, packed
+# nodes, params as a compact value enum" per scopes.py) -- so the behavioural
+# parity between the two is pinned by tests (tests/test_scope_backend.py)
+# rather than by a scanner, and nothing here should be read as coverage of it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so an updated query pack surfaces pre-existing code on its own
+    # rather than waiting for someone to happen to touch the file. Off the
+    # hour, to stay out of the queue everyone else's cron lands in.
+    - cron: "27 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload SARIF; contents: read is enough to check the code
+      # out, and actions: read is what the analyze step reads run metadata for.
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended, not security-and-quality: the quality suite
+          # adds maintainability rules whose findings would drown the security
+          # ones in a repo that has deliberately chosen its style already.
+          queries: security-extended
+
+      - uses: github/codeql-action/analyze@v3

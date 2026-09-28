@@ -1,0 +1,223 @@
+name: CI
+
+# Three ecosystems live in this repo and each has to stand on its own:
+#
+#   interlock/       the Python package (dependency-free; `dependencies = []`)
+#   rust/            the OPTIONAL native accelerator, `interlock_scopes`
+#   js/              the Node/TypeScript client, `interlock-guard`
+#
+# The Rust crate is the interesting one to get right. It is optional by
+# contract -- `interlock/policy/scopes.py` falls back to the pure-Python tree
+# when the import fails -- so the two backends must be exercised SEPARATELY:
+# the `python` job proves the fallback path works with no native module
+# present, and the `rust` job proves the native path resolves identically.
+# Collapsing them into one job would let a broken accelerator hide behind the
+# fallback, which is exactly the regression the `interlock_scopes` crate
+# exists to be caught for.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      # One failing interpreter must not cancel the others: a 3.9-only
+      # regression is a different bug from a 3.13-only one.
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          # [dev] pulls pytest AND langchain-core, which is load-bearing here:
+          # tests/integration/test_langchain_exfil.py calls
+          # pytest.importorskip("langchain_core"), so WITHOUT the extra that
+          # test silently skips and the LangChain interceptor goes untested.
+          python -m pip install -e ".[dev]"
+
+      - name: Assert the pure-Python fallback is what this job tested
+        # With no accelerator installed the package must select PyScopeTree.
+        # If this ever reports "rust", the native crate leaked into the
+        # environment and the whole suite below would be testing the other
+        # backend than the job name claims.
+        run: |
+          python - <<'PY'
+          from interlock.policy import SCOPE_BACKEND
+          assert SCOPE_BACKEND == "python", (
+              f"expected the pure-Python backend, got {SCOPE_BACKEND!r}"
+          )
+          print("scope backend:", SCOPE_BACKEND)
+          PY
+
+      - name: Test
+        # Integration tests self-gate: rows needing a kernel sandbox backend
+        # skip by row, so skips here are expected and not a failure.
+        run: python -m pytest -q
+
+  rust:
+    name: rust accelerator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install the package and its test extras
+        # Same extras as the python job, so this job runs the FULL suite and
+        # the only variable between the two is the presence of the native
+        # module. Installing pytest alone here would make the LangChain test
+        # skip, and the comparison would be against a smaller suite.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install maturin
+
+      - name: Build and install the native accelerator
+        run: |
+          maturin build --release --out /tmp/wheels
+          python -m pip install /tmp/wheels/*.whl
+        working-directory: rust
+
+      - name: Assert the native backend is active
+        run: |
+          python - <<'PY'
+          import interlock_scopes
+          from interlock.policy import SCOPE_BACKEND
+          assert SCOPE_BACKEND == "rust", (
+              f"the wheel installed but the package still selected {SCOPE_BACKEND!r}"
+          )
+          print("interlock_scopes:", interlock_scopes.__file__)
+          print("scope backend:", SCOPE_BACKEND)
+          PY
+
+      - name: Test
+        # The FULL suite, not just tests/test_scope_backend.py. The parity
+        # assertions (test_native_matches_python and friends) fire the moment
+        # the native module is importable, and running everything on top of
+        # the native tree proves the rest of the package does not quietly
+        # depend on a pure-Python-only behaviour.
+        run: python -m pytest -q
+
+  node:
+    name: node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor package.json declares in `engines`; 22 and 24 are
+        # the LTS lines people actually run the client on. Testing the floor
+        # is the point -- it is the version a claim can quietly stop being
+        # true for.
+        node-version: ["20", "22", "24"]
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+
+      - run: npm ci
+
+      - name: Test
+        # `npm test` compiles src/ + test/ with tsconfig.test.json and runs
+        # the result under node --test; the compile is half the gate, since
+        # the tsconfig is strict (noUnusedLocals included).
+        #
+        # The test glob in package.json is deliberately UNQUOTED so the shell
+        # expands it. Quoting it hands the pattern to Node, which only learned
+        # to glob a --test argument in v21 -- on Node 20 that is a hard
+        # failure ("Could not find ...") rather than a run. Shell expansion
+        # produces the same 10 files on every version. Do not quote it back.
+        run: npm test
+
+      - name: Build the published artifacts
+        # Separate from the test compile: this is tsconfig.build.json, i.e.
+        # what actually ships in `files: ["dist"]`. A type error that only
+        # shows up under src-only rootDir belongs to the release, not the test.
+        run: npm run build
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        # Pinned: an unpinned linter turns a green repo red on a release
+        # schedule, which is noise, not signal.
+        run: python -m pip install "ruff==0.16.9"
+
+      - name: Lint the shipped package
+        # Deliberately E9+F only. The repo carries NO lint config anywhere
+        # (no ruff/flake8/mypy/pyright/tox/setup.cfg), so this gate is scoped
+        # to the rules that are already satisfied today: syntax errors (E9)
+        # and pyflakes (F). A broader --select E,F,W reports 25 findings in
+        # interlock/ and would make the first run red for style, which is not
+        # what a CI gate is for. Tighten the set as the noise is paid down.
+        run: ruff check --select E9,F interlock/
+
+  ci-ok:
+    name: ci-ok
+    # The single branch-protection check. `needs` alone would skip this job
+    # when a dependency fails, and a SKIPPED required check reads as green on
+    # some branch-protection configurations, so the `if: always()` plus the
+    # explicit result test is what makes this job meaningful.
+    if: always()
+    needs: [python, rust, node, lint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every job succeeded
+        run: |
+          echo "python: ${{ needs.python.result }}"
+          echo "rust:   ${{ needs.rust.result }}"
+          echo "node:   ${{ needs.node.result }}"
+          echo "lint:   ${{ needs.lint.result }}"
+          for result in \
+            "${{ needs.python.result }}" \
+            "${{ needs.rust.result }}" \
+            "${{ needs.node.result }}" \
+            "${{ needs.lint.result }}"
+          do
+            if [ "$result" != "success" ]; then
+              echo "::error::a required job did not succeed (${result})"
+              exit 1
+            fi
+          done

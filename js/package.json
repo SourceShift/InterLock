@@ -30,7 +30,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
     "bench": "node bench/roundtrip.mjs",
     "clean": "rm -rf dist dist-test *.tsbuildinfo"
   },
