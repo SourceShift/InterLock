@@ -40,8 +40,20 @@ def _rlimit_preexec(
         return None
 
     def _apply() -> None:  # runs in the forked child, before exec
+        # The soft limit is the promise (SIGXCPU at ``cpu_seconds``); the hard
+        # limit is the backstop for a child that catches or ignores SIGXCPU.
+        #
+        # They must DIFFER. Linux evaluates the hard limit first and with ``>=``
+        # (kernel/time/posix-cpu-timers.c), so with soft == hard the hard branch
+        # matches in the same pass and SIGKILL pre-empts the SIGXCPU the token
+        # table advertises -- a runaway died by signal 9, not 24. macOS happens
+        # to report SIGXCPU for soft == hard, which is why this only showed up
+        # under CI. ``hard = soft + 1`` gives the documented SIGXCPU on both,
+        # and still ends the child one second later if it swallows the signal.
         if cpu_seconds is not None:
-            resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
+            resource.setrlimit(
+                resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1)
+            )
         if memory_mb is not None:
             nbytes = memory_mb * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (nbytes, nbytes))

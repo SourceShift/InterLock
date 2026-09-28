@@ -71,9 +71,22 @@ def send_raw(path: Any, line: Any, *, timeout: float = 5.0) -> Dict[str, Any]:
     sock.settimeout(timeout)
     try:
         sock.connect(str(path))
-        sock.sendall(line)
-        with sock.makefile("rb") as reader:
-            raw = reader.readline(MAX_LINE + 1)
+        # A daemon that refuses a peer (wrong uid, bad peer credentials) closes
+        # the connection without reading, so the write below races that close.
+        # Linux surfaces the race as EPIPE on the write or ECONNRESET on the
+        # read where macOS reports a clean EOF -- the same event, described
+        # differently -- and ``{}`` already means exactly "the daemon dropped
+        # us", so both belong in the same branch.
+        #
+        # Only ConnectionError is caught, and only here: a refused *connect*
+        # (ConnectionRefusedError) is a different fact and still raises, and so
+        # does a timeout, which is not ConnectionError at all.
+        try:
+            sock.sendall(line)
+            with sock.makefile("rb") as reader:
+                raw = reader.readline(MAX_LINE + 1)
+        except ConnectionError:
+            return {}
     finally:
         sock.close()
     if not raw:
