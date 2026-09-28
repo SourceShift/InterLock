@@ -42,8 +42,9 @@ delegation chains (and an optional native accelerator), 105 detectors, signed
 execution receipts with an append-only sink, tool-result sanitization, MCP
 capability leases with server attestation and tool-surface drift detection, the
 BRACE confinement layer with its escape-resistance matrix, and a Node.js client
-([`js/`](js/README.md)) that guards MCP tool calls against the same engine over a
-sidecar socket. Still open:
+([`js/`](js/README.md)) that guards MCP tool calls, native `fs`/`exec`/`fetch`
+effects, and model-SDK tools against the same engine over a sidecar socket. Still
+open:
 declarative YAML/JSON policies, automatic model-SDK hooks, `Verdict.ESCALATE`,
 and more — see [`ROADMAP.md`](ROADMAP.md) for the full list, each item with its
 reasoning and a falsifiable done criterion.
@@ -126,11 +127,15 @@ const engine = new RemoteEngine("/tmp/il-guard.sock", { timeout: 5 });
 guardMcpSession(client, { engine });   // client: any object with callTool({name, arguments})
 ```
 
-Status: the sidecar, the wire, and the MCP client are shipped in [`js/`](js/README.md)
-(stage 2); the native fs/exec/http and model-SDK interceptors are stage 3 and not
-started. `evaluate` is async — Node has no synchronous unix-socket client — so a
-synchronous JS tool call cannot be guarded. See [`js/README.md`](js/README.md) for
-the limits and the round-trip number.
+Also shipped in [`js/`](js/README.md): `installInterceptors()` guards the
+process's `fs`, `child_process.exec`/`execFile`, and `fetch` before the effect
+(`fs.readFile`, `child_process.exec`, `http.fetch`), and `guardToolMap` /
+`guardToolRunner` guard a model SDK's tool seam without importing any SDK. The
+interceptors report what they *cannot* reach — ESM named imports, the `*Sync`
+variants, the handle-returning openers, and result-phase rules on natives — via
+`installInterceptors().uncovered`. `evaluate` is async — Node has no synchronous
+unix-socket client — so a synchronous JS tool call cannot be guarded. See
+[`js/README.md`](js/README.md) for the limits and the round-trip number.
 
 ## Core concepts
 
@@ -560,7 +565,7 @@ interlock/
   detectors/             105 detector modules
   brace/                 profile.py, sandbox.py, result.py, backends/, trace.py
 rust/                    optional PyO3 accelerator for the scope store
-js/                      the Node.js client: wire, RemoteEngine, MCP interceptor (no Python in it)
+js/                      the Node.js client: wire, RemoteEngine, MCP + fs/exec/http + model-SDK interceptors
 benchmarks/              scope-store memory and warm-resolve benchmark
 tests/                   117 unit-test modules + tests/integration/
 examples/                block_shell_tool.py
@@ -697,9 +702,6 @@ the rest are open items from earlier milestones:
 - **Automatic interception** — import hooks for MCP clients and model SDKs, plus
   dependency tamper detection.
 - **An overhead benchmark suite** with a stated methodology.
-- **A Node.js sensor** reusing the same engine and policies — the sidecar and the
-  MCP client have landed in [`js/`](js/README.md); the native fs/exec/http and
-  model-SDK interceptors are stage 3 and not started.
 
 Each item above has a full entry — problem, why now, what changes, impact on
 callers, a falsifiable acceptance criterion, and its risks — in

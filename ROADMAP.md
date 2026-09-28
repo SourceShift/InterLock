@@ -64,7 +64,7 @@ worse at both jobs.
 | R10 | Declarative YAML/JSON policies | `not started` | L | carried from M0 → M2 |
 | R11 | Automatic interception (import hooks) | `not started` | L | carried from M0 → M1/M3 |
 | R12 | Overhead benchmark suite, with methodology | `not started` | S | carried from M0 |
-| R13 | Node.js sensor | `in progress` | L | carried from M0 |
+| R13 | Node.js sensor | `shipped` | L | carried from M0 |
 
 ---
 
@@ -887,10 +887,9 @@ not just individual detectors. No dependencies.
 
 ## R13 · Node.js sensor
 
-**Status:** `in progress` — stages 1 (the Python sidecar and the conformance
-corpus) and 2 (the `js/` client, the MCP interceptor, and the corpus replay) have
-landed; stage 3 (the native fs/exec/http and model-SDK interceptors) is not
-started.
+**Status:** `shipped` — stages 1 (the Python sidecar and the conformance corpus),
+2 (the `js/` client, the MCP interceptor, and the corpus replay) and 3 (the
+native fs/exec/http interceptors and the model-SDK tool seam) have all landed.
 **Size:** L
 **Pull:** internal.
 
@@ -934,9 +933,21 @@ data file rather than a module.
   negatives) against a spawned real daemon, and the suite **fails** rather than
   skips if no daemon can start. `evaluate` is async (Node has no synchronous
   unix-socket client), so a synchronous JS tool call cannot be guarded — MCP's
-  `callTool` is already async, so the interceptor fits. Stage 3 adds the
-  model-SDK and native fs/exec/http interceptors. Nothing about policy crosses
-  the language boundary.
+  `callTool` is already async, so the interceptor fits. Nothing about policy
+  crosses the language boundary.
+- **Stage 3 (landed): the native interceptors and the model-SDK seam.**
+  `installInterceptors()` wraps the process's `fs`, `child_process.exec` /
+  `execFile`, and `fetch`, deciding each action before the effect under namespaced
+  action names (`fs.readFile`, `child_process.exec`, `http.fetch`).
+  `guardToolMap` / `guardToolRunner` guard a model SDK's tool seam without
+  importing any SDK. Crucially, the facade returns a **coverage report**:
+  `uncovered` names the holes no pure-JS patch can reach — ESM named imports and
+  `import * as ns` (link-time bindings), the `*Sync` variants and the
+  handle-returning openers (`fs.open`, `createReadStream`, `spawn`,
+  `http.request`) whose contract is to return a value now, and result-phase rules
+  on native effects (an `fs` call can return a `Stats`/`Dirent`/stream, which has
+  no wire form). That list is stated, not assumed away: a guard whose coverage is
+  a guess is worse than one whose coverage is named.
 - The interceptors are the JS-native part; the engine is the part that is not
   reimplemented — it is not a second implementation at all, it is the same
   process.

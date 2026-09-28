@@ -8,6 +8,23 @@
  */
 
 /**
+ * A plain object, in the sense Python's `isinstance(x, dict)` means.
+ *
+ * Not `typeof x === "object"`: an array, a `Date`, a `Buffer`, and a class
+ * instance are all objects and none of them is a dict. The prototype check is
+ * what separates a JSON-shaped record (literal, or `Object.create(null)`) from
+ * everything else - and the distinction decides whether a result is inspected as
+ * itself or wrapped, so it is load-bearing rather than stylistic.
+ */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
  * Tri-state verdict. The integer values match the native engine's out-param
  * contract (0/1/2), and are what travels on the wire - a name is for a human
  * reading a corpus file, an integer is for the protocol.

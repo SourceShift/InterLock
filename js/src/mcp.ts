@@ -21,7 +21,7 @@
  * would double-record one decision into a chain this side cannot sign.
  */
 
-import { BlockedError, Decision, Verdict } from "./enforce.js";
+import { BlockedError, Decision, Verdict, isPlainObject } from "./enforce.js";
 import type { SensorEvent } from "./event.js";
 import { sensorEvent } from "./event.js";
 
@@ -55,15 +55,6 @@ export interface ToolCallParams {
  */
 export interface McpSession {
   callTool(...args: any[]): any;
-}
-
-/** A plain object, in the sense Python's `isinstance(x, dict)` means. */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const proto: unknown = Object.getPrototypeOf(value);
-  return proto === Object.prototype || proto === null;
 }
 
 /**

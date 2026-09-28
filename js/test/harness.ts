@@ -19,7 +19,7 @@ import * as net from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { probe } from "../src/client.js";
+import { RemoteEngine, probe } from "../src/client.js";
 import { MAX_LINE, decodeLine } from "../src/wire.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -28,6 +28,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, "..", "..", "..");
 export const CORPUS_PATH = join(REPO_ROOT, "tests", "conformance", "events.json");
 export const CONFORMANCE_RULES = "interlock.testing.fixtures:CONFORMANCE_ENGINE";
+/** The rules for the native effect actions (`fs.*`, `child_process.*`, `http.fetch`). */
+export const EFFECT_RULES = "interlock.testing.fixtures:EFFECT_ENGINE";
 
 export function delay(ms: number): Promise<void> {
   return new Promise((done) => setTimeout(done, ms));
@@ -147,6 +149,36 @@ export async function spawnDaemon(options: SpawnOptions = {}): Promise<Daemon> {
   const daemon = new Daemon(dir, path, child);
   await daemon.ready();
   return daemon;
+}
+
+export interface GuardedContext {
+  engine: RemoteEngine;
+  /** A scratch directory for the test's own files. */
+  dir: string;
+  daemon: Daemon;
+}
+
+/**
+ * Run `body` against a live daemon and a scratch directory, tearing both down.
+ *
+ * The interceptors patch process-global module objects, so every test that
+ * installs one must uninstall it; this gives the daemon and temp dir the same
+ * guaranteed cleanup without repeating the boilerplate in five files.
+ */
+export async function withEngine(
+  rules: string,
+  body: (ctx: GuardedContext) => Promise<void>,
+): Promise<void> {
+  const daemon = await spawnDaemon({ rules });
+  const engine = new RemoteEngine(daemon.path, { timeout: 5 });
+  const dir = mkdtempSync(join("/tmp", "il-work-"));
+  try {
+    await body({ engine, dir, daemon });
+  } finally {
+    await engine.close();
+    await daemon.stop();
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
