@@ -1,0 +1,1014 @@
+[
+  {
+    "detector": "call_rate_limiter",
+    "factory": "call_rate_limiter",
+    "kwargs": {
+      "limit": 2
+    },
+    "cases": [
+      {
+        "name": "alice's first call",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch",
+          "principal": "alice"
+        }
+      },
+      {
+        "name": "alice's call at the limit still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch",
+          "principal": "alice"
+        }
+      },
+      {
+        "name": "alice's call past the limit is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "fetch",
+          "principal": "alice"
+        }
+      },
+      {
+        "name": "bob has an independent counter, unaffected by alice's block",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch",
+          "principal": "bob"
+        }
+      },
+      {
+        "name": "bob's call at the limit still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch",
+          "principal": "bob"
+        }
+      },
+      {
+        "name": "bob's call past the limit is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "fetch",
+          "principal": "bob"
+        }
+      },
+      {
+        "name": "a call with no principal is still counted under the anon bucket",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch"
+        }
+      },
+      {
+        "name": "second anonymous call still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch"
+        }
+      },
+      {
+        "name": "third anonymous call is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "fetch"
+        }
+      }
+    ]
+  },
+  {
+    "detector": "cost_budget_guard",
+    "factory": "cost_budget_guard",
+    "kwargs": {
+      "budget": 5
+    },
+    "cases": [
+      {
+        "name": "non-numeric cost is ignored, adds nothing",
+        "expect": "ALLOW",
+        "event": {
+          "action": "api_call",
+          "args": {
+            "cost": "lots"
+          }
+        }
+      },
+      {
+        "name": "boolean cost is ignored, not coerced to 0 or 1",
+        "expect": "ALLOW",
+        "event": {
+          "action": "api_call",
+          "args": {
+            "cost": true
+          }
+        }
+      },
+      {
+        "name": "first real charge",
+        "expect": "ALLOW",
+        "event": {
+          "action": "api_call",
+          "args": {
+            "cost": 3
+          }
+        }
+      },
+      {
+        "name": "charge landing exactly on the budget still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "api_call",
+          "args": {
+            "cost": 2
+          }
+        }
+      },
+      {
+        "name": "charge pushing past the budget is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "api_call",
+          "args": {
+            "cost": 0.01
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "tool_budget_limiter",
+    "factory": "tool_budget_limiter",
+    "kwargs": {
+      "limit": 2
+    },
+    "cases": [
+      {
+        "name": "search tool first call",
+        "expect": "ALLOW",
+        "event": {
+          "action": "search"
+        }
+      },
+      {
+        "name": "search tool call at the limit still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "search"
+        }
+      },
+      {
+        "name": "search tool call past the limit is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "search"
+        }
+      },
+      {
+        "name": "a different tool has its own independent budget",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch"
+        }
+      },
+      {
+        "name": "fetch tool call at the limit still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch"
+        }
+      },
+      {
+        "name": "fetch tool call past the limit is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "fetch"
+        }
+      }
+    ]
+  },
+  {
+    "detector": "result_size_guard",
+    "factory": "result_size_guard",
+    "kwargs": {
+      "max_bytes": 19
+    },
+    "cases": [
+      {
+        "name": "a call-phase event shaped like a result payload is never measured",
+        "expect": "ALLOW",
+        "event": {
+          "action": "read_file",
+          "phase": "call",
+          "args": {
+            "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        }
+      },
+      {
+        "name": "result at the byte boundary passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "read_file",
+          "phase": "result",
+          "args": {
+            "result": "short"
+          }
+        }
+      },
+      {
+        "name": "result one byte over the boundary is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "read_file",
+          "phase": "result",
+          "args": {
+            "result": "short1"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "result_size_guard",
+    "factory": "result_size_guard",
+    "kwargs": {
+      "max_bytes": 16,
+      "actions": [
+        "read_file"
+      ]
+    },
+    "cases": [
+      {
+        "name": "a listed action over its budget is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "read_file",
+          "phase": "result",
+          "args": {
+            "result": "short"
+          }
+        }
+      },
+      {
+        "name": "an unlisted action is never measured, even at the same size",
+        "expect": "ALLOW",
+        "event": {
+          "action": "other_tool",
+          "phase": "result",
+          "args": {
+            "result": "short"
+          }
+        }
+      },
+      {
+        "name": "a listed action within its budget passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "read_file",
+          "phase": "result",
+          "args": {
+            "result": "ok"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "write_action_limiter",
+    "factory": "write_action_limiter",
+    "kwargs": {
+      "limit": 2
+    },
+    "cases": [
+      {
+        "name": "a read is never counted toward the write budget",
+        "expect": "ALLOW",
+        "event": {
+          "action": "read_file",
+          "principal": "alice"
+        }
+      },
+      {
+        "name": "first mutating call",
+        "expect": "ALLOW",
+        "event": {
+          "action": "write_file",
+          "principal": "alice"
+        }
+      },
+      {
+        "name": "mutating-prefix match is case-insensitive, and the limit boundary still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "UPDATE_RECORD",
+          "principal": "alice"
+        }
+      },
+      {
+        "name": "third mutating call exceeds the limit and is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "create_item",
+          "principal": "alice"
+        }
+      },
+      {
+        "name": "a different principal has an independent write budget",
+        "expect": "ALLOW",
+        "event": {
+          "action": "delete_item",
+          "principal": "bob"
+        }
+      }
+    ]
+  },
+  {
+    "detector": "duplicate_call_loop_guard",
+    "factory": "duplicate_call_loop_guard",
+    "kwargs": {
+      "limit": 2
+    },
+    "cases": [
+      {
+        "name": "first call of a new signature",
+        "expect": "ALLOW",
+        "event": {
+          "action": "ping",
+          "args": {}
+        }
+      },
+      {
+        "name": "repeating the same call at the limit still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "ping",
+          "args": {}
+        }
+      },
+      {
+        "name": "a third consecutive repeat is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "ping",
+          "args": {}
+        }
+      },
+      {
+        "name": "a different action resets the run",
+        "expect": "ALLOW",
+        "event": {
+          "action": "pong",
+          "args": {}
+        }
+      },
+      {
+        "name": "different arguments count as a different signature",
+        "expect": "ALLOW",
+        "event": {
+          "action": "ping",
+          "args": {
+            "x": 1
+          }
+        }
+      },
+      {
+        "name": "repeating that new signature at the limit still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "ping",
+          "args": {
+            "x": 1
+          }
+        }
+      },
+      {
+        "name": "a third repeat of it is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "ping",
+          "args": {
+            "x": 1
+          }
+        }
+      },
+      {
+        "name": "a fresh signature with two keys",
+        "expect": "ALLOW",
+        "event": {
+          "action": "order",
+          "args": {
+            "a": 1,
+            "b": 2
+          }
+        }
+      },
+      {
+        "name": "the same content in different key order is still a repeat, boundary passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "order",
+          "args": {
+            "b": 2,
+            "a": 1
+          }
+        }
+      },
+      {
+        "name": "a third repeat regardless of key order is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "order",
+          "args": {
+            "a": 1,
+            "b": 2
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "output_length_guard",
+    "factory": "output_length_guard",
+    "kwargs": {
+      "max_bytes": 10
+    },
+    "cases": [
+      {
+        "name": "short text under budget",
+        "expect": "ALLOW",
+        "event": {
+          "action": "respond",
+          "args": {
+            "text": "short"
+          }
+        }
+      },
+      {
+        "name": "text exactly at the byte boundary passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "respond",
+          "args": {
+            "text": "0123456789"
+          }
+        }
+      },
+      {
+        "name": "text one byte over the boundary is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "respond",
+          "args": {
+            "text": "01234567890"
+          }
+        }
+      },
+      {
+        "name": "a non-output action is never measured",
+        "expect": "ALLOW",
+        "event": {
+          "action": "fetch",
+          "args": {
+            "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        }
+      },
+      {
+        "name": "a non-string content value is skipped, not stringified",
+        "expect": "ALLOW",
+        "event": {
+          "action": "output",
+          "args": {
+            "content": 12345
+          }
+        }
+      },
+      {
+        "name": "multiple content keys sum, boundary passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "tool_result",
+          "args": {
+            "text": "12345",
+            "body": "67890"
+          }
+        }
+      },
+      {
+        "name": "multiple content keys sum, over the boundary blocks",
+        "expect": "BLOCK",
+        "event": {
+          "action": "tool_result",
+          "args": {
+            "text": "123456",
+            "body": "67890"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "memory_write_size_guard",
+    "factory": "memory_write_size_guard",
+    "kwargs": {
+      "max_bytes": 5
+    },
+    "cases": [
+      {
+        "name": "value at the byte boundary passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "memory_write",
+          "args": {
+            "value": "abcde"
+          }
+        }
+      },
+      {
+        "name": "value one byte over the boundary blocks",
+        "expect": "BLOCK",
+        "event": {
+          "action": "memory_write",
+          "args": {
+            "value": "abcdef"
+          }
+        }
+      },
+      {
+        "name": "a missing value reads as empty and passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "remember",
+          "args": {}
+        }
+      },
+      {
+        "name": "a non-memory action is never measured",
+        "expect": "ALLOW",
+        "event": {
+          "action": "other_tool",
+          "args": {
+            "value": "this value is far longer than five bytes"
+          }
+        }
+      },
+      {
+        "name": "a non-string value is stringified before measuring",
+        "expect": "BLOCK",
+        "event": {
+          "action": "context_set",
+          "args": {
+            "value": 123456
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "failed_auth_lockout",
+    "factory": "failed_auth_lockout",
+    "kwargs": {
+      "limit": 2
+    },
+    "cases": [
+      {
+        "name": "a successful auth is never counted",
+        "expect": "ALLOW",
+        "event": {
+          "action": "auth",
+          "principal": "alice",
+          "args": {
+            "ok": true
+          }
+        }
+      },
+      {
+        "name": "first failure",
+        "expect": "ALLOW",
+        "event": {
+          "action": "auth",
+          "principal": "alice",
+          "args": {
+            "ok": false
+          }
+        }
+      },
+      {
+        "name": "second failure lands on the boundary and still passes",
+        "expect": "ALLOW",
+        "event": {
+          "action": "auth",
+          "principal": "alice",
+          "args": {}
+        }
+      },
+      {
+        "name": "third failure exceeds the limit and is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "auth",
+          "principal": "alice",
+          "args": {
+            "ok": false
+          }
+        }
+      },
+      {
+        "name": "a non-auth action for the locked-out principal is untouched",
+        "expect": "ALLOW",
+        "event": {
+          "action": "read_file",
+          "principal": "alice",
+          "args": {}
+        }
+      },
+      {
+        "name": "a different principal has an independent failure counter",
+        "expect": "ALLOW",
+        "event": {
+          "action": "auth",
+          "principal": "bob",
+          "args": {
+            "ok": false
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "token_budget_guard",
+    "factory": "token_budget_guard",
+    "kwargs": {
+      "limit": 4,
+      "window_s": 100000
+    },
+    "cases": [
+      {
+        "name": "first charge under budget",
+        "expect": "ALLOW",
+        "event": {
+          "action": "prompt",
+          "principal": "alice",
+          "args": {
+            "text": "12345678"
+          }
+        }
+      },
+      {
+        "name": "a call landing exactly on the limit passes, like the other budget rules",
+        "expect": "ALLOW",
+        "event": {
+          "action": "prompt",
+          "principal": "alice",
+          "args": {
+            "text": "12345678"
+          }
+        }
+      },
+      {
+        "name": "a charge well past the limit is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "prompt",
+          "principal": "alice",
+          "args": {
+            "text": "12345678"
+          }
+        }
+      },
+      {
+        "name": "a different principal has its own fresh window",
+        "expect": "ALLOW",
+        "event": {
+          "action": "prompt",
+          "principal": "bob",
+          "args": {
+            "text": "12345678"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "token_budget_guard",
+    "factory": "token_budget_guard",
+    "kwargs": {
+      "limit": 10,
+      "window_s": 100000
+    },
+    "cases": [
+      {
+        "name": "an event with no text spends nothing",
+        "expect": "ALLOW",
+        "event": {
+          "action": "prompt",
+          "principal": "carol",
+          "args": {
+            "flag": true
+          }
+        }
+      },
+      {
+        "name": "text nested inside a list of dicts is still found and counted",
+        "expect": "ALLOW",
+        "event": {
+          "action": "prompt",
+          "principal": "carol",
+          "args": {
+            "messages": [
+              {
+                "content": "12345678"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "a second nested charge stays under budget",
+        "expect": "ALLOW",
+        "event": {
+          "action": "prompt",
+          "principal": "carol",
+          "args": {
+            "messages": [
+              {
+                "content": "12345678"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "detector": "event_hmac_stamp",
+    "factory": "event_hmac_stamp",
+    "kwargs": {},
+    "cases": [
+      {
+        "name": "a fresh event is stamped with its hmac",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "user": "bob"
+          }
+        },
+        "rewrite_includes": [
+          "e9a72ff578411a125bc3a40d4731ee937cd766850aed2e1a230a1d3210060657"
+        ]
+      },
+      {
+        "name": "re-evaluating an already-correctly-stamped event is a no-op",
+        "expect": "ALLOW",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "user": "bob",
+            "__hmac__": "e9a72ff578411a125bc3a40d4731ee937cd766850aed2e1a230a1d3210060657"
+          }
+        }
+      },
+      {
+        "name": "a forged or stale stamp is overwritten with the correct value",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "user": "bob",
+            "__hmac__": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "rewrite_includes": [
+          "e9a72ff578411a125bc3a40d4731ee937cd766850aed2e1a230a1d3210060657"
+        ]
+      },
+      {
+        "name": "a non-dict args cannot be signed",
+        "expect": "ALLOW",
+        "event": {
+          "action": "write_file",
+          "args": "not-a-dict"
+        }
+      }
+    ]
+  },
+  {
+    "detector": "content_digest_stamp",
+    "factory": "content_digest_stamp",
+    "kwargs": {},
+    "cases": [
+      {
+        "name": "a fresh event is fingerprinted",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "user": "bob"
+          }
+        },
+        "rewrite_includes": [
+          "ea6e5cef0a4710e91a4c1cc8c8336ef98c889cb3962c2ba8019a494eb92e4060"
+        ]
+      },
+      {
+        "name": "re-evaluating an already-correctly-digested event is a no-op",
+        "expect": "ALLOW",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "user": "bob",
+            "__digest__": "ea6e5cef0a4710e91a4c1cc8c8336ef98c889cb3962c2ba8019a494eb92e4060"
+          }
+        }
+      },
+      {
+        "name": "a stale digest is overwritten with the correct value",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "user": "bob",
+            "__digest__": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        },
+        "rewrite_includes": [
+          "ea6e5cef0a4710e91a4c1cc8c8336ef98c889cb3962c2ba8019a494eb92e4060"
+        ]
+      },
+      {
+        "name": "a non-dict args cannot be digested",
+        "expect": "ALLOW",
+        "event": {
+          "action": "write_file",
+          "args": "not-a-dict"
+        }
+      },
+      {
+        "name": "any dunder key is excluded from the digest, not just the stamp field",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "user": "bob",
+            "__hmac__": "abc123"
+          }
+        },
+        "rewrite_includes": [
+          "ea6e5cef0a4710e91a4c1cc8c8336ef98c889cb3962c2ba8019a494eb92e4060"
+        ]
+      }
+    ]
+  },
+  {
+    "detector": "sequence_number_stamp",
+    "factory": "sequence_number_stamp",
+    "kwargs": {},
+    "cases": [
+      {
+        "name": "first new content gets ordinal 1",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "path": "a.txt"
+          }
+        },
+        "rewrite_includes": [
+          "\"__seq__\": 1"
+        ]
+      },
+      {
+        "name": "a second, distinct content gets the next ordinal",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "path": "b.txt"
+          }
+        },
+        "rewrite_includes": [
+          "\"__seq__\": 2"
+        ]
+      },
+      {
+        "name": "re-seeing the first content (unstamped) returns its original ordinal, not a new one",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "path": "a.txt"
+          }
+        },
+        "rewrite_includes": [
+          "\"__seq__\": 1"
+        ]
+      },
+      {
+        "name": "an event already carrying its correct ordinal is a no-op",
+        "expect": "ALLOW",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "path": "a.txt",
+            "__seq__": 1
+          }
+        }
+      },
+      {
+        "name": "a forged ordinal is overwritten with the correct one",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "path": "a.txt",
+            "__seq__": 99
+          }
+        },
+        "rewrite_includes": [
+          "\"__seq__\": 1"
+        ]
+      },
+      {
+        "name": "a non-dict args cannot be fingerprinted",
+        "expect": "ALLOW",
+        "event": {
+          "action": "write_file",
+          "args": "not-a-dict"
+        }
+      },
+      {
+        "name": "a boolean forged value is not mistaken for the matching integer ordinal",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "path": "c.txt",
+            "__seq__": true
+          }
+        },
+        "rewrite_includes": [
+          "\"__seq__\": 3"
+        ]
+      }
+    ]
+  },
+  {
+    "detector": "provenance_origin_tag",
+    "factory": "provenance_origin_tag",
+    "kwargs": {},
+    "cases": [
+      {
+        "name": "a fresh event is tagged with its origin",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "principal": "alice",
+          "args": {
+            "path": "a.txt"
+          }
+        },
+        "rewrite_includes": [
+          "__provenance__"
+        ]
+      },
+      {
+        "name": "a different payload under the same principal/action is tagged too",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "principal": "alice",
+          "args": {
+            "path": "b.txt"
+          }
+        },
+        "rewrite_includes": [
+          "__provenance__"
+        ]
+      },
+      {
+        "name": "a missing principal is still tagged, stringified as None",
+        "expect": "MODIFY",
+        "event": {
+          "action": "write_file",
+          "args": {
+            "path": "c.txt"
+          }
+        },
+        "rewrite_includes": [
+          "__provenance__"
+        ]
+      },
+      {
+        "name": "a non-dict args cannot be tagged",
+        "expect": "ALLOW",
+        "event": {
+          "action": "write_file",
+          "principal": "alice",
+          "args": "not-a-dict"
+        }
+      }
+    ]
+  }
+]

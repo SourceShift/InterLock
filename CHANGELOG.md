@@ -50,6 +50,10 @@ breaking changes land.
   fallback policy (`interlock-sidecar --fallback-policy`).
 - Placeholder credentials (`interlock.credentials`): `{{secret:id}}` filled
   after the decision, only where allowed, and scrubbed from results.
+- Conformance suites: every rule of the coding-agent pack through the Claude
+  Code, Codex and Cursor hooks, and every catalog detector against actions that
+  must end in each of its verdicts and look-alikes that must not
+  (`tests/conformance/`, `python3 tests/conformance/runner.py`).
 
 ### Changed
 
@@ -59,6 +63,25 @@ breaking changes land.
   the parsed check only adds findings (`parse=False` keeps the old behaviour).
 - A failed receipt write raises `Blocked` (policy `audit_sink`) instead of the
   sink's own exception.
+- `token_budget_guard` lets a window reach its `limit` and blocks the call that
+  goes over it, like the other budget rules (it used to block on reaching it).
+- `destructive_command_guard`'s raw-text check blocks `dd` only when `of=` is a
+  block device; `dd ... of=scratch.img` makes a file and is allowed.
+
+### Fixed
+
+- Claude Code results are checked where the text actually is: a `Read` result's
+  file content is now scanned for injected instructions and masked in place, and
+  an `Edit`/`Write` result no longer blocks on the agent's own content echoed back.
+- Coding-agent hooks spell a path in its on-disk case on case-insensitive
+  volumes, so `~/.SSH/id_rsa` still matches the pack's secret-file rules.
+- `private_ip_egress_guard` and `raw_ip_egress_guard` read every IPv4 spelling a
+  client dials (`http://2130706433/`, `0x7f.1`, `0177.0.0.1`, IPv4-mapped IPv6),
+  not just dotted quads.
+- `markdown_link_injection_guard` and `markdown_image_exfil_guard` match
+  regardless of letter case.
+- `output_secret_redactor` masks scoped `sk-proj-` / `sk-ant-` keys.
+- `tool_output_secret_redactor` no longer masks snake_case identifiers as values.
 
 ## [0.0.1] — 2026-10-13
 

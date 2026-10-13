@@ -13,8 +13,9 @@ The sequence travels as an ordinary string argument, so a regex over the
 argument text sees it before the output leaves the process. The pattern covers
 both shapes the sequence can take:
 
-* the live byte - a real ``ESC`` (``\\x1b``) or the C1 single-byte introducer
-  ``\\x9b``, followed by ``[``; and
+* the live byte - a real ``ESC`` (``\\x1b``) followed by ``[``, or the C1
+  single-byte introducer ``\\x9b``, which is a whole CSI on its own (``\\x9b31m``
+  recolours just like ``ESC[31m``), so it matches with no ``[`` after it; and
 * the *escaped* textual forms - the literal characters ``\\x1b[``, ``\\033[``,
   and ``\\u001b[``, which are inert in the producing process but become a live
   escape the moment a consumer unescapes or re-emits them.
@@ -39,8 +40,9 @@ from ..policy.engine import Rule
 
 POLICY_ID = "ansi_escape_output"
 
-# Live introducers (real ESC ``\x1b`` and the C1 ``\x9b``, each followed by
-# ``[``) and their escaped textual spellings (``\x1b[``, ``\033[``, ``[``).
+# Live introducers (a real ESC ``\x1b`` followed by ``[``, and the C1 CSI byte
+# ``\x9b`` alone) and the escaped textual spellings (``\x1b[``, ``\033[``,
+# ``\u001b[``).
 # re.IGNORECASE is deliberately not applied (see module docstring).
 PATTERN = re.compile(r"(?:\x1b\[|\\x1b\[|\\033\[|\\u001b\[|\x9b)")
 

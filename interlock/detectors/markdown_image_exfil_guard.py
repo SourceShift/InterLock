@@ -40,11 +40,12 @@ POLICY_ID = "markdown_image_exfil"
 # arrive via a query string or a path segment. The captured group is the whole
 # offending URL so the match is self-describing in logs.
 #
-# No re.IGNORECASE: the keyword alternation is lowercase by design, and matching
-# ``Token=`` / ``Q=`` would widen the rule past the intended technique rather
-# than express it, so the flag is deliberately omitted.
+# re.IGNORECASE: URL schemes are case-insensitive and a receiving server reads
+# ``?Token=`` the same as ``?token=``, so a capital letter must not carry the
+# data past the rule. The image syntax the match requires keeps prose out.
 PATTERN = re.compile(
-    r"!\[[^\]]*\]\((https?://[^)]*(?:\?|/)[^)]*(?:token|data|secret|key|q)=[^)]*)\)"
+    r"!\[[^\]]*\]\((https?://[^)]*(?:\?|/)[^)]*(?:token|data|secret|key|q)=[^)]*)\)",
+    re.IGNORECASE,
 )
 
 

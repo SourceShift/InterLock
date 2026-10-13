@@ -47,9 +47,12 @@ CRITICAL_KINDS = frozenset(
 # Irreversible destructive command fragments, in the spelling a shell accepts.
 # re.IGNORECASE is deliberately not applied: it would widen the match to
 # spellings such as ``MKFS`` and ``CHMOD -R 777 /`` and so change which inputs
-# are caught rather than merely how they are written.
+# are caught rather than merely how they are written. A ``dd`` matches only when
+# its ``of=`` is a block device: ``dd if=/dev/zero of=scratch.img`` makes a file.
 PATTERN = re.compile(
-    r"(?:rm\s+-rf\s+/(?:\s|$)|\bmkfs\b|\bdd\s+if=|:\(\)\s*\{\s*:\|:|>\s*/dev/sd|chmod\s+-R\s+777\s+/)"
+    r"(?:rm\s+-rf\s+/(?:\s|$)|\bmkfs\b"
+    r"|\bdd\b[^;&|\n]*\bof=/dev/(?:r?disk\d|sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|md\d|dm-\d|mapper/|loop\d)"
+    r"|:\(\)\s*\{\s*:\|:|>\s*/dev/sd|chmod\s+-R\s+777\s+/)"
 )
 
 

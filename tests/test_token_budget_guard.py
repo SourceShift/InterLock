@@ -1,4 +1,4 @@
-"""token_budget_guard: allow path (within budget), block path (at the ceiling),
+"""token_budget_guard: allow path (within budget), block path (past the ceiling),
 per-principal keying over a rolling window, window expiry, refill, odd-input
 safety, the event token stamp, receipt plumbing, and engine integration."""
 from typing import Any, cast
@@ -47,7 +47,7 @@ def test_call_that_reaches_the_ceiling_blocks():
     for _ in range(15):
         assert rule(_event()) is None
 
-    decision = rule(_event())  # 195 + 13 = 208 >= 200
+    decision = rule(_event())  # 195 + 13 = 208 > 200
     assert decision is not None
     assert decision.verdict is Verdict.BLOCK
     assert decision.policy_id == POLICY_ID
@@ -62,8 +62,10 @@ def test_every_call_past_the_ceiling_keeps_blocking():
 
 
 def test_budget_is_inclusive_at_the_ceiling():
-    # A single call that lands exactly on the limit is the one refused.
+    # A call that lands exactly on the limit passes, as in the other budget
+    # rules; the next one takes the window over it and is refused.
     rule = token_budget_guard(limit=CHARGED, window_s=3600)
+    assert rule(_event()) is None
     decision = rule(_event())
     assert decision is not None and decision.verdict is Verdict.BLOCK
 
@@ -106,7 +108,7 @@ def test_charges_age_out_of_the_window():
 def test_charges_inside_the_window_still_count():
     rule = token_budget_guard(limit=20, window_s=60)
     assert rule(_event(ts=0.0)) is None
-    # 30s later the first charge is still inside the window: 13 + 13 >= 20.
+    # 30s later the first charge is still inside the window: 13 + 13 > 20.
     assert cast(Decision, rule(_event(ts=30.0))).verdict is Verdict.BLOCK
 
 

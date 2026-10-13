@@ -42,11 +42,19 @@ MARKER = "[REDACTED SECRET]"
 
 # Vendor-shaped API keys that appear verbatim in tool output: an AWS access key
 # id (``AKIA`` plus sixteen upper-case alphanumerics), an OpenAI-style key
-# (``sk-`` plus twenty or more alphanumerics), and a GitHub personal access
-# token (``ghp_`` plus exactly thirty-six alphanumerics). The ``\b`` anchors
-# keep the match from bleeding into a longer word. No validation follows -
-# every regex match is masked.
-PATTERN = re.compile(r"\b(?:AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36})\b")
+# (``sk-`` plus twenty or more alphanumerics, or a scoped ``sk-proj-`` /
+# ``sk-svcacct-`` / ``sk-admin-`` / ``sk-ant-api03-`` key whose body also
+# carries ``-`` and ``_``), and a GitHub personal access token (``ghp_`` plus
+# exactly thirty-six alphanumerics). Only a known scope prefix admits ``-`` in
+# the body, so prose such as ``sk-learn-compatible-estimator`` stays unmasked.
+# The ``\b`` anchors keep the match from bleeding into a longer word. No
+# validation follows - every regex match is masked.
+PATTERN = re.compile(
+    r"\b(?:AKIA[0-9A-Z]{16}"
+    r"|sk-(?:(?:proj|svcacct|admin)-|ant-(?:[a-z]+\d+-)?)[A-Za-z0-9_-]{20,}"
+    r"|sk-[A-Za-z0-9]{20,}"
+    r"|ghp_[A-Za-z0-9]{36})\b"
+)
 
 # Egress action names this guard recognises. The result-side verbs are the
 # reason this rule exists - a call already completed and its output is leaving -

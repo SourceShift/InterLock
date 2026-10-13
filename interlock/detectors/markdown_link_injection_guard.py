@@ -40,11 +40,12 @@ POLICY_ID = "markdown_link_injection"
 # payload, ``[^\]]*\]`` closes the text, and ``\([^)]*\)`` requires the trailing
 # URL - so the phrase must sit inside real link syntax to match.
 #
-# No re.IGNORECASE: the alternation is lowercase by design, and folding case
-# would widen the rule to ``Ignore Previous`` prose rather than the delivered
-# technique, so the flag is deliberately omitted.
+# re.IGNORECASE: a model reads ``[Ignore Previous ...]`` exactly as it reads the
+# lowercase phrase, so one capital letter must not walk past the rule. Prose is
+# kept out by the link syntax the match requires, not by the letter case.
 PATTERN = re.compile(
-    r"\[[^\]]*(?:ignore previous|system prompt|you are now|exfiltrate)[^\]]*\]\([^)]*\)"
+    r"\[[^\]]*(?:ignore previous|system prompt|you are now|exfiltrate)[^\]]*\]\([^)]*\)",
+    re.IGNORECASE,
 )
 
 

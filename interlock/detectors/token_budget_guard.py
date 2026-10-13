@@ -12,13 +12,14 @@ call counter is blind to it.
 This Rule estimates the tokens each event carries - a dependency-free
 chars-per-token heuristic (:mod:`interlock.tokens`, no tokenizer dependency) -
 and accumulates them per principal over a rolling window of ``window_s``
-seconds. Once a principal's estimated spend in the window reaches ``limit`` the
-rule blocks the event. The window is a real rolling window: each charge carries
+seconds. Once a principal's estimated spend in the window goes over ``limit``
+the rule blocks the event. The window is a real rolling window: each charge carries
 the event's timestamp and ages out once it is older than ``window_s``, so a
 principal that slows down earns allowance back without any explicit reset.
 
 The boundary is inclusive at the limit, matching the other budget rules: with
-``limit=200`` the call that brings the window to 200 is the one refused. The
+``limit=200`` a window may hold exactly 200 tokens, and the call that takes it
+past 200 is the one refused. The
 tally lives in the closure, so each factory call owns fresh state - two rules
 built from separate ``token_budget_guard()`` calls never share a window and
 cannot trip each other. The key is the event's principal, falling back to
@@ -174,7 +175,7 @@ def token_budget_guard(
         used = max(0.0, used) + charged
         entries.append((now, charged))
 
-        if used >= limit:
+        if used > limit:
             return Decision.block(
                 reason="token_budget: limit {} tokens per {}s exceeded".format(
                     limit, window_s

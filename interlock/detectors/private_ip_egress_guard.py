@@ -17,13 +17,13 @@ never raises on odd input.
 """
 from __future__ import annotations
 
-import ipaddress
 from typing import Any, Optional, Tuple
 from urllib.parse import urlparse
 
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
+from .._net import ip_literal
 
 POLICY_ID = "private_ip_egress"
 
@@ -122,9 +122,8 @@ def private_ip_egress_guard() -> Rule:
         if not host:
             return None
 
-        try:
-            address = ipaddress.ip_address(host)
-        except ValueError:
+        address = ip_literal(host)  # every spelling a client dials, not just dotted quads
+        if address is None:
             return None  # a domain name: the allowlist's business, not ours
 
         why = _non_public_reason(host, address)
