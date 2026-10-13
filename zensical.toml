@@ -37,9 +37,15 @@ nav = [
   { "Security model" = "security-model.md" },
   { "Guides" = [
     { "Writing rules" = "guides/writing-rules.md" },
+    { "Declarative policies" = "guides/policies.md" },
     { "Using detectors" = "guides/detectors.md" },
     { "Integrations" = "guides/integrations.md" },
+    { "Coding agents" = "guides/coding-agents.md" },
     { "MCP" = "guides/mcp.md" },
+    { "Databases and APIs" = "guides/databases.md" },
+    { "Approvals" = "guides/approvals.md" },
+    { "Review queue" = "guides/reviews.md" },
+    { "Credentials" = "guides/credentials.md" },
     { "Scopes" = "guides/scopes.md" },
     { "Audit log" = "guides/audit-log.md" },
     { "Sandbox" = "guides/sandbox.md" },
@@ -47,6 +53,7 @@ nav = [
   ] },
   { "Reference" = [
     { "Python API" = "reference/python-api.md" },
+    { "Command line" = "reference/cli.md" },
     { "Detector catalog" = "reference/detectors.md" },
     { "Sidecar" = "reference/sidecar.md" },
   ] },

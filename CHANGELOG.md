@@ -9,7 +9,47 @@ breaking changes land.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `Verdict.ESCALATE`: hold a call for a human approver, bound to the exact
+  call (one-use by default; session and TTL scopes; a block always wins; no
+  approver means blocked). `NotApproved` is raised when it isn't approved.
+- A durable review queue (`interlock.reviews`, `interlock reviews ...`): refuse
+  now with a review id, release the identical retry exactly once after a human
+  approves; quorum, two expiry clocks, a read-only MCP status server.
+- Coding-agent hook adapters for Claude Code, Codex and Cursor
+  (`interlock install-hook`), with the `builtin:coding-agent` policy pack.
+- Declarative JSON/YAML policies with load-time typo checks, quarantine,
+  locked rules, hot reload and trust-gated project overlays
+  (`interlock policy`, `interlock trust`).
+- Shell commands judged by what they do (`interlock.shell`,
+  `command_intent_guard`); SQL judged by its effects and tables
+  (`interlock.sql`, `sql_statement_guard`).
+- A masking engine with checksum-validated entities, column rules and
+  redact/mask/partial/keyed-hash strategies (`data_masking_guard`,
+  `pii_argument_guard`); masked counts in receipts and reports.
+- `runbook_guard`, `http_request_guard`, `http_status_guard`,
+  `mcp_elicitation_guard`, `result_size_guard`, `tool_output_secret_redactor`.
+- Receipt provenance (`call_id`, `policy_epoch`, `policy_verdict`,
+  `approval`, `outcome`/`enforcer`, `elapsed_us`, `masked`), fail-closed sink
+  writes, and `FileSink(shared=True)` for several writers.
+- `interlock doctor`, `interlock report`, `interlock mcp scan`, and
+  `interlock.posture.attest()` / `require()`.
+- `interlock.metrics` (Prometheus text) and `interlock-sidecar --admin`.
+- Sidecar clients choose what an unreachable daemon means
+  (`unreachable="deny" | "degraded" | "allow"`), with a signed offline
+  fallback policy (`interlock-sidecar --fallback-policy`).
+- Placeholder credentials (`interlock.credentials`): `{{secret:id}}` filled
+  after the decision, only where allowed, and scrubbed from results.
+
+### Changed
+
+- Every enforcement site dispatches through one exhaustive function, so a
+  verdict it doesn't know is blocked rather than allowed (Python and Node.js).
+- `destructive_command_guard` and `git_credential_guard` also parse commands;
+  the parsed check only adds findings (`parse=False` keeps the old behaviour).
+- A failed receipt write raises `Blocked` (policy `audit_sink`) instead of the
+  sink's own exception.
 
 ## [0.0.1] — 2026-10-13
 
