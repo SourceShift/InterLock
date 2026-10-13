@@ -21,6 +21,7 @@ minutes), then read [how interlock works](concepts.md).
 
 | Guide | You'll learn to |
 |---|---|
+| [Console](guides/console.md) | Build and launch the local web UI over your running policy engine |
 | [Writing rules](guides/writing-rules.md) | Block, rewrite, check results, scope rules to tools, and test your policy |
 | [Using detectors](guides/detectors.md) | Pick from the 115 built-in detectors, make sure they see your tools, and start from a tested set |
 | [Declarative policies](guides/policies.md) | Write rules as JSON/YAML, lock the ones that must stay on, and accept project overlays safely |

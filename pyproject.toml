@@ -41,6 +41,7 @@ dev = ["pytest>=7", "langchain-core>=0.3,<0.4"]
 [project.scripts]
 interlock = "interlock.cli:main"
 interlock-sidecar = "interlock.sidecar.__main__:main"
+interlock-console = "interlock.console.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["interlock*"]
