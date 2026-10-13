@@ -84,6 +84,8 @@ export function CatalogScreen({ v }: { v: Vals }) {
                 </>
               ) : null}
               {" "}
+              {v.extras.sweep}
+              {" "}
               {v.cd.has ? (
                 <>
                   {" "}
@@ -150,6 +152,7 @@ export function CatalogScreen({ v }: { v: Vals }) {
                         </div>
                       </Fragment>
                     ))}
+                    {v.extras.detectorHits}
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "14px", lineHeight: "1.65", color: "var(--il-fg2)", maxWidth: "680px" }}>
                       {v.cd.doc.map((it_p: (typeof v.cd.doc)[number], i_p: number) => (
                         <Fragment key={i_p}>

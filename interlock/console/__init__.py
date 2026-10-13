@@ -17,5 +17,6 @@ from . import activity  # noqa: F401 - registers /api/activity
 from . import reviews_api  # noqa: F401 - registers /api/reviews and /api/reviews/<id>/...
 from . import policy_api  # noqa: F401 - registers /api/policy, /api/policy/check, /api/trust
 from . import ops  # noqa: F401 - registers /api/doctor, /api/hooks, /api/mcp, /api/sidecar
+from . import transcripts  # noqa: F401 - registers /api/calls, /api/policy/backtest, /api/detectors/sweep
 
 __all__ = ["ConsoleServer", "ConsoleRequestHandler", "LOOPBACK_HOSTS"]

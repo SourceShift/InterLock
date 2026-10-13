@@ -23,6 +23,7 @@ the model through ``updatedToolOutput``. The rule never raises.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Any, List, Optional, Tuple
 
 from ..enforce import Decision
@@ -55,6 +56,17 @@ PATTERNS: List[Tuple[str, "re.Pattern[str]", int]] = [
 ]
 
 
+#: Values of a secret-named assignment that are not secrets: a type in
+#: source code (``link_token: string;``) or a reference to where the secret
+#: lives (``API_KEY = os.environ[...]``, ``token: ${TOKEN}``).
+_NOT_A_VALUE = re.compile(
+    r"^(?:string|number|boolean|bigint|any|unknown|never|void|object|null|undefined|none|"
+    r"str|int|float|bool|bytes|optional|list|dict|true|false)\b[\[\]<>|?;,)]*$"
+    r"|^(?:process\.env|os\.environ|os\.getenv|env\.|getenv|config\.|settings\.|self\.|this\.)"
+    r"|^\$|^%\(|[(){};]$",
+    re.IGNORECASE)
+
+
 def redact_text(text: str) -> Tuple[str, List[str]]:
     """Mask every credential-shaped value in ``text``; return (text, kinds)."""
     kinds: List[str] = []
@@ -62,6 +74,8 @@ def redact_text(text: str) -> Tuple[str, List[str]]:
         def mask(match: "re.Match[str]", kind: str = kind, group: int = group) -> str:
             if match.group(group).startswith("[REDACTED"):
                 return match.group(0)  # an earlier pattern already masked it
+            if kind == "SECRET" and _NOT_A_VALUE.search(match.group(group)):
+                return match.group(0)  # a type or a reference, not a credential
             kinds.append(kind)
             marker = "[REDACTED {}]".format(kind)
             if group == 0:
@@ -109,12 +123,16 @@ def tool_output_secret_redactor() -> Rule:
         if not kinds:
             return None
         result = redacted["result"] if set(redacted) == {"result"} else redacted
-        return Decision.modify_result(
+        decision = Decision.modify_result(
             result,
             reason="masked {} in tool output".format(", ".join(sorted(set(kinds)))),
             policy_id=POLICY_ID,
             attributed_to="result",
         )
+        # Counts per kind, never values: the receipt's ``masked`` field and the
+        # metrics read this, as they do for the masking engine's rewrites.
+        decision.masked = dict(Counter(kinds))
+        return decision
 
     rule.phase = "result"  # type: ignore[attr-defined]
     return rule

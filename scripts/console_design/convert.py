@@ -56,6 +56,14 @@ PATCHES = [
     # Activity: the bucketed report API this note asked for now exists.
     (" Time buckets above need the proposed bucketed report API.<", "<"),
     # Ops: open the real MCP starter rule as an unsaved draft in the editor.
+    # Mount points for hand-written panels the design has no markup for:
+    # <il-extra name="x"> renders v.extras.x (web/src/extras/).
+    ("<dl ", "<il-extra name=\"receiptCall\"></il-extra>\n<dl "),
+    ("<section data-testid=\"rules-editor\"", "<il-extra name=\"realCalls\"></il-extra>\n<section data-testid=\"rules-editor\""),
+    ("<sc-if value=\"{{ pol.tabPack }}\">", "<il-extra name=\"backtest\"></il-extra>\n<sc-if value=\"{{ pol.tabPack }}\">"),
+    ("<sc-if value=\"{{ cd.has }}\">", "<il-extra name=\"sweep\"></il-extra>\n<sc-if value=\"{{ cd.has }}\">"),
+    ("</sc-for>\n</div>\n</sc-for>\n<div style=\"display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:1.65",
+     "</sc-for>\n</div>\n</sc-for>\n<il-extra name=\"detectorHits\"></il-extra>\n<div style=\"display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:1.65"),
     ("<a href=\"#/policy\" style=\"font-size:12.5px;font-weight:500;padding:6px 11px;border-radius:7px;border:1px solid var(--il-rule2);color:var(--il-fg);text-decoration:none\">Review starter policy</a>",
      "<a href=\"#/policy/starter\" style=\"font-size:12.5px;font-weight:500;padding:6px 11px;border-radius:7px;border:1px solid var(--il-rule2);color:var(--il-fg);text-decoration:none\">Review starter policy</a>"),
 ]
@@ -295,6 +303,8 @@ class Emitter:
                     [ind + "  </Fragment>", ind + "))}"])
         if node.tag in ("sc-component",):
             raise SystemExit("unhandled " + node.tag)
+        if node.tag == "il-extra":
+            return [ind + "{v.extras." + a["name"] + "}"]
         style = a.get("style") or ""
         child_pre = pre or node.tag in ("pre", "textarea") or "white-space:pre" in style
         attrs = self.attrs(node, scope)

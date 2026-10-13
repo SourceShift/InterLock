@@ -5,6 +5,10 @@
  */
 import type {
   ActivityResponse,
+  BacktestResult,
+  CallDetail,
+  RealCall,
+  SweepResult,
   Analysis,
   DetectorDetail,
   DetectorsResponse,
@@ -98,7 +102,7 @@ export interface State {
   copied: string;
   // policy
   policyText: string;
-  polTab: "rules" | "edit" | "overlays" | "pack";
+  polTab: "rules" | "edit" | "overlays" | "pack" | "backtest";
   check: { rules: number; locked: number; quar: number; overlays: string; epoch: string } | null;
   saveOpen: boolean;
   saving: boolean;
@@ -117,6 +121,17 @@ export interface State {
   insEvent: string;
   insOut: ScopeResolveResponse | null;
   insErr: string | null;
+  // real calls (playground picker)
+  rcQ: string;
+  rcTool: string;
+  rcSel: string[];
+  rcResults: boolean;
+  // backtest and sweep
+  btSource: "draft" | "saved";
+  btLimit: number;
+  btRunning: boolean;
+  swLimit: number;
+  swRunning: boolean;
 }
 
 export interface Data {
@@ -149,6 +164,16 @@ export interface Data {
   mcp: { servers: McpServer[]; warnings: string[]; clients_seen: number; clients_known: number } | null;
   sidecar: SidecarState | null;
   receiptLog: ReceiptLog | null;
+  realCalls: RealCall[] | null;
+  realTools: Record<string, number>;
+  realAvailable: boolean;
+  realErr: string | null;
+  callDetail: CallDetail | null;
+  callDetailFor: number | null;
+  backtest: BacktestResult | null;
+  backtestErr: string | null;
+  sweep: SweepResult | null;
+  sweepErr: string | null;
 }
 
 export const initialState = (): State => ({
@@ -201,6 +226,15 @@ export const initialState = (): State => ({
   insEvent: "",
   insOut: null,
   insErr: null,
+  rcQ: "",
+  rcTool: "",
+  rcSel: [],
+  rcResults: true,
+  btSource: "draft",
+  btLimit: 300,
+  btRunning: false,
+  swLimit: 200,
+  swRunning: false,
 });
 
 export const initialData = (): Data => ({
@@ -233,4 +267,14 @@ export const initialData = (): Data => ({
   mcp: null,
   sidecar: null,
   receiptLog: null,
+  realCalls: null,
+  realTools: {},
+  realAvailable: true,
+  realErr: null,
+  callDetail: null,
+  callDetailFor: null,
+  backtest: null,
+  backtestErr: null,
+  sweep: null,
+  sweepErr: null,
 });

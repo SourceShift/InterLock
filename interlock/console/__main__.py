@@ -117,6 +117,13 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         metavar="HOST:PORT",
         help="the guard daemon's loopback admin address, for its stats and config",
     )
+    parser.add_argument(
+        "--transcripts",
+        default=None,
+        metavar="DIR",
+        help="Claude Code transcripts, for real calls in the playground, backtests and the "
+             "detector sweep (default ~/.claude/projects); only ever read",
+    )
     return parser.parse_args(argv)
 
 
@@ -166,6 +173,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sidecar=args.sidecar,
         sidecar_admin=args.sidecar_admin,
         key_file=args.key_file,
+        transcripts=args.transcripts,
     )
     # The unlock link goes to this terminal and nowhere else (see session.py).
     sys.stderr.write("unlock writes: http://{}:{}/#/unlock/{}\n".format(

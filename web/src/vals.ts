@@ -27,6 +27,7 @@ import {
   vk,
   type VerdictKey,
 } from "./format";
+import { renderExtras } from "./extras";
 import type { Data, State } from "./model";
 
 export interface Actions {
@@ -54,6 +55,14 @@ export interface Actions {
   updPg(fn: (pg: State["pg"]) => void): void;
   runPg(): void;
   resolveScope(): void;
+  // real data
+  loadRealCalls(): void;
+  setRealFilter(f: { q?: string; tool?: string }): void;
+  toggleRealCall(callId: string): void;
+  addRealCalls(replace: boolean): void;
+  openInPlayground(o: { calls: { call_id: string; session?: string | null; ts?: number }[]; module?: string; factory?: string }): void;
+  runBacktest(): void;
+  runSweep(): void;
 }
 
 const WIN_LABEL = { "30m": "last 30 minutes", "24h": "last 24 hours", "7d": "last 7 days" } as const;
@@ -260,6 +269,7 @@ export function computeVals(S: State, D: Data, A: Actions) {
     saveOpen: S.saveOpen,
     epoch: D.policy?.analysis.ok ? D.policy.analysis.epoch : "—",
     policyQuarantined, quarCount, detCount,
+    extras: renderExtras(S, D, A),
   };
 }
 
@@ -773,7 +783,7 @@ function moreVals(S: State, D: Data, A: Actions, c: { wide: boolean; locked: boo
       copy: () => A.copy("ov" + i, o.cmd), copyLabel: S.copied === "ov" + i ? "copied" : "copy",
     };
   });
-  const tabs = ([["rules", "Rules"], ["edit", "Edit JSON"], ["overlays", "Overlays"], ["pack", "Built-in pack"]] as const).map(([k, l]) => ({
+  const tabs = ([["rules", "Rules"], ["edit", "Edit JSON"], ["overlays", "Overlays"], ["pack", "Built-in pack"], ["backtest", "Test on real calls"]] as const).map(([k, l]) => ({
     l, dirty: k === "edit" && dirty ? " ●" : "", sel: S.polTab === k, bg: S.polTab === k ? "var(--il-sel)" : "transparent",
     c: S.polTab === k ? "var(--il-fg)" : "var(--il-fg2)", on: () => A.set({ polTab: k }),
   }));
@@ -822,7 +832,7 @@ function moreVals(S: State, D: Data, A: Actions, c: { wide: boolean; locked: boo
       if (el && el.value !== S.pgPreset) el.value = S.pgPreset;
     },
     preset: S.pgPreset,
-    presets: [...D.presets.map((p) => ({ v: p.id, l: p.title })), { v: "custom", l: "Custom" }],
+    presets: [...D.presets.map((p) => ({ v: p.id, l: p.title })), { v: "real", l: "Real calls…" }, { v: "custom", l: "Custom" }],
     onPreset: (e: { target: { value: string } }) => A.setPreset(e.target.value),
     detOpts: facts.map((x) => ({ v: x.key })),
     rules: S.pg.rules.map((r, i) => {

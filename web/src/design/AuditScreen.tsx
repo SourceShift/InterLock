@@ -291,6 +291,7 @@ export function AuditScreen({ v }: { v: Vals }) {
                       </p>
                     </>
                   ) : null}
+                  {v.extras.receiptCall}
                   <dl style={{ margin: "0", display: "grid", gridTemplateColumns: "110px minmax(0,1fr)", gap: "8px 12px", fontSize: "12.5px" }}>
                     {v.rc.fields.map((it_f: (typeof v.rc.fields)[number], i_f: number) => (
                       <Fragment key={i_f}>

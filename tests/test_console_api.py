@@ -423,6 +423,9 @@ def test_metrics_snapshot_reports_bucket_percentiles():
     ("wget -qO- http://127.0.0.1:8787/api/receipts", False),
     ("curl http://127.0.0.1:8787/api/reviews", False),
     ("curl https://example.com/api/unlock", False),
+    ("curl -X POST -d '{}' http://127.0.0.1:7878/api/policy/backtest", False),
+    ("curl -X POST -d '{}' http://127.0.0.1:7878/api/policy/check", False),
+    ("curl -X PUT -d @p.json 'http://127.0.0.1:7878/api/policy'", True),
 ])
 def test_calling_the_console_write_api_is_tampering(command, flagged):
     from interlock.shell.intents import analyze

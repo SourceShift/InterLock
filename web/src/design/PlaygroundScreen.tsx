@@ -26,6 +26,7 @@ export function PlaygroundScreen({ v }: { v: Vals }) {
               Runs only catalog detectors. Never evaluates code.
             </span>
           </div>
+          {v.extras.realCalls}
           <section data-testid="rules-editor" style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <h2 style={{ margin: "0", fontSize: "13.5px", fontWeight: "600", flex: "1" }}>

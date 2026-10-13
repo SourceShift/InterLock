@@ -464,3 +464,106 @@ export const fetchScopeExample = () =>
   call<{ document: unknown; principal: string; event: unknown }>("/api/scopes/example");
 export const resolveScope = (document: unknown, principal: string, event: unknown) =>
   call<ScopeResolveResponse>("/api/scopes/resolve", { method: "POST", body: { document, principal, event } });
+
+// --- real calls from the agent's transcripts -----------------------------------------
+
+export interface CallReceipt {
+  index: number;
+  phase: string;
+  verdict: string;
+  policy_verdict?: string | null;
+  policy_id: string | null;
+  reason?: string;
+  approval?: string | null;
+  masked?: Record<string, number> | null;
+}
+
+export interface RealCall {
+  call_id: string;
+  ts: number;
+  tool: string;
+  target: string;
+  cwd: string | null;
+  session: string;
+  subagent: boolean;
+  args: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  has_result: boolean;
+  is_error: boolean;
+  result_len: number;
+  receipts: CallReceipt[];
+}
+
+export const fetchCalls = (limit: number, tool?: string, text?: string) =>
+  call<{ root: string; available: boolean; files?: number; calls: RealCall[]; tools: Record<string, number> }>(
+    "/api/calls" + q({ limit, tool, q: text }),
+  );
+
+export interface CallDetail {
+  found: boolean;
+  call_id: string;
+  searched?: number;
+  tool?: string;
+  target?: string;
+  ts?: number;
+  cwd?: string | null;
+  session?: string;
+  subagent?: boolean;
+  transcript?: string;
+  args?: Record<string, unknown>;
+  result?: string | null;
+  result_len?: number;
+  is_error?: boolean;
+  digest?: { computed: string | null; receipt: string | null; match: boolean | null };
+  receipts: CallReceipt[];
+}
+
+export const fetchCall = (callId: string, session?: string | null, ts?: number) =>
+  call<CallDetail>("/api/calls/" + encodeURIComponent(callId) + q({ session, ts }));
+
+export interface BacktestRow {
+  call_id: string;
+  ts: number;
+  tool: string;
+  target: string;
+  session: string;
+  phase: "call" | "result";
+  status: "changed" | "unrecorded";
+  would: { verdict: string; policy_id: string | null; reason: string };
+  actual: { verdict: string | null; policy_id: string | null; index: number | null } | null;
+}
+
+export interface BacktestResult {
+  source: "draft" | "saved";
+  epoch: string;
+  calls: number;
+  would: Record<string, number>;
+  recorded: number;
+  changed: number;
+  unrecorded: number;
+  rows: BacktestRow[];
+  truncated: boolean;
+  elapsed_ms: number;
+}
+
+export const runBacktest = (limit: number, text?: string) =>
+  call<BacktestResult>("/api/policy/backtest", { method: "POST", body: text === undefined ? { limit } : { limit, text } });
+
+export interface SweepDetector {
+  module: string;
+  factory: string;
+  fired: number;
+  verdicts: Record<string, number>;
+  errors: number;
+  examples: { call_id: string; ts: number; tool: string; target: string; phase: string; verdict: string; reason: string; session: string }[];
+}
+
+export interface SweepResult {
+  calls: number;
+  events: number;
+  detectors: SweepDetector[];
+  skipped: { module: string; factory: string; needs: string[]; error?: string }[];
+  elapsed_ms: number;
+}
+
+export const runSweep = (limit: number) => call<SweepResult>("/api/detectors/sweep", { method: "POST", body: { limit } });

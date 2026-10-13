@@ -300,10 +300,11 @@ _INTERLOCK_CONTROL = frozenset({"trust", "install-hook", "uninstall-hook"})
 
 #: The console's unlock and write routes, on a loopback host. An agent that
 #: reaches them could approve its own reviews or rewrite its own policy, so
-#: calling them is tampering whatever the HTTP client.
+#: calling them is tampering whatever the HTTP client. ``/api/policy`` itself
+#: (the save) is matched, not its read-only children (``check``, ``backtest``).
 _CONSOLE_WRITE = re.compile(
     r"(?:^|[\s'\"(=]|https?://)(?:127\.\d+\.\d+\.\d+|localhost|\[::1\]|0\.0\.0\.0)(?::\d+)?"
-    r"/api/(?:unlock|lock|policy(?:[/?#]|$)|reviews/[^/?#]+/(?:approve|reject|revoke))",
+    r"/api/(?:unlock|lock|policy(?=$|[?#\s'\"])|reviews/[^/?#]+/(?:approve|reject|revoke))",
     re.IGNORECASE)
 _MUTATORS = frozenset({"rm", "mv", "cp", "ln", "chmod", "chown", "truncate", "tee",
                        "touch", "install", "rsync", "unlink", "shred"})

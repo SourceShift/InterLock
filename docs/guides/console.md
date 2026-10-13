@@ -87,6 +87,36 @@ agent's `curl` to them is blocked before it runs.
 | `--four-eyes` | off | Refuse an approval by the account that filed the review. |
 | `--sidecar` | its usual socket, if present | The guard daemon's socket, to probe for Ops. |
 | `--sidecar-admin` | none | The daemon's loopback admin address (`interlock-sidecar --admin HOST:PORT`), for its stats and config. |
+| `--transcripts` | `~/.claude/projects` | Claude Code transcripts, for the real-data features below. Only ever read. |
+
+## Testing on your real calls
+
+Receipts store a fingerprint of each call's arguments, never the arguments.
+Claude Code keeps them, and what each tool returned, in its session
+transcripts, and the hook stamps every receipt with Claude Code's own tool-call
+id. The console joins the two:
+
+- **The call behind a receipt.** Open a receipt in the audit log and the drawer
+  shows the file or command, the output the model saw, and every receipt for
+  the same call. It recomputes the argument fingerprint from the transcript, so
+  "this is the recorded call" is proven, not guessed. Subagent calls are found
+  in their own transcripts.
+- **Real calls in the playground.** Pick **Real calls…** in the preset list,
+  filter by tool or text, and use the calls (and their outputs) as events. They
+  are built by the same adapter the hook uses, so a detector sees exactly what
+  it would see live.
+- **Test a policy on real calls.** The Policy screen's last tab runs the draft or
+  the saved policy over your last 100-2,000 calls and lists the ones it would
+  block, rewrite or escalate - and any the guard decided differently at the
+  time. Nothing runs and no receipt is written.
+- **Sweep the catalog.** On the Detectors screen, run every detector at its
+  defaults over your recent calls to see which would fire, how often, and on
+  what; open the examples in the playground.
+
+Credentials in arguments and outputs are masked, with the guard's own patterns,
+before they reach the page; backtests and sweeps evaluate the unmasked calls.
+Transcripts are large, so the console reads only the newest ones (within a
+byte budget) and re-reads a growing file from where it stopped.
 
 ## Trying it on real traffic
 

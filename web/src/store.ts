@@ -136,7 +136,7 @@ export class ConsoleStore {
     if (path === "activity") void this.loadActivity();
     if (path === "audit") {
       void this.loadReceipts(false);
-      if (q.r) void this.loadSelected(Number(q.r));
+      if (q.r) void this.loadSelected(Number(q.r)).then(() => this.loadCallDetail(Number(q.r)));
     }
     if (path === "reviews") void this.loadReviews();
     if (path === "policy") {
@@ -251,6 +251,88 @@ export class ConsoleStore {
     } catch {
       this.data({ selReceipt: null });
     }
+  }
+
+  // --- real calls ---------------------------------------------------------------------
+
+  private async loadCallDetail(index: number) {
+    const r = this.D.receipts.find((x) => x.index === index) ?? this.D.selReceipt;
+    if (!r || r.unreadable || r.index !== index || !r.call_id) {
+      this.data({ callDetail: null, callDetailFor: index });
+      return;
+    }
+    if (this.D.callDetailFor === index && this.D.callDetail) return;
+    this.data({ callDetail: null, callDetailFor: index });
+    try {
+      const detail = await api.fetchCall(r.call_id, r.span_id, r.ts);
+      if (this.D.callDetailFor === index) this.data({ callDetail: detail });
+    } catch {
+      /* the drawer says the call couldn't be found */
+    }
+  }
+
+  private async loadRealCalls() {
+    try {
+      const r = await api.fetchCalls(200, this.S.rcTool || undefined, this.S.rcQ.trim() || undefined);
+      this.data({ realCalls: r.calls, realTools: r.tools, realAvailable: r.available, realErr: null });
+    } catch (e) {
+      this.data({ realErr: errText(e) });
+    }
+  }
+
+  private realCallsSoon = debounce(() => void this.loadRealCalls(), 300);
+
+  private eventsOf(c: { tool: string; args: Record<string, unknown>; result?: unknown }, withResult: boolean): Pg["events"] {
+    const out: Pg["events"] = [{ action: c.tool, phase: "call", principal: "claude-code", args: JSON.stringify(c.args, null, 2) }];
+    if (withResult && c.result !== undefined && c.result !== null) {
+      const payload = typeof c.result === "string" ? { result: c.result } : c.result;
+      out.push({ action: c.tool, phase: "result", principal: "claude-code", args: JSON.stringify(payload, null, 2) });
+    }
+    return out;
+  }
+
+  private async openInPlayground(o: { calls: { call_id: string; session?: string | null; ts?: number }[]; module?: string; factory?: string }) {
+    const events: Pg["events"] = [];
+    for (const ref of o.calls) {
+      const known = this.D.realCalls?.find((c) => c.call_id === ref.call_id);
+      if (known) {
+        events.push(...this.eventsOf(known, true));
+        continue;
+      }
+      try {
+        const d = await api.fetchCall(ref.call_id, ref.session, ref.ts);
+        if (d.found && d.tool && d.args) events.push(...this.eventsOf({ tool: d.tool, args: d.args, result: d.result ?? undefined }, true));
+      } catch {
+        /* skip a call that can't be read */
+      }
+    }
+    const rules = o.module && o.factory ? [{ module: o.module, factory: o.factory, params: {} }] : this.S.pg.rules;
+    this.set({ pg: { rules, events }, pgPreset: "custom", pgRan: true });
+    this.hashFor("#/playground");
+    this.evaluateSoon();
+  }
+
+  private async runBacktest() {
+    if (this.S.btRunning) return;
+    this.set({ btRunning: true });
+    try {
+      const text = this.S.btSource === "draft" ? this.S.policyText : undefined;
+      this.data({ backtest: await api.runBacktest(this.S.btLimit, text), backtestErr: null });
+    } catch (e) {
+      this.data({ backtestErr: errText(e) });
+    }
+    this.set({ btRunning: false });
+  }
+
+  private async runSweep() {
+    if (this.S.swRunning) return;
+    this.set({ swRunning: true });
+    try {
+      this.data({ sweep: await api.runSweep(this.S.swLimit), sweepErr: null });
+    } catch (e) {
+      this.data({ sweepErr: errText(e) });
+    }
+    this.set({ swRunning: false });
   }
 
   private async loadPolicy() {
@@ -698,7 +780,10 @@ export class ConsoleStore {
       this.set({ vf: "all", rf: "all", q: "" });
       this.hashFor("#/audit");
     },
-    openReceipt: (index) => this.hashFor(this.auditHash({ r: index })),
+    openReceipt: (index) => {
+      this.hashFor(this.auditHash({ r: index }));
+      void this.loadCallDetail(index);
+    },
     closeReceipt: () => this.hashFor(this.auditHash({})),
     toggleLive: () => {
       if (this.S.live) this.set({ live: false });
@@ -739,6 +824,11 @@ export class ConsoleStore {
     },
     saveDraft: () => void this.saveDraft(),
     setPreset: (id) => {
+      if (id === "real") {
+        this.set({ pgPreset: "real" });
+        if (!this.D.realCalls) void this.loadRealCalls();
+        return;
+      }
       if (id === "custom") return;
       const preset = this.D.presets.find((p) => p.id === id);
       if (!preset) return;
@@ -756,5 +846,24 @@ export class ConsoleStore {
       void this.evaluate();
     },
     resolveScope: () => void this.resolveScope(),
+    loadRealCalls: () => void this.loadRealCalls(),
+    setRealFilter: (f) => {
+      this.set({ rcQ: f.q ?? this.S.rcQ, rcTool: f.tool ?? this.S.rcTool });
+      this.realCallsSoon();
+    },
+    toggleRealCall: (callId) => {
+      const sel = this.S.rcSel.includes(callId) ? this.S.rcSel.filter((x) => x !== callId) : [...this.S.rcSel, callId];
+      this.set({ rcSel: sel });
+    },
+    addRealCalls: (replace) => {
+      const chosen = (this.D.realCalls ?? []).filter((c) => this.S.rcSel.includes(c.call_id));
+      const events = chosen.flatMap((c) => this.eventsOf(c, this.S.rcResults));
+      if (!events.length) return;
+      this.set({ pg: { rules: this.S.pg.rules, events: replace ? events : [...this.S.pg.events, ...events] }, rcSel: [], pgPreset: "custom" });
+      if (this.S.pgRan) this.evaluateSoon();
+    },
+    openInPlayground: (o) => void this.openInPlayground(o),
+    runBacktest: () => void this.runBacktest(),
+    runSweep: () => void this.runSweep(),
   };
 }

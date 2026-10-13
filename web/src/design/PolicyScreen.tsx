@@ -315,6 +315,8 @@ export function PolicyScreen({ v }: { v: Vals }) {
             </>
           ) : null}
           {" "}
+          {v.extras.backtest}
+          {" "}
           {v.pol.tabPack ? (
             <>
               {" "}
