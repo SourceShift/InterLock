@@ -76,7 +76,7 @@ worse at both jobs.
 | R22 | Signed PyPI/npm distribution | `not started` | S | agentjail review |
 | H1–H7 | SQL analysis, masking engine, review queue, runbooks, HTTP rules, metrics, MCP limits | `shipped` | L | hoop review |
 | R23 | OTLP event export | `shipped` | M | operational review |
-| R24 | Behavioural baseline → policy generator | `not started` | L | operational review |
+| R24 | Behavioural baseline → policy generator | `shipped` | L | operational review |
 | R25 | Token accounting in the budget guard | `shipped` | S | operational review |
 | R26 | Console approval workflow | `shipped` | M | operational review |
 | R27 | Framework sensor adapters | `shipped` | M | operational review |
@@ -1067,14 +1067,14 @@ These came from mapping what operators who deploy agents in an enterprise
 actually ask for — the questions asked when someone has to run an agent fleet
 and answer to a security team — against what interlock ships today. Each is a
 capability *gap*, recorded with the capability named and no reference to any
-particular vendor. Seven of the eight are now shipped — R23 and R25–R30 landed with live smoke
-tests — while R24 remains open (no longer blocked). Each one is what makes the
-detectors usable in a deployment.
+particular vendor. All eight are now shipped — R23–R25 and R27–R30 landed with
+live smoke tests, and R26 arrived onboard the console rather than as a separate
+run. Each one is what makes the detectors usable in a deployment.
 
 | # | Item | Status | Size | Pull |
 |---|---|---|---|---|
 | R23 | OTLP event export — receipts to a standard collector | `shipped` | M | operational review |
-| R24 | Behavioural baseline → policy generator (`interlock learn`) | `not started` | L | operational review |
+| R24 | Behavioural baseline → policy generator (`interlock learn`) | `shipped` | L | operational review |
 | R25 | Token accounting in the budget guard | `shipped` | S | operational review |
 | R26 | Console approval workflow | `shipped` | M | operational review |
 | R27 | Framework sensor adapters (SDK loops, LiteLLM, CrewAI, ADK) | `shipped` | M | operational review |
@@ -1125,7 +1125,10 @@ shape.
 
 ## R24 · Behavioural baseline → policy generator
 
-**Status:** `not started`
+**Status:** `shipped` — `interlock learn` reads a window of receipt-log entries,
+reduces them to the observed-allow envelope, and writes a declarative policy
+whose lone rule escalates anything outside it. The draft blocks nothing and
+locks nothing, so installing it stays a deliberate act.
 **Size:** L
 
 ### Problem
