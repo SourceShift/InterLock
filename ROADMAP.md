@@ -75,6 +75,14 @@ worse at both jobs.
 | R21 | MCP inventory scan | `shipped` | S | agentjail review |
 | R22 | Signed PyPI/npm distribution | `not started` | S | agentjail review |
 | H1–H7 | SQL analysis, masking engine, review queue, runbooks, HTTP rules, metrics, MCP limits | `shipped` | L | hoop review |
+| R23 | OTLP event export | `not started` | M | operational review |
+| R24 | Behavioural baseline → policy generator | `not started` | L | operational review |
+| R25 | Token accounting in the budget guard | `not started` | S | operational review |
+| R26 | Console approval workflow | `not started` | M | operational review |
+| R27 | Framework sensor adapters | `not started` | M | operational review |
+| R28 | A2A policy dimension | `not started` | M | operational review |
+| R29 | MCP transport controls and scoped engine over the sidecar | `not started` | M | operational review |
+| R30 | Upstream-drift detector | `not started` | M | operational review |
 
 ---
 
@@ -1050,6 +1058,277 @@ From comparing interlock with hoop's agent sidecar
 | H5 | `http_request_guard` (host, path globs, methods, header shapes) and `http_status_guard` | `tests/test_hoop_detectors.py` |
 | H6 | `interlock.metrics` (Prometheus text) and `interlock-sidecar --admin` | `tests/test_metrics_admin.py` |
 | H7 | `mcp_elicitation_guard`, `result_size_guard` | `tests/test_hoop_detectors.py` |
+
+---
+
+## R23–R30 · From an operational-requirements review
+
+These came from mapping what operators who deploy agents in an enterprise
+actually ask for — the questions asked when someone has to run an agent fleet
+and answer to a security team — against what interlock ships today. Each is a
+capability *gap*, recorded with the capability named and no reference to any
+particular vendor. They are the highest-value non-shipped work after R5, R9 and
+R11–R12, and they order ahead of new detectors because each one is what makes
+the detectors usable in a deployment.
+
+| # | Item | Status | Size | Pull |
+|---|---|---|---|---|
+| R23 | OTLP event export — receipts to a standard collector | `not started` | M | operational review |
+| R24 | Behavioural baseline → policy generator (`interlock learn`) | `not started` | L | operational review |
+| R25 | Token accounting in the budget guard | `not started` | S | operational review |
+| R26 | Console approval workflow | `not started` | M | operational review |
+| R27 | Framework sensor adapters (SDK loops, LiteLLM, CrewAI, ADK) | `not started` | M | operational review |
+| R28 | A2A policy dimension | `not started` | M | operational review |
+| R29 | MCP transport controls + scoped engine over the sidecar | `not started` | M | operational review |
+| R30 | Upstream-drift detector | `not started` | M | operational review |
+
+---
+
+## R23 · OTLP event export
+
+**Status:** `not started`
+**Size:** M
+
+### Problem
+interlock's audit trail is local: `FileSink`/`InMemorySink` receipts, Prometheus
+text at `/metrics`. Operators already send every other signal to a central
+collector over OpenTelemetry. A guardrail whose blocks land only in a local
+NDJSON file is invisible to the SIEM and the on-call human who is supposed to act
+on them. This is the single largest adoption gap: the enforcement is real, the
+observation does not reach where decisions are made.
+
+### What changes
+A new sink beside `ChainedSink` that exports each receipt as an OTLP log record
+over OTLP/HTTP, mapping interlock's fields onto the standard envelope (severity
+from the verdict, `service.name`, `span_id` for correlation, and attributes
+carrying `action`, `principal`, `policy_id`, `reason`). It writes the local
+chained receipt **and** exports it, so tamper-evidence survives when a collector
+is the destination. Configuration through `interlock.install(sink=...)` and the
+environment. Export is buffered and never blocks a verdict: a collector outage
+changes no decision, and the buffer flushes on recovery.
+
+### Acceptance
+With an OTLP receiver on loopback, one guarded call produces exactly one exported
+record whose severity maps the verdict and whose attributes carry
+action/principal/policy_id/reason, correlating to the local receipt by `span_id`.
+A collector outage changes no verdict and the buffered records flush on recovery.
+Argument values stay hashed and are never exported; the local chain still
+verifies.
+
+### Risks & dependencies
+The exporter must never become a second source of truth — it is a projection of
+the receipt, not a parallel log. Depends on nothing; benefits from R4's sink
+shape.
+
+---
+
+## R24 · Behavioural baseline → policy generator
+
+**Status:** `not started`
+**Size:** L
+
+### Problem
+Every guardrail here can *observe* — `@monitor()`, `install-hook --monitor`,
+`interlock report --monitor` — but nothing turns what was observed into a policy.
+The operator must hand-write the rules, and that authoring cost is what stops a
+trial from becoming a deployment. The unlock is a policy the machine proposes
+from the agent's own traffic.
+
+### What changes
+`interlock learn` reads a window of receipts (or a monitor run) and emits a
+proposal in the `interlock.policy.declarative` language: the observed tool set,
+per-principal action sets, destination hosts, argument shapes and volumes, as
+`allow` rules covering the observed envelope, with a chosen posture for
+everything else (default: escalate the unseen, block the known-bad). Output is a
+file an operator reviews — never auto-enforced.
+
+### Acceptance
+From a fixture receipt log, `interlock learn` emits a policy that allows every
+observed action and blocks a held-out novel action; the output loads through the
+declarative engine and passes its own load-time validation; re-running on
+identical input is byte-for-byte identical (deterministic, no timestamps in the
+artifact).
+
+### Risks & dependencies
+A baseline over-fits the window it learned from. The proposal must show the
+counted evidence behind each rule and be visibly a proposal. Depends on R4
+(receipts) and R10 (declarative policies) — both shipped.
+
+---
+
+## R25 · Token accounting in the budget guard
+
+**Status:** `not started`
+**Size:** S
+
+### Problem
+`cost_budget_guard` accumulates a number the caller supplies. It cannot see
+tokens, so it cannot cap the quantity that actually drives spend. Any operator
+who cares about cost asks for token limits first.
+
+### What changes
+A dependency-free token estimator (a characters-per-token heuristic with a
+per-model correction table) and a `token_budget_guard` that accumulates estimated
+input and output tokens per principal over a window, with bucket and refill
+semantics. Receipts carry the estimate so `interlock report` can show token spend
+next to verdict counts.
+
+### Acceptance
+A loop of N calls trips `token_budget_guard` at the configured ceiling; the
+estimator's error against a measured sample is reported as a documented bound;
+the guard composes with `cost_budget_guard` on the same call without double
+counting.
+
+### Risks & dependencies
+An estimator is wrong by construction — the error bound is stated, never
+presented as metering. Standalone.
+
+---
+
+## R26 · Console approval workflow
+
+**Status:** `not started`
+**Size:** M
+
+### Problem
+`Verdict.ESCALATE`, `interlock.approval` and `interlock.reviews` all exist, but
+the only way to release a held call is the CLI (`interlock reviews approve`). An
+operator watching a run has no live surface to approve or deny. The human-in-the-
+loop capability is real and has no interface.
+
+### What changes
+The console gains an approvals screen: the pending escalations read from the
+review-queue database, an approve/deny action per row, and live updates reusing
+the existing SSE stream. The server stays loopback-only; the only writes are the
+queue transitions, and the approve route is opt-in.
+
+### Acceptance
+An escalation raised by a run appears on the console within the existing stream
+bound; approving it from the console releases the identical retry exactly as
+`interlock reviews approve` does; a request whose args digest no longer matches,
+or that has expired, cannot be approved (400, not a silent allow).
+
+### Risks & dependencies
+An approve route is a write on a read-only-mode server — it must be
+loopback-enforced, opt-in, and digest-checked. Depends on H3 (review queue,
+shipped) and on the console itself landing on `main`.
+
+---
+
+## R27 · Framework sensor adapters
+
+**Status:** `not started`
+**Size:** M
+
+### Problem
+interlock reaches MCP sessions, LangChain tools and a generic tool seam
+(`enforce_tool_call`). The most common stacks — a raw model-SDK tool loop,
+LiteLLM, CrewAI, Google ADK — need the operator to wire that seam by hand, so
+coverage depends on the operator's diligence rather than on installation.
+
+### What changes
+Thin adapters beside `interceptors/langchain.py` that wrap each framework's
+tool-runner entrypoint through the same `enforce_tool_call` /
+`enforce_tool_result` core — no new engine, no new wire format. Each adapter is
+optional-import, dependency-free at runtime, and degrades to a reported
+"uncovered" state rather than silently passing.
+
+### Acceptance
+For each added framework, a test drives a tool call through the framework's
+public loop and asserts the interlock verdict is honoured for block, rewrite and
+result-check; `interlock doctor` reports which frameworks it detected and which
+surfaces remain uncovered.
+
+### Risks & dependencies
+Pinning to framework internals risks silent rot — the "uncovered" report and R30
+are the mitigation. Depends on the shipped tool-seam core.
+
+---
+
+## R28 · A2A policy dimension
+
+**Status:** `not started`
+**Size:** M
+
+### Problem
+Agent-to-agent traffic is a second call surface with its own trust questions —
+which peers are reachable, what their agent cards advertise — and interlock sees
+none of it.
+
+### What changes
+A policy condition and a small detector family for A2A: matching on agent-card
+name, description and advertised skills, plus an allowlist of reachable peers,
+evaluated through the same engine and written to the same receipts.
+
+### Acceptance
+An A2A call whose peer card is not on the allowlist is blocked with a reason
+naming the peer; a card whose advertised skill set changed since its baseline is
+flagged; the receipt carries the peer identity in `attributed_to`.
+
+### Risks & dependencies
+The A2A wire format is young — pin to the card schema and keep the detector
+allowlist-first. Standalone.
+
+---
+
+## R29 · MCP transport controls and scoped engine over the sidecar
+
+**Status:** `not started`
+**Size:** M
+
+### Problem
+Two concrete gaps. (1) interlock pins servers, tools and resources but cannot
+refuse a whole transport (HTTP, SSE, stdio), which a deployment policy needs.
+(2) `ScopedEngine` — per-tenant policy — is refused by the sidecar, so the
+Node.js client cannot use the multi-tenant feature at all.
+
+### What changes
+(1) An `mcp_transport_guard` with per-transport allow/deny and a
+command/args exception list for stdio. (2) The sidecar wire protocol carries a
+scope document, so a remote client receives the same scoped decisions as an
+in-process `ScopedEngine`, with the scope document recorded in the receipt's
+policy provenance.
+
+### Acceptance
+A stdio server not on the exception list is refused before launch; a denied HTTP
+transport is refused with a transport-named reason; the Node.js client resolves
+the same per-principal decision as the Python `ScopedEngine` for an identical
+event.
+
+### Risks & dependencies
+The scope document on the wire is new trust surface — signed like the fallback
+policy, and the sidecar keeps refusing an unsigned overlay. Depends on R13
+(Node client, shipped) and R19 (sidecar, shipped).
+
+---
+
+## R30 · Upstream-drift detector
+
+**Status:** `not started`
+**Size:** M
+
+### Problem
+The detectors and adapters encode the current shape of MCP servers, model SDKs
+and coding-agent hooks. When those upstream projects move, interlock's coverage
+silently rots, and nothing reports it. Today the conformance corpus proves only
+today's shape, on the day it was written.
+
+### What changes
+Record each covered surface's shape as a corpus (tool-listing fingerprints, SDK
+call signatures, hook payload schemas), add an `interlock drift` command that
+diffs the corpus against a live surface and reports additions, removals and
+changes with a severity, and a CI job that runs it against pinned upstream
+versions and emits a report.
+
+### Acceptance
+Given a live MCP server whose tool set changed since the corpus was written,
+`interlock drift` reports the added and removed tools and exits non-zero; an
+unchanged surface exits zero; the report names the exact upstream version tested.
+
+### Risks & dependencies
+Noise — the report separates "new capability we do not cover" from "a shape
+change that broke us", and files nothing automatically without an operator
+threshold.
 
 ---
 
