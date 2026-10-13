@@ -114,6 +114,10 @@ def summarize(
     for r in enforced:
         for entity, count in (r.masked or {}).items():
             masked[entity] += count
+    # Estimated token spend: the per-event estimate a token-accounting rule
+    # stamped onto the receipt. Only receipts that carried one are counted.
+    token_values = [r.tokens for r in enforced
+                    if isinstance(r.tokens, int) and not isinstance(r.tokens, bool)]
     latencies = sorted(r.elapsed_us for r in decisions if isinstance(r.elapsed_us, int))
     days = sorted({time.strftime("%Y-%m-%d", time.localtime(r.ts)) for r in window})
 
@@ -157,6 +161,7 @@ def summarize(
         "failed_outcomes": dict(sorted(outcomes.items())),
         "dropped_receipts": dropped,
         "masked": dict(masked.most_common()),
+        "tokens": {"total": sum(token_values), "calls": len(token_values)},
         "latency_us": _percentiles(latencies),
     }
 
@@ -240,6 +245,10 @@ def render(summary: Dict[str, Any], verified: Dict[str, Optional[str]], *,
     if summary.get("masked"):
         lines.append("Masked:           " + ", ".join(
             "{} x{}".format(k, v) for k, v in summary["masked"].items()))
+    tokens = summary.get("tokens") or {}
+    if tokens.get("total"):
+        lines.append("Est. tokens:      {} across {} call(s)".format(
+            tokens["total"], tokens["calls"]))
     if summary["dropped_receipts"]:
         lines.append(paint("31", "Dropped receipts: {} (the log has gaps)".format(
             summary["dropped_receipts"])))

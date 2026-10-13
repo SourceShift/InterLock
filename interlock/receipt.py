@@ -71,6 +71,10 @@ empty, the same rule ``observed`` follows, so older chains verify unchanged:
 - ``elapsed_us`` is how long the policy evaluation took.
 - ``masked`` is what a masking rewrite masked: entity name to count, never
   a value.
+- ``tokens`` is the estimated token cost of the event (see
+  :mod:`interlock.tokens`), a name-free integer a rule may stamp onto the event
+  as the plain attribute ``event.tokens`` (a token budget guard does). Omitted
+  when no rule estimated one, so an event no rule accounted carries no field.
 
 A sink that fails to write is not allowed to turn into a silent gap: the
 failed write raises :class:`~interlock.enforce.Blocked` (fail closed), and the
@@ -185,6 +189,10 @@ class Receipt:
     enforcer: Optional[str] = None
     elapsed_us: Optional[int] = None
     masked: Optional[Dict[str, int]] = None
+    # Estimated token cost of the event, stamped as ``event.tokens`` by a rule
+    # that accounts tokens (see token_budget_guard). Omitted while None, like
+    # the other optional fields, so older chains verify unchanged.
+    tokens: Optional[int] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape."""
@@ -209,7 +217,7 @@ class Receipt:
 
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
-    "enforcer", "elapsed_us", "masked",
+    "enforcer", "elapsed_us", "masked", "tokens",
 )
 
 
@@ -340,6 +348,10 @@ def emit_receipt(
     sink = get_sink()
     if sink is None:
         return
+    # A token-accounting rule stamps the estimate onto the event as an int; a
+    # bool is an int subclass but never a real token count, so it is dropped.
+    estimated = getattr(event, "tokens", None)
+    tokens = estimated if isinstance(estimated, int) and not isinstance(estimated, bool) else None
     receipt = Receipt(
         ts=time.time(),
         action=event.action,
@@ -360,6 +372,7 @@ def emit_receipt(
         enforcer=enforcer,
         elapsed_us=elapsed_us,
         masked=dict(decision.masked) if getattr(decision, "masked", None) else None,
+        tokens=tokens,
     )
     _write(sink, receipt, event.action)
 

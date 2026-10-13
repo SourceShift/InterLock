@@ -607,6 +607,7 @@ KNOWN_GAPS = {
     "social_engineering_framing_guard": SCAN_BLOB,
     "system_prompt_extraction": SCAN_BLOB,
     "tool_budget_limiter": STATEFUL,
+    "token_budget_guard": STATEFUL,
     "tool_output_override_guard": SCAN_BLOB,
     "tool_policy": ACTION_NAME,
     "translation_evasion_guard": SCAN_BLOB,
@@ -625,6 +626,8 @@ GAP_PINS = [
      SensorEvent(action="delete_prod", args={})),
     ("stateful", lambda: dmod("call_rate_limiter").call_rate_limiter(limit=1),
      None),  # driven twice below
+    ("token budget", lambda: dmod("token_budget_guard").token_budget_guard(limit=1, window_s=3600),
+     SensorEvent(action="chat", args={"prompt": "hello"})),
     ("no destination named",
      lambda: dmod("data_egress").network_egress_guard(["api.example.com"]),
      SensorEvent(action="http_post", args={"note": "no destination here"})),
