@@ -1,0 +1,82 @@
+name: Detector request
+description: Propose a new detector — an attack interlock should catch.
+title: "detector: "
+labels: ["detector", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A detector is one module in `interlock/detectors/`. Before you propose one,
+        read [Adding a detector](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md#adding-a-detector) —
+        the conventions there (never raise, prefer precision over recall, one
+        concern per detector) are what decide whether a proposal is worth
+        building.
+
+        If you'd like to write it yourself, say so — detector PRs are a good first
+        contribution, and we'll help you through the catalog and the tests.
+
+  - type: textarea
+    id: attack
+    attributes:
+      label: The attack or misuse this catches
+      description: Describe the bad thing a call would do, and why it is visible in the tool call itself.
+      placeholder: |
+        An agent is asked to read a file, and the tool call that comes back targets
+        a path outside the working directory (e.g. `../../etc/passwd`).
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: A call that should be caught
+      description: The tool name and arguments that should trigger the detector, and the verdict you'd expect.
+      render: python
+      placeholder: |
+        read_file(path="../../etc/passwd")   # -> Blocked
+    validations:
+      required: true
+
+  - type: textarea
+    id: falsepositives
+    attributes:
+      label: An ordinary call that must NOT be caught
+      description: |
+        The non-match case. This is the part that decides whether the detector
+        stays switched on, so it matters as much as the match.
+      render: python
+      placeholder: |
+        read_file(path="reports/2026/q1.csv")   # -> no opinion
+    validations:
+      required: true
+
+  - type: input
+    id: scope
+    attributes:
+      label: Which tool names does it apply to?
+      description: If it only makes sense for certain tools, name them. Leave blank if it should apply to any call.
+      placeholder: "read_file, read_text_file"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: existing
+    attributes:
+      label: Is there an existing detector that is close?
+      description: Check the [detector catalog](https://github.com/SourceShift/InterLock/blob/main/docs/reference/detectors.md) first.
+      options:
+        - "No — this is a new category of attack"
+        - "Yes — an existing detector is close but misses this case"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the detector catalog and this is not already covered.
+          required: true
+        - label: I'd be willing to open a PR for this detector.
+          required: false

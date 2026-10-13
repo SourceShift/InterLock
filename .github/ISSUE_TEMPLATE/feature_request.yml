@@ -1,0 +1,69 @@
+name: Feature request
+description: Suggest a capability interlock doesn't have yet.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        interlock is deliberately dependency-free and in-process. That constraint
+        rules out a lot of otherwise reasonable features, so it's worth saying up
+        front why a feature can't be done in the SDK. Check the
+        [roadmap](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md)
+        first — if it's already planned, comment there instead of opening a new
+        issue, and say what you'd want it to do.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that interlock makes hard or impossible today? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like it to do
+      description: Sketch the API or behaviour. A few lines of imagined usage is worth a paragraph of description.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: Workarounds you've used, and why they aren't good enough. If nothing exists, say so.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of interlock?
+      options:
+        - Core (guards, rules, verdicts, engine)
+        - Detectors
+        - MCP integration
+        - Scopes and multi-tenant policy
+        - Audit log and receipts
+        - BRACE sandbox
+        - Node.js client / sidecar
+        - Rust scope accelerator
+        - Docs
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the roadmap and this is not already planned.
+          required: true
+        - label: I searched existing issues for the same suggestion.
+          required: true
+        - label: This can be done without adding a runtime dependency to the core package.
+          required: false

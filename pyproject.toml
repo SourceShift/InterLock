@@ -10,7 +10,20 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Amir Khakshour" }]
-keywords = ["ai", "agents", "guardrails", "mcp", "security", "runtime", "policy"]
+keywords = [
+    "ai",
+    "agents",
+    "guardrails",
+    "agent-security",
+    "llm-security",
+    "prompt-injection",
+    "mcp",
+    "security",
+    "runtime",
+    "policy",
+    "policy-as-code",
+    "tool-call",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

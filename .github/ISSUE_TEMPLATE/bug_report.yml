@@ -1,0 +1,101 @@
+name: Bug report
+description: A call got the wrong verdict, a rule didn't fire, or something crashed.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The single most useful thing you can give us is a
+        **runnable reproduction** — the rule you installed, the call you made, and
+        the output you got. A bug in a guardrail is usually a wrong verdict, so
+        say which verdict you expected and which you got.
+
+        If what you found is a way to *get past* interlock rather than a bug in it,
+        stop and report it privately instead — see
+        [SECURITY.md](https://github.com/SourceShift/InterLock/blob/main/SECURITY.md).
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem is this?
+      options:
+        - A call got the wrong verdict (allowed when it should block, rewritten wrongly, etc.)
+        - A rule or detector did not fire when it should have
+        - A rule or detector fired when it should not have (false positive)
+        - An error, traceback, or crash
+        - The audit log / receipts are wrong
+        - The BRACE sandbox behaved incorrectly
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A script we can run as-is. Trim it down — the smaller the better.
+      render: python
+      placeholder: |
+        import interlock
+        from interlock import guard, Blocked
+        from interlock.detectors import ...
+
+        @guard()
+        def my_tool(arg: str) -> str: ...
+
+        interlock.install(rules=[...])
+        my_tool("...")   # expected Blocked, got a normal return
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+      description: Include the verdict (allow / block / rewrite) you expected and the one you got, plus the exact output.
+      placeholder: |
+        Expected: Blocked — the host is not on the allowlist.
+        Got: the call ran and returned "..."
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: interlock version or commit
+      description: Output of `pip show interlock-guard`, or the commit SHA you pinned.
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version and OS
+      placeholder: "3.11.9 on macOS 14.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope_backend
+    attributes:
+      label: Which scope backend was loaded?
+      description: Run `python -c "from interlock.policy import SCOPE_BACKEND; print(SCOPE_BACKEND)"`. The Rust and Python trees are separate implementations, so this tells us which one to look at.
+      options:
+        - python
+        - rust
+        - not sure
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: This is a reproducible bug, not a private vulnerability report (those go through the Security tab).
+          required: true
+        - label: I read the known limits in the security model and this is not one of them.
+          required: false

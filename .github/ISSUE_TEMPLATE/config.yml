@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SourceShift/InterLock/security/advisories/new
+    about: Found a way past interlock? Report it privately, not as a public issue. See SECURITY.md.
+  - name: Question or how-to
+    url: https://github.com/SourceShift/InterLock/blob/main/docs/README.md
+    about: The docs index answers most "how do I" questions — getting started, concepts, guides, API reference.
+  - name: Read the limits first
+    url: https://github.com/SourceShift/InterLock/blob/main/docs/security-model.md
+    about: interlock's known limits and weaken-the-protection settings. Many reports are one of these.
