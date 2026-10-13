@@ -75,13 +75,13 @@ worse at both jobs.
 | R21 | MCP inventory scan | `shipped` | S | agentjail review |
 | R22 | Signed PyPI/npm distribution | `not started` | S | agentjail review |
 | H1–H7 | SQL analysis, masking engine, review queue, runbooks, HTTP rules, metrics, MCP limits | `shipped` | L | hoop review |
-| R23 | OTLP event export | `not started` | M | operational review |
+| R23 | OTLP event export | `shipped` | M | operational review |
 | R24 | Behavioural baseline → policy generator | `not started` | L | operational review |
-| R25 | Token accounting in the budget guard | `not started` | S | operational review |
-| R26 | Console approval workflow | `not started` | M | operational review |
-| R27 | Framework sensor adapters | `not started` | M | operational review |
-| R28 | A2A policy dimension | `not started` | M | operational review |
-| R29 | MCP transport controls and scoped engine over the sidecar | `not started` | M | operational review |
+| R25 | Token accounting in the budget guard | `shipped` | S | operational review |
+| R26 | Console approval workflow | `blocked` | M | operational review |
+| R27 | Framework sensor adapters | `shipped` | M | operational review |
+| R28 | A2A policy dimension | `shipped` | M | operational review |
+| R29 | MCP transport controls and scoped engine over the sidecar | `shipped` | M | operational review |
 | R30 | Upstream-drift detector | `not started` | M | operational review |
 
 ---
@@ -1067,26 +1067,27 @@ These came from mapping what operators who deploy agents in an enterprise
 actually ask for — the questions asked when someone has to run an agent fleet
 and answer to a security team — against what interlock ships today. Each is a
 capability *gap*, recorded with the capability named and no reference to any
-particular vendor. They are the highest-value non-shipped work after R5, R9 and
-R11–R12, and they order ahead of new detectors because each one is what makes
-the detectors usable in a deployment.
+particular vendor. Five of the eight are now shipped — R23, R25 and R27–R29 landed with live
+smoke tests — while R26 is blocked (see its section) and R24/R30 are open but no
+longer blocked. Each one is what makes the detectors usable in a deployment.
 
 | # | Item | Status | Size | Pull |
 |---|---|---|---|---|
-| R23 | OTLP event export — receipts to a standard collector | `not started` | M | operational review |
+| R23 | OTLP event export — receipts to a standard collector | `shipped` | M | operational review |
 | R24 | Behavioural baseline → policy generator (`interlock learn`) | `not started` | L | operational review |
-| R25 | Token accounting in the budget guard | `not started` | S | operational review |
-| R26 | Console approval workflow | `not started` | M | operational review |
-| R27 | Framework sensor adapters (SDK loops, LiteLLM, CrewAI, ADK) | `not started` | M | operational review |
-| R28 | A2A policy dimension | `not started` | M | operational review |
-| R29 | MCP transport controls + scoped engine over the sidecar | `not started` | M | operational review |
+| R25 | Token accounting in the budget guard | `shipped` | S | operational review |
+| R26 | Console approval workflow | `blocked` | M | operational review |
+| R27 | Framework sensor adapters (SDK loops, LiteLLM, CrewAI, ADK) | `shipped` | M | operational review |
+| R28 | A2A policy dimension | `shipped` | M | operational review |
+| R29 | MCP transport controls + scoped engine over the sidecar | `shipped` | M | operational review |
 | R30 | Upstream-drift detector | `not started` | M | operational review |
 
 ---
 
 ## R23 · OTLP event export
 
-**Status:** `not started`
+**Status:** `shipped` — `interlock.sink.OtlpSink` exports each receipt as an
+OTLP/HTTP log record (severity maps the verdict, attributes carry `span_id`).
 **Size:** M
 
 ### Problem
@@ -1158,7 +1159,8 @@ counted evidence behind each rule and be visibly a proposal. Depends on R4
 
 ## R25 · Token accounting in the budget guard
 
-**Status:** `not started`
+**Status:** `shipped` — `interlock.tokens` (a usage ledger) and the
+`token_budget_guard` detector; receipts and the report carry per-principal totals.
 **Size:** S
 
 ### Problem
@@ -1187,7 +1189,11 @@ presented as metering. Standalone.
 
 ## R26 · Console approval workflow
 
-**Status:** `not started`
+**Status:** `blocked` — the framework-edit run was interrupted at the
+implementer (`files_changed=0`). To unblock: merge the console frontend onto
+`main`, widen the epic's `scope_allow` to include `interlock/console/__main__.py`,
+`web/src/App.tsx` and `web/src/NavBar.tsx`, and fix the plan's assumption that
+`binding_hash` lives in `interlock/approval.py` — it is `interlock/reviews.py:319`.
 **Size:** M
 
 ### Problem
@@ -1217,7 +1223,8 @@ shipped) and on the console itself landing on `main`.
 
 ## R27 · Framework sensor adapters
 
-**Status:** `not started`
+**Status:** `shipped` — `interlock/interceptors/{openai,litellm,crewai,google_adk}.py`
+translate each framework's tool loop into `SensorEvent`s over a shared `_framework` base.
 **Size:** M
 
 ### Problem
@@ -1247,7 +1254,8 @@ are the mitigation. Depends on the shipped tool-seam core.
 
 ## R28 · A2A policy dimension
 
-**Status:** `not started`
+**Status:** `shipped` — `interlock/detectors/a2a_policy.py` and the A2A context in
+`interlock/policy/declarative.py` constrain which peers an agent may address (`a2a_send`).
 **Size:** M
 
 ### Problem
@@ -1273,7 +1281,8 @@ allowlist-first. Standalone.
 
 ## R29 · MCP transport controls and scoped engine over the sidecar
 
-**Status:** `not started`
+**Status:** `shipped` — `mcp_transport_guard` plus scope fields on the wire
+(`PROTOCOL_VERSION` bump), mirrored in the JS client (`js/src/wire.ts`).
 **Size:** M
 
 ### Problem
