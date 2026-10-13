@@ -48,6 +48,9 @@
 {% extends "base.html" %}
 
 {% block extrahead %}
+  {# The favicon is not set here: it comes from `favicon` in zensical.toml, so
+     the theme emits exactly one <link rel="icon"> on every page. It points at
+     the same file the nav lockup below renders. #}
   {% if page.url == '' %}
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -66,7 +69,11 @@
 {% endblock %}
 
 {% macro lockup() -%}
-<svg class="il-nav__mark" width="30" height="26" viewBox="0 0 28 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="15" height="15" rx="4" stroke="var(--acc)" stroke-width="2.4"></rect><rect x="11" y="7" width="15" height="15" rx="4" stroke="#111214" stroke-width="6"></rect><rect x="11" y="7" width="15" height="15" rx="4" stroke="#ecebe6" stroke-width="2.4"></rect><line x1="17" y1="4.6" x2="17" y2="9.4" stroke="#111214" stroke-width="6"></line><line x1="17" y1="4" x2="17" y2="10" stroke="var(--acc)" stroke-width="2.4"></line></svg>
+{# The favicon file itself, not a second copy of the drawing. One asset, so the
+   header mark and the tab mark are the same artwork by construction. 30px keeps
+   the mark at the optical size the inline SVG had: the file carries 4 units of
+   field around a 24-unit mark, so 30px here yields the same ~26px of drawing. #}
+<img class="il-nav__mark" src="{{ 'assets/images/favicon.svg' | url }}" width="30" height="30" alt="" aria-hidden="true" />
 {%- endmacro %}
 
 {% macro gh_icon() -%}

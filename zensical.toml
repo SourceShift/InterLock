@@ -86,6 +86,14 @@ nav = [
 [project.theme]
 language = "en"
 
+# The tab icon, and the same file overrides/main.html renders as the nav's
+# mark, so the two are one asset rather than two drawings that drift. Pointing
+# the theme at the SVG is deliberate: the theme otherwise emits its own default
+# <link rel="icon" href="assets/images/favicon.png">, and a second link added
+# alongside it would leave the browser to pick, which is a coin flip rather
+# than a decision. See docs/assets/images/favicon.svg.
+favicon = "assets/images/favicon.svg"
+
 # Theme overrides. Currently just the landing page; see overrides/main.html.
 custom_dir = "overrides"
 

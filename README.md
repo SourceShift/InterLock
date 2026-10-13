@@ -3,7 +3,7 @@
 [![CI](https://github.com/SourceShift/InterLock/actions/workflows/ci.yml/badge.svg)](https://github.com/SourceShift/InterLock/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/SourceShift/InterLock/actions/workflows/codeql.yml/badge.svg)](https://github.com/SourceShift/InterLock/actions/workflows/codeql.yml)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
-![Detectors: 105](https://img.shields.io/badge/detectors-105-blue)
+![Detectors: 118](https://img.shields.io/badge/detectors-118-blue)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
 **Stop a bad tool call before your AI agent makes it.**
@@ -11,6 +11,8 @@
 interlock checks every tool call your agent makes, inside the agent's own
 process, and allows, blocks, or rewrites it before anything happens. No proxy,
 no account, no network calls, and no dependencies.
+
+![The console's Activity page: protection enforced, the chain verified, decisions over 24 hours](docs/assets/images/console-activity.png)
 
 ```python
 import interlock
@@ -154,9 +156,7 @@ catches most people.
 A local web app for the person running the agent: what the guard decided, the
 calls waiting on a human, the policy behind it all, and whether protection is
 actually on. It binds to `127.0.0.1` only and loads nothing from any other
-origin.
-
-![The console's Activity page: protection enforced, the chain verified, decisions over 24 hours](docs/assets/images/console-activity.png)
+origin. Its Activity page is the screenshot at the top of this file.
 
 **You'll need** Python 3.9+, and Node.js 20.19+ or 22.12+ to build the web app
 once.
