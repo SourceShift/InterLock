@@ -113,6 +113,13 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
         ],
     ),
     (
+        "Agent-to-agent (A2A)",
+        "Which peers an agent may reach, and whether their advertised agent cards changed.",
+        [
+            "a2a_policy",
+        ],
+    ),
+    (
         "Budgets, rate limits, and loops",
         "Stop runaway agents: too many calls, too much spend, the same call on repeat.",
         [

@@ -33,6 +33,10 @@ code. A condition is one of:
   ``"delete"``, ``"ddl"``, ``"write:customers"``, ``"unbounded"`` ... in the
   SQL-named arguments (``sql``, ``query``, ...), or only in ``"arg"``;
   ``"dialect"`` picks the lexing rules
+- ``{"a2a": SELECTOR}`` - an agent-to-agent call (see
+  :mod:`interlock.detectors.a2a_policy`): ``"peer"`` or ``"peer:<glob>"``
+  matches the ``"peer"`` argument, ``"card"`` or ``"card.<field>[:<glob>]``
+  matches the ``"card"`` argument; ``"arg"`` reads the peer from one argument
 
 A rule's ``"on"`` key (an action name, a list, or ``{"glob": ...}``) limits it
 to those actions; it is how a catalogued detector, which scans every string
@@ -719,9 +723,13 @@ def _compile_condition(raw: Any, where: str, actions: Optional[FrozenSet[str]]) 
         _check_keys(raw, frozenset({"sql", "arg", "dialect"}), where, "condition")
         return _sql_condition(raw["sql"], raw.get("arg"), raw.get("dialect", "generic"),
                               where, actions)
+    if "a2a" in raw:
+        _check_keys(raw, frozenset({"a2a", "arg"}), where, "condition")
+        return _a2a_condition(raw["a2a"], raw.get("arg"), where, actions)
     if "field" in raw or "arg" in raw:
         return _test_condition(raw, where, actions)
-    raise PolicyError("unknown condition; use all/any/not/action/field/arg/intent", where)
+    raise PolicyError("unknown condition; use all/any/not/action/field/arg/"
+                      "intent/sql/a2a", where)
 
 
 def _all(subs: List[Condition]) -> Condition:
@@ -851,6 +859,111 @@ def _sql_condition(selector: Any, arg: Any, dialect: Any, where: str,
         return False
 
     return condition
+
+
+def _a2a_condition(selector: Any, arg: Any, where: str,
+                   actions: Optional[FrozenSet[str]]) -> Condition:
+    """Match an agent-to-agent call on its peer or its advertised agent card.
+
+    Selectors are pure data over the event, never code, and are validated up
+    front so a typo fails at load: ``"peer"`` / ``"peer:<glob>"`` read the peer
+    argument (normalised to its host through the same helper the A2A detectors
+    use, so a rule and a detector agree on what a peer is), and ``"card"`` /
+    ``"card.<field>"`` / ``"card.<field>:<glob>"`` read the ``"card"``
+    argument, matching any element of a list field so a skill set can be
+    tested. ``"arg"`` names the argument the peer travels in, defaulting to
+    ``"peer"``. A list of selectors matches when any one of them does, and the
+    match is attributed to the argument that carried it.
+    """
+    from ..detectors.a2a_policy import _CARD_KEY, _PEER_KEY, peer_host
+
+    selectors = [selector] if isinstance(selector, str) else selector
+    if not isinstance(selectors, list) or not selectors or not all(
+            isinstance(s, str) for s in selectors):
+        raise PolicyError("'a2a' must be a selector or a list of selectors", where)
+    specs = [_a2a_selector(s, where) for s in selectors]
+    if arg is not None:
+        if not isinstance(arg, str):
+            raise PolicyError("'arg' must be an argument name", where)
+        _check_arg_name(arg, where, actions)
+    peer_arg = arg or _PEER_KEY
+
+    def condition(event: SensorEvent) -> Any:
+        args = event.args if isinstance(event.args, dict) else {}
+        host = peer_host(_lookup(args, peer_arg))
+        card = _lookup(args, _CARD_KEY)
+        for kind, field, pattern in specs:
+            if kind == "peer":
+                if pattern is None:
+                    if host is not None:
+                        return Hit(peer_arg)
+                elif host is not None and fnmatch.fnmatchcase(host, pattern):
+                    return Hit(peer_arg)
+                continue
+            value = card if field is None else _lookup(card, field)
+            if pattern is None:
+                if value is not _MISSING and value is not None:
+                    return Hit(_CARD_KEY)
+            elif _a2a_value_matches(value, pattern):
+                return Hit(_CARD_KEY)
+        return False
+
+    return condition
+
+
+def _a2a_selector(selector: str, where: str) -> Tuple[str, Optional[str], Optional[str]]:
+    """Validate one a2a selector into ``(kind, field, pattern)``.
+
+    ``kind`` is ``"peer"`` or ``"card"``; ``field`` names a card field for a
+    card selector; ``pattern`` is the glob to match, or None for a bare
+    presence test. An unrecognised selector is an error naming the valid forms.
+    """
+    head, sep, rest = selector.partition(":")
+    head = head.strip()
+    pattern: Optional[str] = None
+    if sep:
+        rest = rest.strip()
+        if not rest:
+            raise PolicyError("a2a selector {!r} needs a pattern after ':'".format(selector),
+                              where)
+        pattern = rest
+    if head == "peer":
+        # Hosts are case-insensitive, and peer_host lowercases the peer, so a
+        # capital in the selector must not silently disable an otherwise-correct
+        # rule.
+        return ("peer", None, pattern.lower() if pattern is not None else None)
+    if head == "card":
+        if pattern is not None:
+            raise PolicyError("a2a 'card' takes no pattern; use 'card.<field>:<glob>'", where)
+        return ("card", None, None)
+    if head.startswith("card."):
+        field = head[len("card."):].strip()
+        if not field:
+            raise PolicyError("a2a selector {!r} names no card field".format(selector), where)
+        return ("card", field, pattern)
+    raise PolicyError(
+        "unknown a2a selector {!r}; use 'peer', 'peer:<glob>', 'card', "
+        "'card.<field>' or 'card.<field>:<glob>'".format(selector), where)
+
+
+def _a2a_value_matches(value: Any, pattern: str) -> bool:
+    """Test a card field against a glob: a string, or any element of a list.
+
+    A list field (``skills``) matches when any element does; an element is
+    matched by its ``name`` when it is an object, else by itself. Any other
+    shape - a missing field, a number, a nested list - does not match.
+    """
+    if value is _MISSING or value is None:
+        return False
+    if isinstance(value, str):
+        return fnmatch.fnmatchcase(value, pattern)
+    if isinstance(value, list):
+        for item in value:
+            name = item if isinstance(item, str) else (
+                item.get("name") if isinstance(item, dict) else None)
+            if isinstance(name, str) and fnmatch.fnmatchcase(name, pattern):
+                return True
+    return False
 
 
 def _test_condition(raw: Mapping[str, Any], where: str,

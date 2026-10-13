@@ -317,6 +317,10 @@ CASES = [
     ("rag_source_allowlist",
      lambda: dmod("rag_source_allowlist").rag_source_allowlist(["wiki"]),
      "retrieve", {"source": "hacker"}, "source", Verdict.BLOCK),
+    # --- agent-to-agent: the peer argument is named -------------------------
+    ("a2a_policy",
+     lambda: dmod("a2a_policy").a2a_peer_allowlist(["peer://trusted.example"]),
+     "a2a_send", {"peer": "peer://evil.example"}, "peer", Verdict.BLOCK),
     # --- data_egress: destination / path keys ride along --------------------
     ("network_egress_guard",
      lambda: dmod("data_egress").network_egress_guard(["api.example.com"]),

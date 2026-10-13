@@ -62,6 +62,7 @@ rule always wins.
 | `{"field": F, OP: value}` | an event field passes the test; F is `action`, `principal`, `phase`, `span_id`, `parent_principal` or `call_id` |
 | `{"arg": "name", OP: value}` | a tool argument passes the test; `"a.b"` reaches into nested objects, `"items.0"` into lists |
 | `{"intent": "selector"}` | a string argument is a shell command that does this (add `"arg": "command"` to look at one argument only) |
+| `{"a2a": "selector"}` | an agent-to-agent call's peer or card matches; `"peer"` / `"peer:<glob>"` reads the `"peer"` argument, `"card"` / `"card.<field>[:<glob>]"` reads the `"card"` argument (add `"arg": "peer"` to read the peer from one argument) |
 
 | Operator | Test |
 |---|---|
