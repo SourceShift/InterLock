@@ -9,9 +9,14 @@ daemon does not wait on R10.
 from __future__ import annotations
 
 import importlib
-from typing import Any, Iterable, Mapping, Union
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Union
 
 from ..policy.engine import PolicyEngine, Rule
+
+if TYPE_CHECKING:  # pragma: no cover - the type checker only; the import is lazy at runtime
+    # Imported locally in ``build_scoped_engine`` to keep the daemon's import
+    # light, so the annotation needs its own name-only import for the linter.
+    from ..policy.scopes import ScopedEngine
 
 
 class RulesError(Exception):
