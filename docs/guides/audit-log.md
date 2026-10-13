@@ -341,6 +341,59 @@ ignored). Without it the daemon signs with a per-process key and prints a
 warning, because the log is then verifiable only by that process. The JS client
 doesn't write receipts of its own, so each decision is recorded once.
 
+## Export to an OTLP collector
+
+`OtlpSink` keeps the local chained receipt *and* ships a mapped log record to an
+OpenTelemetry collector over OTLP/HTTP (JSON). It is an ordinary chained sink
+that stores receipts in memory exactly as `InMemorySink` does, plus an export
+side-effect:
+
+```python
+import interlock
+from interlock.sink import OtlpSink
+
+sink = OtlpSink(
+    endpoint="http://collector:4318/v1/logs",   # the full logs URL, used as-is
+    headers={"Authorization": "Bearer ..."},     # optional
+    service_name="interlock",                    # the service.name resource attr
+)
+interlock.install(rules=rules, sink=sink)
+```
+
+Each receipt becomes one OTLP log record. The verdict sets the severity
+(`ALLOW`→`INFO`, `MODIFY`→`WARN`, `BLOCK` and `ESCALATE`→`ERROR`; an
+unrecognized verdict gets a defined default), and the record's attributes carry
+`action`, `principal`, `policy_id`, `reason` and `span_id` — and nothing else.
+The arguments the receipt digested (`args_digest`) are **not** exported, so no
+argument value ever reaches the collector.
+
+Three things hold by construction, because a receipt is written on the guarded
+call's critical path:
+
+- **The export never blocks the call.** `write` only appends to an in-memory
+  buffer and wakes a background worker; the POST happens off-thread, with a
+  timeout. The guarded call never waits on the collector.
+- **The export never raises into the call and never changes a verdict.** A sink
+  that raises is fail-closed (see above), so *every* export failure — mapping,
+  buffering, the POST — is swallowed and counted instead. `sink.stats()` reports
+  `sent`, `failed`, `pending`, `dropped` and `build_failures`; nothing here can
+  flip a decision.
+- **A collector that is down loses nothing.** A record that fails to POST stays
+  at the front of the buffer and is retried until it is accepted, so the buffer
+  drains in order once the collector returns. `max_buffer` bounds the queue — a
+  record enqueued while it is full is dropped and counted, but a record already
+  retained for retry never is.
+
+Stop the worker with `sink.close()`. The thread is a daemon, so a process that
+never closes a sink still exits; records still buffered when it exits are left
+undelivered and reported by `stats()`.
+
+Some records export an attribute the receipt did not set, as an export-only
+fallback (the local receipt is untouched): a decision that named no policy
+exports `policy_id="unattributed"`, and a call with no open `span()` exports
+`span_id` as the receipt's `call_id`, so the record still correlates with the
+local chain.
+
 ## Limits
 
 - **A cut tail needs a recorded head.** Deleting the last receipts leaves a
@@ -358,6 +411,6 @@ doesn't write receipts of its own, so each decision is recorded once.
 ## Next
 
 - [Production checklist](production.md): where receipts fit in a rollout
-- [Python API reference](../reference/python-api.md): `FileSink`, `InMemorySink`, `Receipt`
+- [Python API reference](../reference/python-api.md): `FileSink`, `InMemorySink`, `OtlpSink`, `Receipt`
 - [Sidecar reference](../reference/sidecar.md): `--receipts` and `--key-file`
 - [Security model](../security-model.md)

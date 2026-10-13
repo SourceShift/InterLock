@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, List, Optional
 
 from . import brace
+from . import sink
 from ._runtime import get_engine, set_engine
 from .approval import (
     Approval,
@@ -63,6 +64,7 @@ __all__ = [
     "approve_for_session",
     "approve_for",
     "brace",
+    "sink",
     "Sandbox",
     "SandboxProfile",
     "compile_profile",

@@ -21,12 +21,21 @@ restarted at GENESIS.
 Truncation: deleting receipts from the *end* leaves a valid, shorter chain.
 ``head`` is the latest mac; record it somewhere the log's writer can't reach
 and pass it back as ``verify(head=...)`` to detect a cut tail.
+
+``OtlpSink`` keeps the chaining above and adds an export side-effect: it stores
+each receipt locally exactly as ``InMemorySink`` does, then hands a mapped
+OTLP/HTTP JSON log record to a background worker that POSTs it to a collector.
+The export is best-effort and off the guarded call's path - it never blocks the
+call, never raises into it, and never carries an argument value.
 """
 from __future__ import annotations
 
+import collections
+import json
 import os
+import secrets
 import threading
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .receipt import (
     GENESIS,
@@ -122,6 +131,296 @@ class InMemorySink(ChainedSink):
 
     def _read_back(self) -> List[Receipt]:
         return list(self.receipts)
+
+
+# Verdict name (``Receipt.verdict`` is the string name, not the enum) to the
+# OTLP severity it exports as. BLOCK and ESCALATE are both ERROR: an escalated
+# call that no approver clears is a block, and the collector groups by severity.
+_SEVERITY_BY_VERDICT: Dict[str, Tuple[int, str]] = {
+    "ALLOW": (9, "INFO"),
+    "MODIFY": (13, "WARN"),
+    "BLOCK": (17, "ERROR"),
+    "ESCALATE": (17, "ERROR"),
+}
+# An unrecognized verdict still gets a defined severity - WARN, never 0
+# (unspecified) and never a raise - so no record reaches the collector without
+# one and an unfamiliar verdict is not hidden among the ALLOWs.
+_SEVERITY_DEFAULT: Tuple[int, str] = (13, "WARN")
+
+# The export-only stand-in for a receipt that names no policy: OTLP wants the
+# attribute present, and "unattributed" reads as "a default decision, no rule".
+_UNATTRIBUTED = "unattributed"
+
+
+def _severity(verdict: str) -> Tuple[int, str]:
+    """The (severityNumber, severityText) OTLP exports a verdict as."""
+    return _SEVERITY_BY_VERDICT.get(verdict, _SEVERITY_DEFAULT)
+
+
+def _span_id(receipt: Receipt) -> str:
+    """The id an exported record correlates to its local receipt by.
+
+    The receipt's own ``span_id`` when the call ran inside a ``span()``. OTLP
+    needs the attribute present even for a bare call, so with no open span it
+    falls back to the receipt's ``call_id`` (shared by the call's own receipts,
+    so it still ties the record to the local chain) and then to a fresh token.
+    Read from the signed receipt only, and the receipt itself is not touched.
+    """
+    return receipt.span_id or receipt.call_id or secrets.token_hex(8)
+
+
+def _string_attribute(key: str, value: str) -> Dict[str, Any]:
+    """One OTLP KeyValue, always a string value (the receipt's fields are text
+    or absent - never a structure - so no other value kind is ever needed)."""
+    return {"key": key, "value": {"stringValue": str(value)}}
+
+
+class OtlpSink(ChainedSink):
+    """Chained receipt sink that also exports each receipt over OTLP/HTTP.
+
+    Local behaviour is exactly ``InMemorySink``: every receipt is chained and
+    signed into ``self.receipts``, so ``verify()`` and the tamper-evidence are
+    unchanged. On top of that, each receipt is mapped to an OTLP/HTTP JSON log
+    record and handed to a background worker that POSTs it to ``endpoint``.
+
+    Three properties hold by construction, because a receipt is written on the
+    guarded call's critical path (``receipt._write`` turns *any* exception from
+    ``sink.write`` into a fail-closed ``Blocked``):
+
+    - **Never blocks the call.** ``write`` only appends to an in-memory buffer
+      and wakes a daemon worker; the POST happens off-thread, with an explicit
+      timeout, and the guarded call never waits on the collector.
+    - **Never raises into the call.** Every failure in the export path -
+      mapping, buffering, serializing, the POST - is swallowed and counted
+      (see :meth:`stats`), never raised.
+    - **Never carries argument values.** The record is built from an explicit
+      allow-list of receipt fields (``action``, ``principal``, ``policy_id``,
+      ``reason``, ``span_id``); the arguments exist only as the receipt's
+      ``args_digest``, which is not exported.
+
+    A collector that is down does not lose records: a record that fails to POST
+    stays at the front of the buffer and is retried until accepted, so the
+    buffer drains in order once the collector returns. ``max_buffer`` bounds
+    the queue; a record enqueued while it is full is dropped and counted, but a
+    record already retained for retry is never dropped.
+
+    ``endpoint`` is the full logs URL (e.g. ``http://collector:4318/v1/logs``)
+    and is POSTed to as given - no path is appended. ``headers`` adds HTTP
+    headers (an auth token, say). ``service_name`` becomes the ``service.name``
+    resource attribute. Call :meth:`close` to stop the worker; the thread is a
+    daemon, so a process that never closes a sink still exits.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        headers: Optional[Dict[str, str]] = None,
+        service_name: str = "interlock",
+        *,
+        signer: Signer = hmac_sha256,
+        key: Optional[bytes] = None,
+        timeout: float = 5.0,
+        retry_interval: float = 0.5,
+        max_buffer: int = 4096,
+    ) -> None:
+        super().__init__(signer=signer, key=key)
+        self.endpoint = str(endpoint)
+        self._headers = dict(headers) if headers else {}
+        self.service_name = service_name
+        self._timeout = float(timeout)
+        self._retry_interval = float(retry_interval)
+        self._max_buffer = int(max_buffer)
+        self.receipts: List[Receipt] = []
+        self._buffer: "collections.deque[dict]" = collections.deque()
+        self._cv = threading.Condition()
+        self._closed = False
+        self._shutdown = threading.Event()
+        self._sent = 0
+        self._failed = 0
+        self._dropped = 0
+        self._build_failures = 0
+        self._worker = threading.Thread(
+            target=self._run, name="interlock-otlp-export", daemon=True
+        )
+        self._worker.start()
+
+    # -- local chained storage ------------------------------------------------
+
+    def _append(self, receipt: Receipt) -> None:
+        """Store the signed receipt locally and enqueue its OTLP record.
+
+        Called by ``ChainedSink.write`` under the chain lock, after ``prev``
+        and ``mac`` are set: the receipt read here is already signed, and it is
+        only read, never mutated, so the local chain stays byte-identical to a
+        plain ``InMemorySink``. A failure anywhere in the export path must not
+        escape - ``receipt._write`` would turn it into a fail-closed ``Blocked``
+        - so the whole export is wrapped and its errors are counted instead.
+        """
+        self.receipts.append(receipt)
+        try:
+            self._enqueue(self._envelope(receipt))
+        except Exception:
+            self._build_failures += 1
+
+    def _read_back(self) -> List[Receipt]:
+        return list(self.receipts)
+
+    # -- mapping --------------------------------------------------------------
+
+    def _envelope(self, receipt: Receipt) -> dict:
+        """Map one signed receipt to an OTLP/HTTP JSON log-record envelope.
+
+        Built entirely from the allow-listed receipt fields. The argument
+        values the receipt digested are not among them, and no ``event`` data
+        or ``Receipt.fields()`` is read, so no argument value - and none of the
+        receipt's other metadata (``args_digest``, ``masked``, ...) - can reach
+        an attribute, a resource attribute or the body.
+        """
+        number, text = _severity(receipt.verdict)
+        attributes = [
+            _string_attribute("action", receipt.action),
+            _string_attribute("policy_id", receipt.policy_id or _UNATTRIBUTED),
+            _string_attribute("span_id", _span_id(receipt)),
+        ]
+        # principal and reason are omitted while empty (as Receipt.fields()
+        # drops them), so an unset field is an absent attribute, not an empty
+        # one; the three above are always present.
+        if receipt.principal:
+            attributes.append(_string_attribute("principal", receipt.principal))
+        if receipt.reason:
+            attributes.append(_string_attribute("reason", receipt.reason))
+        return {
+            "resourceLogs": [
+                {
+                    "resource": {
+                        "attributes": [
+                            _string_attribute("service.name", self.service_name),
+                        ]
+                    },
+                    "scopeLogs": [
+                        {
+                            "scope": {"name": "interlock.receipt"},
+                            "logRecords": [
+                                {
+                                    "timeUnixNano": str(int(receipt.ts * 1_000_000_000)),
+                                    "severityNumber": number,
+                                    "severityText": text,
+                                    "body": {
+                                        "stringValue": "{} {}".format(
+                                            receipt.verdict, receipt.action
+                                        )
+                                    },
+                                    "attributes": attributes,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+    # -- the export worker ----------------------------------------------------
+
+    def _enqueue(self, record: dict) -> None:
+        with self._cv:
+            if self._closed or len(self._buffer) >= self._max_buffer:
+                self._dropped += 1
+                return
+            self._buffer.append(record)
+            self._cv.notify()
+
+    def _peek(self) -> Optional[dict]:
+        """The record at the front of the buffer, blocking until one exists;
+        None once the sink is closed and the buffer is drained."""
+        with self._cv:
+            while not self._buffer and not self._closed:
+                self._cv.wait()
+            return self._buffer[0] if self._buffer else None
+
+    def _remove(self, record: dict) -> None:
+        with self._cv:
+            if self._buffer and self._buffer[0] is record:
+                self._buffer.popleft()
+
+    def _run(self) -> None:
+        while True:
+            record = self._peek()
+            if record is None:  # closed and drained
+                return
+            if self._post(record):
+                self._remove(record)
+                self._sent += 1
+                continue
+            # Retained: the record stays at the front of the buffer, so the
+            # buffer replays in order once the collector returns. Back off
+            # before the next attempt, and stop if the sink is closing.
+            self._failed += 1
+            if self._shutdown.wait(self._retry_interval):
+                return
+
+    def _post(self, record: dict) -> bool:
+        """POST one record to the collector: True when it is accepted, False on
+        any failure. Never raises - the guarded call must not see export
+        trouble, so the whole attempt, transport included, is caught here."""
+        try:
+            # Imported lazily so a process that never exports a record does not
+            # pay urllib's import cost when it imports interlock.
+            import urllib.request
+
+            body = json.dumps(record, separators=(",", ":")).encode("utf-8")
+            headers = {"Content-Type": "application/json"}
+            headers.update(self._headers)
+            request = urllib.request.Request(
+                self.endpoint, data=body, headers=headers, method="POST"
+            )
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                response.read()
+            return True
+        except Exception:
+            return False
+
+    # -- lifecycle / observability -------------------------------------------
+
+    def close(self, timeout: float = 2.0) -> None:
+        """Stop the export worker. Idempotent. A POST already in flight is not
+        interrupted; records still buffered when the worker exits are left
+        undelivered and reported by :meth:`stats`."""
+        with self._cv:
+            self._closed = True
+            self._cv.notify_all()
+        self._shutdown.set()
+        worker = getattr(self, "_worker", None)
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout)
+
+    @property
+    def pending(self) -> int:
+        """Records buffered but not yet accepted by the collector."""
+        with self._cv:
+            return len(self._buffer)
+
+    @property
+    def sent(self) -> int:
+        """Records the collector has accepted."""
+        return self._sent
+
+    @property
+    def failed(self) -> int:
+        """Export attempts that failed (each is retried, not lost)."""
+        return self._failed
+
+    def stats(self) -> Dict[str, int]:
+        """Export counters: ``sent`` accepted, ``failed`` attempts that failed,
+        ``pending`` still buffered, ``dropped`` never buffered because the
+        buffer was full or the sink closed, and ``build_failures`` receipts that
+        could not be mapped. None of these ever raises into the guarded call."""
+        return {
+            "sent": self._sent,
+            "failed": self._failed,
+            "pending": self.pending,
+            "dropped": self._dropped,
+            "build_failures": self._build_failures,
+        }
 
 
 class FileSink(ChainedSink):
