@@ -122,6 +122,10 @@ class PolicyEngine:
             elif decision.modified_args:
                 merged_args.update(decision.modified_args)
                 working = replace(working, args={**working.args, **decision.modified_args})
+        masked: Dict[str, int] = {}
+        for rewrite in rewrites:
+            for entity, count in (rewrite.masked or {}).items():
+                masked[entity] = masked.get(entity, 0) + count
         if escalation is not None:
             if not rewrites:
                 return escalation
@@ -132,6 +136,7 @@ class PolicyEngine:
                 modified_args=merged_args or None,
                 attributed_to=escalation.attributed_to,
                 modified_result=final_result if replaced_result else None,
+                masked=masked or None,
             )
         if not rewrites:
             return Decision.allow()
@@ -145,6 +150,7 @@ class PolicyEngine:
             modified_args=merged_args or None,
             attributed_to=first.attributed_to,
             modified_result=final_result if replaced_result else None,
+            masked=masked or None,
         )
 
 

@@ -62,7 +62,15 @@ claims more than the agent can do:
 
 "Refused" means the call is denied with a message that says why: a rewrite that
 can't be applied, or a question that can't be asked, must not quietly turn into
-"run it anyway". The receipt records both verdicts: `policy_verdict` is what your
+"run it anyway".
+
+For an escalation the agent can't ask about (Codex, Cursor file reads), the
+hook files a review in the [review queue](reviews.md) and refuses with its id:
+"review r-1a2b3c4d is pending; a human must run `interlock reviews approve
+r-1a2b3c4d`, then retry this identical call". After you approve, the agent's
+identical retry runs once. `--reviews always` sends Claude Code's escalations
+through the queue as well, instead of its native prompt; `--reviews off`
+disables the queue. The receipt records both verdicts: `policy_verdict` is what your
 policy said and `verdict` is what was enforced.
 
 An allow never auto-approves. The hook only adds restrictions on top of the

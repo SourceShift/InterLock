@@ -69,6 +69,8 @@ empty, the same rule ``observed`` follows, so older chains verify unchanged:
   and ``enforcer`` is ``os`` for a permission error from the operating system
   (which, under BRACE, is the sandbox refusing), else ``tool``.
 - ``elapsed_us`` is how long the policy evaluation took.
+- ``masked`` is what a masking rewrite masked: entity name to count, never
+  a value.
 
 A sink that fails to write is not allowed to turn into a silent gap: the
 failed write raises :class:`~interlock.enforce.Blocked` (fail closed), and the
@@ -84,7 +86,7 @@ import json
 import secrets
 import threading
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from .enforce import Blocked, Decision
 from .event import SensorEvent
@@ -182,6 +184,7 @@ class Receipt:
     outcome: Optional[str] = None
     enforcer: Optional[str] = None
     elapsed_us: Optional[int] = None
+    masked: Optional[Dict[str, int]] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape."""
@@ -206,7 +209,7 @@ class Receipt:
 
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
-    "enforcer", "elapsed_us",
+    "enforcer", "elapsed_us", "masked",
 )
 
 
@@ -329,6 +332,11 @@ def emit_receipt(
     does not proceed unrecorded, and the loss is counted and reported by a
     ``receipts.dropped`` receipt ahead of the next successful write.
     """
+    from . import metrics
+    metrics.record(decision.verdict.name, phase or getattr(event, "phase", "call"),
+                   decision.policy_id, approval=approval,
+                   masked=getattr(decision, "masked", None), elapsed_us=elapsed_us,
+                   observed=observed)
     sink = get_sink()
     if sink is None:
         return
@@ -351,6 +359,7 @@ def emit_receipt(
         outcome=outcome,
         enforcer=enforcer,
         elapsed_us=elapsed_us,
+        masked=dict(decision.masked) if getattr(decision, "masked", None) else None,
     )
     _write(sink, receipt, event.action)
 
@@ -374,6 +383,8 @@ def _write(sink: Any, receipt: Receipt, action: str) -> None:
         except Exception as exc:
             _dropped += 1
             _last_drop_error = type(exc).__name__
+            from . import metrics
+            metrics.record_drop()
             raise Blocked(
                 Decision.block(
                     "audit sink write failed, denied fail-closed: {}".format(

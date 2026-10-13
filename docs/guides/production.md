@@ -79,6 +79,30 @@ wherever your logs go. With a receipt sink installed,
 `interlock report audit.jsonl --since 24h --monitor` lists what would have been
 stopped, by rule and tool.
 
+## Watch it in production
+
+In-process counters track every decision, whether or not a receipt sink is
+installed: verdicts by policy, escalations by outcome, masked entities, dropped
+receipts and evaluation latency.
+
+```python
+from interlock import metrics
+metrics.snapshot()            # plain data
+metrics.render_prometheus()   # Prometheus text format
+```
+
+A sidecar serves them on a loopback admin port:
+
+```bash
+interlock-sidecar --rules my_service.policies:RULES --admin 127.0.0.1:19000
+curl -s 127.0.0.1:19000/healthz     # ok
+curl -s 127.0.0.1:19000/metrics     # interlock_decisions_total{verdict="BLOCK",...}
+```
+
+`/stats` and `/config` return JSON. `/config` lists rule ids and the policy
+epoch, never patterns. The endpoint binds loopback only, answers only `GET`,
+checks the `Host` header, and sends no CORS headers.
+
 ## Handle refusals in the agent
 
 - [ ] **A blocked call doesn't crash the agent.** Catch `Blocked` in your tool

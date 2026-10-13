@@ -1141,3 +1141,51 @@ decided without the daemon. `interlock.sidecar.fallback` holds
 | `where(servers, name)` | The entries defining one server. |
 | `starter_policy(servers)` | A policy blocking `mcp__*` tools from servers not in the list. |
 
+---
+
+## Databases, reviews and operations
+
+### SQL (`interlock.sql`)
+
+Guide: [databases](../guides/databases.md).
+
+| Name | What it is |
+|---|---|
+| `analyze_sql(text, dialect="generic") -> SqlAnalysis` | Never raises. `operation` (most severe effect), `effects`, `relations` (`Relation(name, access)`), `tables`, flags `unbounded`, `opaque`, `external`, `multi`, `partial`, and `statements` (each a `Statement` with the same fields). `generic` unions the PostgreSQL, MySQL and SQL Server readings |
+| `SqlAnalysis.matches(selector)` | Operations, groups (`ddl`, `dml`, `write`, `control`), flags, and `read:`/`write:`/`table:<glob>` |
+| `OPERATIONS`, `SEVERITY`, `GROUPS`, `FLAGS`, `DIALECTS` | The vocabularies |
+
+### Masking (`interlock.masking`)
+
+| Name | What it is |
+|---|---|
+| `Masker(rules=(MaskRule(),), threshold=0.5, allow_list=(), hash_key=None)` | `.mask(value) -> (masked, counts)`, `.mask_text(text)`, `.find(text, entities=None) -> [(entity, start, end)]` |
+| `MaskRule(entities=(), columns=(), strategy="redact", keep_last=4, mask_char="*", name="")` | An entity rule, or a column/dotted-path rule. Strategies: `redact`, `mask`, `partial`, `hash` (keyed HMAC) |
+| `ENTITIES`, `NOISY`, `STRATEGIES`, `summary(counts)` | The catalog, its noisy entries, and a names-and-counts summary |
+| `luhn`, `iban`, `us_ssn`, `aba_routing`, `br_cpf`, `br_cnpj`, `verhoeff`, `de_tax_id`, `jwt`, `ip_address` | The validators |
+
+`Decision.masked` (entity → count) carries what a masking rewrite masked into
+the receipt's `masked` field.
+
+### Review queue (`interlock.reviews`)
+
+Guide: [review queue](../guides/reviews.md).
+
+| Name | What it is |
+|---|---|
+| `ReviewQueue(path=None, *, pending_ttl=3600, approval_ttl=900, min_approvals=1, allow_self_approval=True)` | `lookup_or_file(binding, request)`, `claim(id)`, `approve(id, approver=None)`, `reject(id, reason="", approver=None)`, `revoke(id)`, `get(id)`, `list(status=None, limit=50)`, `wait(id, timeout)` |
+| `Review` | A frozen record with `.next` (`wait`, `retry_identical_call`, `stop`) and `.to_dict()` |
+| `queue_approver(queue=None, *, wait=0.0, poll=1.0, bind_epoch=True)` | An approver for `set_approver` / `install(approver=...)` |
+| `binding_hash(request, *, bind_epoch=True)` | What a review approves |
+| `interlock.approval.Declined(reason="", pending=False)` | What an approver returns to decline with a message |
+| `interlock.mcp_server.StdioServer`, `Tool` | The dependency-free MCP stdio server `interlock reviews mcp` uses |
+
+### Metrics and the admin endpoint
+
+| Name | What it is |
+|---|---|
+| `interlock.metrics.snapshot()` | Decisions by verdict, top policies, escalations, masked entities, dropped receipts, latency |
+| `interlock.metrics.render_prometheus()` | The same as Prometheus text |
+| `interlock.metrics.reset()` | Zero the counters |
+| `interlock.sidecar.admin.start(address, config)` | The loopback `/healthz /stats /metrics /config` server behind `interlock-sidecar --admin` |
+

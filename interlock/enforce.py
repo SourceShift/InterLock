@@ -39,6 +39,9 @@ class Decision:
     # event. Unlike modified_args (merged into the outgoing request), this
     # replaces the whole return value the caller receives.
     modified_result: Optional[Any] = None
+    # What a masking rewrite masked: entity name -> count. Names and counts
+    # only, never values; copied into the receipt and summed by reports.
+    masked: Optional[Dict[str, int]] = None
 
     @classmethod
     def allow(cls, reason: str = "", policy_id: Optional[str] = None) -> "Decision":

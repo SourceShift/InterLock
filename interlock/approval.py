@@ -97,6 +97,15 @@ class Approval:
     ttl: Optional[float] = None
 
 
+@dataclass(frozen=True)
+class Declined:
+    """An approver's no, with what the caller should be told (a review id and
+    the next step, say). ``pending`` marks "not yet decided" rather than "no"."""
+
+    reason: str = ""
+    pending: bool = False
+
+
 def approve_once() -> Approval:
     """Approve this call, once."""
     return Approval(ONCE)
@@ -115,8 +124,8 @@ def approve_for(seconds: float) -> Approval:
 
 
 #: An approver gets a request and returns True / an Approval to approve, or
-#: False / None to decline.
-Approver = Callable[[ApprovalRequest], Union[bool, Approval, None]]
+#: False / None / a Declined to decline.
+Approver = Callable[[ApprovalRequest], Union[bool, Approval, "Declined", None]]
 
 
 @dataclass
@@ -281,6 +290,10 @@ def settle_escalation(
     except Exception as exc:  # an approver that fails has not approved
         refuse("approver-error", "approver raised {}".format(type(exc).__name__))
         raise  # refuse() always raises; this keeps the type checker honest
+    if isinstance(answer, Declined):
+        refuse("pending" if answer.pending else "declined",
+               bound_reason(answer.reason) or "declined by the approver")
+        raise AssertionError("unreachable")
     approval = _normalise(answer)
     if approval is None:
         refuse("declined", "declined by the approver")

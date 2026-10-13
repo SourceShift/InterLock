@@ -154,6 +154,25 @@ CASES = [
      lambda: dmod("command_intent_guard").command_intent_guard(block=["git.push.force"]),
      "run_shell", {"command": "git push --force origin main"}, "command",
      Verdict.BLOCK),
+    ("sql_statement_guard",
+     lambda: dmod("sql_statement_guard").sql_statement_guard(block=["drop"]),
+     "run_sql", {"query": "DROP TABLE users"}, "query", Verdict.BLOCK),
+    ("pii_argument_guard",
+     lambda: dmod("pii_argument_guard").pii_argument_guard(entities=["US_SSN"]),
+     "run_sql", {"query": "select * from p where ssn = '123-45-6789'"}, "query",
+     Verdict.BLOCK),
+    ("runbook_guard",
+     lambda: dmod("runbook_guard").runbook_guard(runbooks=[
+         {"name": "ls", "templates": ["ls {dir}"]}]),
+     "Bash", {"command": "rm -rf /tmp/x"}, "command", Verdict.BLOCK),
+    ("http_request_guard",
+     lambda: dmod("http_request_guard").http_request_guard(rules=[
+         {"name": "no-admin", "resources": ["/admin/**"]}]),
+     "http_get", {"url": "https://api.acme.com/admin/users"}, "url", Verdict.BLOCK),
+    ("mcp_elicitation_guard",
+     lambda: dmod("mcp_elicitation_guard").mcp_elicitation_guard(),
+     "mcp.elicitation", {"__origin__": "shady", "message": "re-enter token"}, "__origin__",
+     Verdict.BLOCK),
     ("destructive_command_guard",
      lambda: dmod("destructive_command_guard").destructive_command_guard(),
      "run", {"cmd": "rm -rf / --no-preserve-root"}, "cmd", Verdict.BLOCK),
@@ -506,6 +525,23 @@ def test_tool_output_secret_redactor_attributes_the_result():
     assert out == "API_TOKEN=[REDACTED SECRET]"
 
 
+def test_data_masking_guard_attributes_the_result():
+    install(rules=[dmod("data_masking_guard").data_masking_guard(entities=["EMAIL_ADDRESS"])])
+    out = enforce_tool_result("fetch_rows", {"email": "ada@example.com"})
+    assert out == {"email": "[REDACTED:EMAIL_ADDRESS]"}
+
+
+def test_result_phase_http_and_size_guards_attribute_the_payload():
+    install(rules=[dmod("http_status_guard").http_status_guard(["5xx"]),
+                   dmod("result_size_guard").result_size_guard(10)])
+    with pytest.raises(Blocked) as exc:
+        enforce_tool_result("http_get", {"status": 503, "body": "x"})
+    assert exc.value.decision.attributed_to == "status"
+    with pytest.raises(Blocked) as exc:
+        enforce_tool_result("read_file", "x" * 100)
+    assert exc.value.decision.attributed_to == "result"
+
+
 # --- the Decision contract itself -------------------------------------------
 
 
@@ -612,6 +648,9 @@ def test_every_detector_module_is_covered_by_cases_or_gaps():
         "host_fanout_guard",  # driven by its own stateful test below
         "tool_result_injection_guard",  # driven by its own result-path test below
         "tool_output_secret_redactor",  # driven by its own result-path test below
+        "data_masking_guard",  # driven by its own result-path test below
+        "http_status_guard",  # result phase: driven by its own test below
+        "result_size_guard",  # result phase: driven by its own test below
         "mcp_surface_baseline",  # stateful: first listing admits; driven below
     }
     assert stems == populated | set(KNOWN_GAPS), (

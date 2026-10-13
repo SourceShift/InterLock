@@ -69,7 +69,7 @@ watches what it *does*, at the last moment you can still say no.
 - **One policy everywhere.** The same rules guard decorated functions, MCP
   sessions, LangChain tools, your own tool loop, Node.js agents, and coding
   agents: **Claude Code, Codex and Cursor**, through their hooks.
-- **107 ready-made detectors** for prompt injection, SQL and shell injection,
+- **115 ready-made detectors** for prompt injection, SQL and shell injection,
   secret and PII redaction, SSRF, egress, MCP server trust, budgets, and loops.
   Shell rules judge **what a command does**, not its spelling: `rm -fr ~`,
   `bash -c 'rm -rf /'` and `sudo /bin/rm -Rf /` are the same act.
@@ -158,11 +158,13 @@ catches most people.
 | Approvals | `ESCALATE`: hold a call for a human; approvals are one-use and bound to the exact call | [Approvals](docs/guides/approvals.md) |
 | Coding agents | Guard Claude Code, Codex and Cursor tool calls with one command | [Coding agents](docs/guides/coding-agents.md) |
 | Credentials | The agent writes `{{secret:id}}`; the value is filled in after the decision, only where allowed | [Credentials](docs/guides/credentials.md) |
-| Detectors | 107 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
+| Databases and APIs | SQL judged by its effects and tables (`WITH … DELETE` is a delete), checksum-validated data masking on results, runbooks, HTTP path and method rules | [Databases](docs/guides/databases.md) |
+| Review queue | Refuse now with a review id; the identical retry runs once after a human approves; quorum and expiry | [Reviews](docs/guides/reviews.md) |
+| Detectors | 115 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
 | MCP trust | Allowlist servers, pin tool schemas, catch changed tool listings, time-limited grants | [MCP](docs/guides/mcp.md) |
 | Scopes | Per-tenant and per-agent policies; sub-agents can't exceed their parent | [Scopes](docs/guides/scopes.md) |
 | Audit log | Chained, signed receipts of every decision; arguments hashed, not stored; `interlock report` summarizes them | [Audit log](docs/guides/audit-log.md) |
-| Doctor | `attest()` / `require()` in-process, `interlock doctor` from a shell: is protection actually on? | [Production checklist](docs/guides/production.md) |
+| Doctor and metrics | `attest()` / `require()` in-process, `interlock doctor` from a shell, Prometheus metrics and a loopback admin endpoint | [Production checklist](docs/guides/production.md) |
 | BRACE sandbox | Runs subprocesses under bubblewrap (Linux) or Seatbelt (macOS), built from your policy | [Sandbox](docs/guides/sandbox.md) |
 | Node.js client | Guards JS agents with the same Python policy through a local daemon | [js/README.md](js/README.md) |
 

@@ -1,6 +1,6 @@
 # Using detectors
 
-Detectors are ready-made rules, one per kind of attack. interlock ships 107 of
+Detectors are ready-made rules, one per kind of attack. interlock ships 115 of
 them: prompt-injection signatures, SQL injection, secret and PII redaction,
 egress allowlists, SSRF checks, loop and budget limits, MCP trust checks, and
 more. This guide shows how to pick them, how to avoid the one mistake that makes
@@ -270,6 +270,53 @@ Parsing is best-effort and **not a boundary**: obfuscated commands
 (`$'\x72\x6d'`, base64, a downloaded script) get past it. Contain untrusted
 commands with the [sandbox](sandbox.md).
 
+## Least privilege: runbooks and HTTP rules
+
+Deny rules chase an open set. A runbook closes it: the agent's shell tool may
+run only commands that match a template, with every parameter checked.
+
+```python
+from interlock.detectors.runbook_guard import runbook_guard
+
+runbook_guard(runbooks=[
+    {"name": "restart-deployment",
+     "templates": ["kubectl rollout restart deployment/{name} -n {namespace}"],
+     "params": {"name": {"pattern": "^[a-z0-9-]{1,63}$"},
+                "namespace": {"options": ["staging", "prod"]}}},
+    {"name": "tail-logs", "templates": ["kubectl logs {pod} --tail={lines}"],
+     "params": {"lines": {"type": "integer", "min": 1, "max": 500}}},
+], actions=["Bash"])
+```
+
+A command must be a single invocation (no pipes, chains, redirects or
+substitutions) whose words match a template one for one. Parameters take
+`pattern`, `options`, `type` (`string`, `integer` with `min`/`max`, `path`),
+`minlength` and `maxlength`. An unspecified parameter accepts only
+`[A-Za-z0-9._:/@=+-]`. Anything else is blocked (or escalated with
+`verdict="escalate"`), and the reason names the closest runbook and the
+parameter that failed. `load_runbooks(dir)` reads `*.runbook.json` files.
+
+For HTTP tools, `http_request_guard` says what may be done *where*:
+
+```python
+from interlock.detectors.http_request_guard import http_request_guard
+
+http_request_guard(rules=[
+    {"name": "no-admin-api", "resources": ["/admin/**"]},
+    {"name": "billing-writes", "hosts": ["billing.acme.com"],
+     "methods": ["POST", "PUT", "PATCH", "DELETE"], "verdict": "escalate"},
+    {"name": "service-token-only", "hosts": ["*.internal"],
+     "headers_not": {"authorization": ["Bearer svc_*"]}},
+])
+```
+
+In `resources`, `*` matches one path segment and a trailing `/**` matches the
+path and everything under it. The method comes from a `method` argument, or
+from the tool name (`http_post` → POST). `headers` fires on a matching header;
+`headers_not` fires when the header is missing or doesn't match an allowed
+shape. All of a rule's conditions must hold, and the first rule that fires
+decides.
+
 ## Extend a detector's patterns
 
 Many signature detectors accept `extra_patterns=` to add your own phrases, matched
@@ -304,7 +351,7 @@ The catalog's **Factory** column shows each detector's parameters.
 
 ## Next
 
-- [Detector catalog](../reference/detectors.md): all 107, grouped, with scope
+- [Detector catalog](../reference/detectors.md): all 115, grouped, with scope
   and parameters.
 - [Writing rules](writing-rules.md): for anything a detector doesn't cover.
 - [Adding a detector](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md#adding-a-detector): contributing a

@@ -22,11 +22,13 @@ minutes), then read [how interlock works](concepts.md).
 | Guide | You'll learn to |
 |---|---|
 | [Writing rules](guides/writing-rules.md) | Block, rewrite, check results, scope rules to tools, and test your policy |
-| [Using detectors](guides/detectors.md) | Pick from the 107 built-in detectors, make sure they see your tools, and start from a tested set |
+| [Using detectors](guides/detectors.md) | Pick from the 115 built-in detectors, make sure they see your tools, and start from a tested set |
 | [Declarative policies](guides/policies.md) | Write rules as JSON/YAML, lock the ones that must stay on, and accept project overlays safely |
 | [Approvals](guides/approvals.md) | Hold a call for a human with `ESCALATE`, and write an approver |
 | [Coding agents](guides/coding-agents.md) | Guard Claude Code, Codex and Cursor with one command |
 | [Credentials](guides/credentials.md) | Let agents use secrets they never see |
+| [Databases and APIs](guides/databases.md) | Judge SQL by what it does, mask what comes back, keep personal data out of queries |
+| [Review queue](guides/reviews.md) | Refuse now, let a human approve later, run the identical retry once |
 | [Integrations](guides/integrations.md) | Connect `@guard`, MCP, LangChain, a model SDK loop, or a Node.js agent |
 | [MCP](guides/mcp.md) | Guard MCP sessions and decide which servers and tools to trust |
 | [Scopes](guides/scopes.md) | Give each tenant, agent, and sub-agent its own rules |
@@ -39,7 +41,7 @@ minutes), then read [how interlock works](concepts.md).
 | Page | Covers |
 |---|---|
 | [Python API](reference/python-api.md) | Every public class and function, with signatures |
-| [Detector catalog](reference/detectors.md) | All 107 detectors: what they catch, which calls they see, how to build them |
+| [Detector catalog](reference/detectors.md) | All 115 detectors: what they catch, which calls they see, how to build them |
 | [Command line](reference/cli.md) | `interlock doctor`, `report`, `install-hook`, `hook`, `policy`, `trust`, `mcp` |
 | [Sidecar](reference/sidecar.md) | The `interlock-sidecar` daemon for Node.js agents, and its wire protocol |
 | [Node.js client](https://github.com/SourceShift/InterLock/blob/main/js/README.md) | The `interlock-guard` npm package |

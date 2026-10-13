@@ -16,7 +16,7 @@ from interlock.interceptors.mcp import enforce_tool_call, enforce_tool_result
 from interlock.receipt import set_sink
 from interlock.sink import InMemorySink
 
-VALUE = "sk_test_51abcDEFghiJKLmnoPQRstuVWX"
+VALUE = "placeholder-secret-value-0001"
 
 
 @pytest.fixture

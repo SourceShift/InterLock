@@ -74,7 +74,8 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
             "pem_private_key_redactor", "db_uri_redactor", "stripe_key_redactor",
             "slack_webhook_redactor", "s3_presigned_redactor", "output_secret_redactor",
             "secret_entropy_egress_guard", "env_secret_read_guard",
-            "git_credential_guard", "tool_output_secret_redactor", "email_pii_redactor",
+            "git_credential_guard", "tool_output_secret_redactor", "data_masking_guard",
+            "pii_argument_guard", "email_pii_redactor",
             "output_email_redactor",
             "iban_redactor", "ssn_redactor", "us_phone_redactor", "ipv4_redactor",
         ],
@@ -84,7 +85,8 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
         "Where data may go and how much of it, before it leaves the process.",
         [
             "data_egress", "egress_rate_limiter", "private_ip_egress_guard",
-            "raw_ip_egress_guard", "data_volume_egress_guard",
+            "raw_ip_egress_guard", "data_volume_egress_guard", "http_request_guard",
+            "http_status_guard",
             "markdown_image_exfil_guard", "host_fanout_guard",
         ],
     ),
@@ -95,6 +97,7 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
             "execution_guard", "code_eval_exec_guard", "code_dunder_escape_guard",
             "code_filesystem_guard", "code_network_guard", "dynamic_import_guard",
             "subprocess_spawn_guard", "destructive_command_guard", "command_intent_guard",
+            "sql_statement_guard", "runbook_guard",
             "sensitive_file_write_guard", "signal_kill_guard", "memory_bomb_guard",
         ],
     ),
@@ -105,6 +108,7 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
             "mcp_server_allowlist", "mcp_tool_pinning", "mcp_tool_description_scan",
             "mcp_trust_registry", "mcp_resource_uri_guard", "mcp_sampling_model_guard",
             "mcp_consent_budget", "mcp_capability_lease", "mcp_server_attestation",
+            "mcp_elicitation_guard",
             "mcp_surface_baseline",
         ],
     ),
@@ -112,7 +116,7 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
         "Budgets, rate limits, and loops",
         "Stop runaway agents: too many calls, too much spend, the same call on repeat.",
         [
-            "call_rate_limiter", "cost_budget_guard", "tool_budget_limiter",
+            "call_rate_limiter", "cost_budget_guard", "tool_budget_limiter", "result_size_guard",
             "write_action_limiter", "duplicate_call_loop_guard", "output_length_guard",
             "memory_write_size_guard", "failed_auth_lockout",
         ],
@@ -155,9 +159,16 @@ SCOPE_NOTES: Dict[str, str] = {
     "cost_budget_guard": "calls with a numeric `args[\"cost\"]`",
     "call_rate_limiter": "any call, counted per principal",
     "tool_budget_limiter": "any call, counted per tool name",
+    "runbook_guard": "calls carrying `command`/`cmd` (or the `keys` you name); "
+                     "everything else in those arguments must match a runbook",
+    "http_request_guard": "calls with a `url`/`endpoint`/`uri` argument (or the `actions` "
+                          "you name)",
+    "mcp_elicitation_guard": "`mcp.elicitation` / `elicitation/create` events",
     "duplicate_call_loop_guard": "any call, identical repeats in a row",
     "command_intent_guard": "any call (or the `actions` you name); parses every str "
                             "argument (or the `keys` you name) as a shell command",
+    "sql_statement_guard": "any call (or the `actions` you name); parses SQL-named "
+                           "arguments (`sql`, `query`, `statement`, ...; or the `keys` you name)",
 }
 
 SHOWN_ACTIONS = 8

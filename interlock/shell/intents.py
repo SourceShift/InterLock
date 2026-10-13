@@ -319,6 +319,9 @@ def _tamper(inv: Invocation) -> List[Intent]:
         name, args = "interlock", args[2:]
     if name == "interlock":
         verbs = [a for a in args if not a.startswith("-")]
+        if verbs[:1] == ["reviews"] and verbs[1:2] in (["approve"], ["reject"], ["revoke"]):
+            out.append(Intent("interlock.tamper", "interlock", tuple(verbs[1:]),
+                              detail="review", critical=True))
         if verbs and verbs[0] in _INTERLOCK_CONTROL:
             out.append(Intent("interlock.tamper", "interlock", tuple(verbs[1:]),
                               detail="control", critical=True))

@@ -74,6 +74,7 @@ worse at both jobs.
 | R20 | Placeholder credentials | `shipped` | M | agentjail review |
 | R21 | MCP inventory scan | `shipped` | S | agentjail review |
 | R22 | Signed PyPI/npm distribution | `not started` | S | agentjail review |
+| H1–H7 | SQL analysis, masking engine, review queue, runbooks, HTTP rules, metrics, MCP limits | `shipped` | L | hoop review |
 
 ---
 
@@ -1031,6 +1032,24 @@ here in short.
 
 Also adopted from the review: `tool_output_secret_redactor`, a result-phase
 detector masking credentials in tool output before the agent reads it.
+
+---
+
+## H1–H7 · From the hoop review
+
+From comparing interlock with hoop's agent sidecar
+([`research/hoop-review.md`](research/hoop-review.md)). Network-dependent parts
+(its LLM analyzer, OPA, Slack delivery, control plane) were left out.
+
+| # | What shipped | Evidence |
+|---|---|---|
+| H1 | `interlock.sql`: a dialect-aware lexer and effect classifier (CTE DML, string and comment literals, `$$` bodies, `COPY` direction, `EXPLAIN ANALYZE`), relations with read/write access, flags `unbounded`/`opaque`/`external`/`multi`; `sql_statement_guard` and the `{"sql": ...}` policy condition. `generic` unions three dialects' readings | `tests/test_sql_analysis.py` |
+| H2 | `interlock.masking`: 22 entities with checksum validators and context words, strategies `redact`/`mask`/`partial`/keyed `hash`, column and path rules, table shapes; `data_masking_guard` (results) and `pii_argument_guard` (block, ask or mask arguments); `masked` counts in decisions, receipts and reports | `tests/test_masking.py` |
+| H3 | `interlock.reviews`: a SQLite review queue, exactly-once release of the identical retry, two clocks, quorum, self-approval refusal; `interlock reviews` CLI and read-only MCP server; the hook adapters use it when an agent can't ask | `tests/test_reviews.py` |
+| H4 | `runbook_guard`: typed command templates for shell tools | `tests/test_hoop_detectors.py` |
+| H5 | `http_request_guard` (host, path globs, methods, header shapes) and `http_status_guard` | `tests/test_hoop_detectors.py` |
+| H6 | `interlock.metrics` (Prometheus text) and `interlock-sidecar --admin` | `tests/test_metrics_admin.py` |
+| H7 | `mcp_elicitation_guard`, `result_size_guard` | `tests/test_hoop_detectors.py` |
 
 ---
 

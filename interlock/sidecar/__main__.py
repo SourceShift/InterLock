@@ -220,6 +220,13 @@ def _parse_args(argv):
         help="receipt MAC key: 64 hex characters or raw bytes (default: per-process secret)",
     )
     parser.add_argument(
+        "--admin",
+        default=None,
+        metavar="HOST:PORT",
+        help="serve /healthz /stats /metrics /config on this loopback address "
+             "(see interlock.sidecar.admin)",
+    )
+    parser.add_argument(
         "--fallback-policy",
         default=None,
         metavar="FILE",
@@ -299,11 +306,30 @@ def main(argv: Optional[list] = None) -> int:
         except (ValueError, OSError):  # not the main thread / unsupported
             pass
 
+    admin = None
+    if args.admin:
+        from .admin import start as start_admin
+        try:
+            admin = start_admin(args.admin, lambda: {
+                "rules": engine.policy_ids if hasattr(engine, "policy_ids") else len(engine),
+                "epoch": getattr(engine, "epoch", None),
+                "socket": path,
+                "receipts": bool(args.receipts),
+                "fallback_policy": bool(args.fallback_policy),
+            })
+        except (ValueError, OSError) as exc:
+            sys.stderr.write("interlock-sidecar: admin endpoint: {}\n".format(exc))
+            server.server_close()
+            return EXIT_BAD_RULES
+        sys.stderr.write("  admin:    http://{}\n".format(args.admin))
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if admin is not None:
+            admin.shutdown()
         server.server_close()
         try:
             os.unlink(path)

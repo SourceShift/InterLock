@@ -40,7 +40,7 @@ or set `PYTHONPATH`.
 
 ```
 interlock-sidecar --rules MODULE:ATTR [--socket SOCKET] [--receipts PATH] [--key-file PATH]
-                  [--fallback-policy FILE] [--check]
+                  [--fallback-policy FILE] [--admin HOST:PORT] [--check]
 ```
 
 | Flag | Meaning |
@@ -50,6 +50,7 @@ interlock-sidecar --rules MODULE:ATTR [--socket SOCKET] [--receipts PATH] [--key
 | `--receipts PATH` | Append a signed receipt for every decision to `PATH`. Default: no receipts. |
 | `--key-file PATH` | The receipt signing key: a file holding 64 hex characters, or raw bytes. A trailing newline is stripped. Without it, a random per-process key is used, which only this daemon run can verify (it prints a warning). |
 | `--fallback-policy FILE` | Publish this offline policy, signed with `--key-file`, as `<socket>.fallback.json` for clients running with `unreachable="degraded"` (below). Needs `--key-file`. The file must use the offline subset of the [policy language](../guides/policies.md). |
+| `--admin HOST:PORT` | Serve `/healthz`, `/stats`, `/metrics` (Prometheus) and `/config` (rule ids, epoch) on a loopback address. Non-loopback addresses are refused. See the [production checklist](../guides/production.md#watch-it-in-production). |
 | `--check` | Load and validate the rules, print how many there are, and exit without touching the socket or reading the key file. Use it in CI or before a deploy. |
 
 **The rule set must not be empty.** An empty engine allows every call, so a daemon

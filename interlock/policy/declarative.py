@@ -29,6 +29,10 @@ code. A condition is one of:
   nested object
 - ``{"intent": SELECTOR}`` - a shell intent (see :mod:`interlock.shell`) in
   any string argument, or only in ``"arg"`` when given
+- ``{"sql": SELECTOR}`` - what a SQL argument does (see :mod:`interlock.sql`):
+  ``"delete"``, ``"ddl"``, ``"write:customers"``, ``"unbounded"`` ... in the
+  SQL-named arguments (``sql``, ``query``, ...), or only in ``"arg"``;
+  ``"dialect"`` picks the lexing rules
 
 A rule's ``"on"`` key (an action name, a list, or ``{"glob": ...}``) limits it
 to those actions; it is how a catalogued detector, which scans every string
@@ -169,6 +173,11 @@ def read_policy_file(path: str) -> Tuple[Dict[str, Any], str]:
 
 
 class DeclarativeEngine(PolicyEngine):
+    #: The epoch is a content hash: the same files give the same epoch in
+    #: every process, so a review approved in one hook process matches the
+    #: retry in the next.
+    epoch_is_stable = True
+
     """A :class:`PolicyEngine` built from policy documents, reloadable.
 
     ``quarantined`` lists ``"rule-id: why"`` for every rule skipped as invalid.
@@ -706,6 +715,10 @@ def _compile_condition(raw: Any, where: str, actions: Optional[FrozenSet[str]]) 
     if "intent" in raw:
         _check_keys(raw, frozenset({"intent", "arg"}), where, "condition")
         return _intent_condition(raw["intent"], raw.get("arg"), where, actions)
+    if "sql" in raw:
+        _check_keys(raw, frozenset({"sql", "arg", "dialect"}), where, "condition")
+        return _sql_condition(raw["sql"], raw.get("arg"), raw.get("dialect", "generic"),
+                              where, actions)
     if "field" in raw or "arg" in raw:
         return _test_condition(raw, where, actions)
     raise PolicyError("unknown condition; use all/any/not/action/field/arg/intent", where)
@@ -796,6 +809,45 @@ def _intent_condition(selector: Any, arg: Any, where: str,
             for intent in analyze(value):
                 if any(intent.matches(s) for s in selectors):
                     return Hit(name)
+        return False
+
+    return condition
+
+
+def _sql_condition(selector: Any, arg: Any, dialect: Any, where: str,
+                   actions: Optional[FrozenSet[str]]) -> Condition:
+    from ..detectors.sql_statement_guard import DEFAULT_KEYS
+    from ..sql import DIALECTS, FLAGS, GROUPS, OPERATIONS, analyze_sql
+
+    selectors = [selector] if isinstance(selector, str) else selector
+    if not isinstance(selectors, list) or not selectors or not all(
+            isinstance(s, str) for s in selectors):
+        raise PolicyError("'sql' must be a selector or a list of selectors", where)
+    for sel in selectors:
+        kind, sep, _ = sel.partition(":")
+        if not ((sep and kind in ("read", "write", "table"))
+                or sel in OPERATIONS or sel in GROUPS or sel in FLAGS):
+            raise PolicyError("unknown sql selector {!r}; use an operation, ddl/dml/write/"
+                              "control, a flag (unbounded, opaque, external, multi) or "
+                              "read:/write:/table:<glob>".format(sel), where)
+    if dialect != "generic" and dialect not in DIALECTS:
+        raise PolicyError("'dialect' must be generic or one of {}".format(
+            ", ".join(sorted(DIALECTS))), where)
+    if arg is not None:
+        if not isinstance(arg, str):
+            raise PolicyError("'arg' must be an argument name", where)
+        _check_arg_name(arg, where, actions)
+
+    def condition(event: SensorEvent) -> Any:
+        args = event.args if isinstance(event.args, dict) else {}
+        names = [arg] if arg else [k for k in args if k in DEFAULT_KEYS]
+        for name in names:
+            value = _lookup(args, name)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            analysis = analyze_sql(value, dialect)
+            if any(analysis.matches(s) for s in selectors):
+                return Hit(name)
         return False
 
     return condition

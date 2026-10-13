@@ -22,4 +22,6 @@ def _reset_engine():
     approval.grants().clear()
     receipt._dropped = 0
     receipt._last_drop_error = ""
+    from interlock import metrics
+    metrics.reset()
     yield

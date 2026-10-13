@@ -110,6 +110,10 @@ def summarize(
             match = re.match(r"^(\d+)", r.reason or "")
             dropped += int(match.group(1)) if match else 1
 
+    masked: Counter = Counter()
+    for r in enforced:
+        for entity, count in (r.masked or {}).items():
+            masked[entity] += count
     latencies = sorted(r.elapsed_us for r in decisions if isinstance(r.elapsed_us, int))
     days = sorted({time.strftime("%Y-%m-%d", time.localtime(r.ts)) for r in window})
 
@@ -152,6 +156,7 @@ def summarize(
         "escalations": dict(sorted(escalations.items())),
         "failed_outcomes": dict(sorted(outcomes.items())),
         "dropped_receipts": dropped,
+        "masked": dict(masked.most_common()),
         "latency_us": _percentiles(latencies),
     }
 
@@ -232,6 +237,9 @@ def render(summary: Dict[str, Any], verified: Dict[str, Optional[str]], *,
     if summary["failed_outcomes"]:
         lines.append("Failed after allow: " + ", ".join(
             "{} by {}".format(v, k) for k, v in summary["failed_outcomes"].items()))
+    if summary.get("masked"):
+        lines.append("Masked:           " + ", ".join(
+            "{} x{}".format(k, v) for k, v in summary["masked"].items()))
     if summary["dropped_receipts"]:
         lines.append(paint("31", "Dropped receipts: {} (the log has gaps)".format(
             summary["dropped_receipts"])))

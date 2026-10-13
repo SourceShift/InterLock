@@ -94,6 +94,14 @@ Each of these is sometimes the right choice. Make it on purpose.
   interpreter code, but obfuscation (`$'\x72\x6d'`, base64, a downloaded
   script) gets past it. It can only add findings to the raw-text checks, never
   remove them. Contain untrusted commands with BRACE.
+- **SQL analysis and masking are best-effort.** The SQL analyzer is a lexer:
+  a function called from a `SELECT` list is invisible to it. Masking detects
+  formats and checksums, not meaning: names and places aren't detected, and a
+  value transformed before it's returned (base64, say) isn't recognised.
+  Database permissions and least-privilege credentials stay the boundary.
+- **The review queue trusts its file.** Approvals live in a local SQLite file;
+  anyone who can write it can approve anything, under any name. Keep it where
+  the agent can't write (`~/.interlock` under the coding-agent policy).
 - **Coding-agent hooks are cooperative, and agents differ.** Hooks see the tools
   an agent routes through them; they are not an OS boundary. Codex can't ask or
   rewrite at `PreToolUse` (those verdicts are refused) or withhold tool output;

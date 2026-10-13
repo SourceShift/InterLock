@@ -27,6 +27,7 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("policy", "check a declarative policy file, or show a built-in pack", "policy"),
     ("trust", "trust a project's policy overlay", "trust"),
     ("mcp", "inventory the MCP servers configured on this machine", "mcp"),
+    ("reviews", "decide pending reviews; serve their status to agents", "reviews"),
 ]
 
 

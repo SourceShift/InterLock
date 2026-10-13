@@ -36,6 +36,11 @@ def add_arguments(parser) -> None:
                         help="record what would happen, never block")
     parser.add_argument("--on-error", choices=("deny", "allow"), default="deny",
                         help="what an internal error does (default deny)")
+    parser.add_argument("--reviews", choices=("fallback", "always", "off"), default="fallback",
+                        help="settle escalations through the review queue: when the agent "
+                             "can't ask (default), always, or never")
+    parser.add_argument("--review-db", metavar="FILE",
+                        help="review queue (default ~/.interlock/reviews.db)")
 
 
 def run(args) -> int:
@@ -56,8 +61,13 @@ def run(args) -> int:
         cwd = call.cwd if isinstance(call.cwd, str) else None
         engine = _engine(args, cwd)
         _install_sink(args)
+        queue = None
+        if args.reviews != "off":
+            from ..reviews import ReviewQueue
+            queue = ReviewQueue(args.review_db)
         stdout, stderr, code = run_hook(adapter, payload, engine,
-                                        enforcement="monitor" if args.monitor else "blocking")
+                                        enforcement="monitor" if args.monitor else "blocking",
+                                        reviews=queue, review_mode=args.reviews)
     except Exception as exc:  # fail closed (or loudly open), never crash the agent
         stdout, stderr, code = adapter.render_error(
             call, "{}: {}".format(type(exc).__name__, exc)[:300], fail_open=fail_open)

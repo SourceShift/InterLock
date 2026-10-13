@@ -216,8 +216,16 @@ def combine(decisions: List[Decision]) -> Decision:
 
 
 def run_hook(adapter: Adapter, payload: Dict[str, Any], engine: Any, *,
-             enforcement: str = "blocking") -> Rendered:
-    """Decide one hook invocation and render the agent's reply."""
+             enforcement: str = "blocking", reviews: Any = None,
+             review_mode: str = "fallback") -> Rendered:
+    """Decide one hook invocation and render the agent's reply.
+
+    ``reviews`` is a :class:`interlock.reviews.ReviewQueue`. With
+    ``review_mode="fallback"`` (default) it settles escalations the agent
+    can't ask about itself (Codex, Cursor file reads): the call is refused with
+    a pending review id, and the identical retry runs once a human approves.
+    ``"always"`` routes every escalation through the queue, ``"off"`` never.
+    """
     call = adapter.parse(payload)
     if call.kind == "ignore":
         return adapter.render(call, HookOutcome(Verdict.ALLOW))
@@ -233,10 +241,11 @@ def run_hook(adapter: Adapter, payload: Dict[str, Any], engine: Any, *,
         return "", "", 0
     if call.kind == "post":
         return _decide_result(adapter, call, engine, enforcement)
-    return _decide_call(adapter, call, engine, enforcement)
+    return _decide_call(adapter, call, engine, enforcement, reviews, review_mode)
 
 
-def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str) -> Rendered:
+def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str,
+                 reviews: Any = None, review_mode: str = "fallback") -> Rendered:
     started = time.perf_counter()
     decisions = [engine.evaluate(event) for event in call.events]
     elapsed = int((time.perf_counter() - started) * 1_000_000)
@@ -257,7 +266,26 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
     outcome = HookOutcome(policy, decision.reason, decision.policy_id, policy,
                           modified_args=decision.modified_args)
     approval = None
-    if policy == Verdict.ESCALATE:
+    use_queue = reviews is not None and (review_mode == "always" or (
+        review_mode == "fallback" and not call.can_ask))
+    if policy == Verdict.ESCALATE and use_queue:
+        from ..approval import make_request
+        from ..reviews import binding_hash, pending_message
+
+        request = make_request(primary, decision, epoch)
+        review = reviews.lookup_or_file(
+            binding_hash(request, bind_epoch=bool(getattr(engine, "epoch_is_stable", False))),
+            request)
+        if review.status == "approved" and reviews.claim(review.id):
+            emit_receipt(primary, Decision(Verdict.ALLOW, decision.reason, decision.policy_id,
+                                           attributed_to=decision.attributed_to),
+                         policy_epoch=epoch, elapsed_us=elapsed, policy_verdict="ESCALATE",
+                         approval="approved:review " + review.id)
+            return adapter.render(call, HookOutcome(Verdict.ALLOW))
+        outcome = replace(outcome, verdict=Verdict.BLOCK, reason="{} - {}".format(
+            decision.reason, pending_message(review)))
+        approval = ("pending:" if review.status == "pending" else "declined:") + review.id
+    elif policy == Verdict.ESCALATE:
         if call.can_ask:
             approval = "delegated:" + adapter.name
         else:
