@@ -1,0 +1,21 @@
+/* The design's page-level rules (its <helmet> block). Fonts are bundled
+   (@fontsource, OFL) and served by the console itself: no third-party request. */
+:root {
+  --il-bg: #0f1012; --il-panel: #151619; --il-raised: #1c1d21; --il-sunken: #0b0c0d;
+  --il-fg: #ecebe6; --il-fg2: #b4b3ad; --il-dim: #8d8c86;
+  --il-rule: rgba(255, 255, 255, .08); --il-rule2: rgba(255, 255, 255, .14);
+  --il-allow: #5fd68a; --il-rewrite: #f5c04a; --il-block: #ff7a6b; --il-escalate: #8ec5ff;
+  --il-acc: #f5a524; --il-accfg: #16120a; --il-hover: rgba(255, 255, 255, .04); --il-sel: rgba(255, 255, 255, .07);
+  color-scheme: dark;
+}
+html, body { margin: 0; background: var(--il-bg); color: var(--il-fg); -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+a { color: var(--il-acc); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--il-acc); outline-offset: 2px; border-radius: 4px; }
+::selection { background: var(--il-acc); color: var(--il-accfg); }
+input, textarea, select, button { font: inherit; color: inherit; }
+@keyframes il-blink { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

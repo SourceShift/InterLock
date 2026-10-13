@@ -163,6 +163,11 @@ class ConsoleRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type or "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
+        # Built assets carry a content hash in their name and never change;
+        # the page that names them must be re-checked, or an upgraded console
+        # keeps serving the old app to an open browser.
+        immutable = relative.startswith("assets/")
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if immutable else "no-cache")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(data)

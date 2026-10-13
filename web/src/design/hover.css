@@ -1,0 +1,6 @@
+/* GENERATED: the template's style-hover rules. Inline styles win over a
+   plain class rule, so each hover declaration is !important. */
+.ilh-1:hover { transform: scaleY(1.12) !important }
+.ilh-2:hover { border-color: var(--il-escalate) !important; transform: translateX(2px) !important }
+.ilh-3:hover { background: var(--il-hover) !important }
+.ilh-4:hover { border-color: var(--il-fg2) !important }

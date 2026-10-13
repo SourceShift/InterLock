@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlsplit
@@ -21,7 +22,7 @@ from ..sink import verify_file
 from .server import ROUTES
 from .server import _health as _base_health
 
-VALID_VERDICTS = ("ALLOW", "BLOCK", "MODIFY")
+VALID_VERDICTS = ("ALLOW", "BLOCK", "MODIFY", "ESCALATE", "OBSERVED")
 VALID_ORDERS = ("asc", "desc")
 
 DEFAULT_LIMIT = 100
@@ -140,21 +141,53 @@ def _handle_receipts(handler: Any) -> Any:
     if order not in VALID_ORDERS:
         return 400, _bad_query("order must be one of {}".format(", ".join(VALID_ORDERS)))
     action = _first(qs, "action")
+    policy = _first(qs, "policy")
+    text = (_first(qs, "q") or "").strip().lower()
     offset = _int_param(qs, "offset", 0)
     limit = _int_param(qs, "limit", DEFAULT_LIMIT)
     limit = max(MIN_LIMIT, min(MAX_LIMIT, limit))
 
     receipts = _read_receipts(path)
     count_all = len(receipts)
-    filtered = [
-        r for r in receipts
-        if (verdict is None or r.get("verdict") == verdict)
-        and (action is None or r.get("action") == action)
-    ]
+    index = _first(qs, "index")
+    if index is not None:
+        # One receipt by its line index: the detail drawer's deep link.
+        wanted = _int_param(qs, "index", -1)
+        found = [r for r in receipts if r.get("index") == wanted]
+        return 200, {"total": len(found), "count_all": count_all, "receipts": found,
+                     "rules": []}
+    filtered = [r for r in receipts if _matches(r, verdict, action, policy, text)]
     total = len(filtered)
     ordered = list(reversed(filtered)) if order == "desc" else filtered
     page = ordered[offset:offset + limit]
-    return 200, {"total": total, "count_all": count_all, "receipts": page}
+    rules = sorted({r["policy_id"] for r in receipts if r.get("policy_id")})
+    return 200, {"total": total, "count_all": count_all, "receipts": page, "rules": rules}
+
+
+def _matches(r: Dict[str, Any], verdict: Optional[str], action: Optional[str],
+             policy: Optional[str], text: str) -> bool:
+    """One receipt against the page's filters. An unreadable line only shows
+    when nothing narrows the list: it has no fields to match."""
+    if r.get("unreadable"):
+        return verdict is None and action is None and policy is None and not text
+    if verdict == "OBSERVED":
+        if not r.get("observed"):
+            return False
+    elif verdict == "ESCALATE":
+        if r.get("policy_verdict") != "ESCALATE":
+            return False
+    elif verdict is not None and (r.get("verdict") != verdict or r.get("observed")):
+        return False
+    if action is not None and r.get("action") != action:
+        return False
+    if policy is not None and r.get("policy_id") != policy:
+        return False
+    if text:
+        hay = " ".join(str(r.get(k) or "") for k in ("action", "principal", "span_id", "policy_id",
+                                                      "call_id", "reason")).lower()
+        if text not in hay:
+            return False
+    return True
 
 
 def _handle_verify(handler: Any) -> Any:
@@ -177,7 +210,17 @@ def _handle_verify(handler: Any) -> Any:
 
     problem = verify_file(path, key=key)
     status = "intact" if problem is None else "broken"
-    return 200, {"status": status, "problem": problem, "count": count, "head": head}
+    broken_index = None
+    if problem:
+        match = re.match(r"^receipt (\d+)", problem)
+        readable = [r for r in receipts if not r.get("unreadable")]
+        if match and int(match.group(1)) < len(receipts):
+            # verify_file counts receipts in chain order; map that to the line index.
+            position = int(match.group(1))
+            ordered = readable if position < len(readable) else receipts
+            broken_index = ordered[min(position, len(ordered) - 1)].get("index")
+    return 200, {"status": status, "problem": problem, "count": count, "head": head,
+                 "broken_index": broken_index}
 
 
 def _file_size(path: str) -> int:

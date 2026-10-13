@@ -17,6 +17,7 @@ import interlock
 
 from .audit import read_key_file
 from .server import ConsoleServer, LOOPBACK_HOSTS
+from .session import configure
 
 EXIT_BAD_HOST = 2
 EXIT_BAD_KEY_FILE = 2
@@ -63,6 +64,35 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         metavar="PATH",
         help="receipt MAC key: 64 hex characters or raw bytes (default: verify reports unverified)",
     )
+    parser.add_argument(
+        "--policy",
+        default=None,
+        metavar="PATH",
+        help="the declarative policy the editor reads and saves (default ~/.interlock/policy.json)",
+    )
+    parser.add_argument(
+        "--reviews-db",
+        default=None,
+        metavar="PATH",
+        help="the review queue (default ~/.interlock/reviews.db)",
+    )
+    parser.add_argument(
+        "--four-eyes",
+        action="store_true",
+        help="refuse an approval by the account that filed the review",
+    )
+    parser.add_argument(
+        "--sidecar",
+        default=None,
+        metavar="PATH",
+        help="the guard daemon's socket to probe (default: its usual path, if present)",
+    )
+    parser.add_argument(
+        "--sidecar-admin",
+        default=None,
+        metavar="HOST:PORT",
+        help="the guard daemon's loopback admin address, for its stats and config",
+    )
     return parser.parse_args(argv)
 
 
@@ -91,6 +121,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         receipts_path=args.receipts,
         receipts_key=key,
     )
+    gate = configure(
+        server,
+        policy_path=args.policy,
+        reviews_db=args.reviews_db,
+        four_eyes=args.four_eyes,
+        sidecar=args.sidecar,
+        sidecar_admin=args.sidecar_admin,
+        key_file=args.key_file,
+    )
+    host = "[::1]" if args.host == "::1" else args.host
+    base = "http://{}:{}".format(host, server.server_port)
+    # The unlock link goes to this terminal and nowhere else (see session.py).
+    sys.stderr.write("interlock console on {} (read-only)\n".format(base))
+    sys.stderr.write("unlock writes: {}/#/unlock/{}\n".format(base, gate.code))
+    sys.stderr.flush()
     try:
         server.serve_forever()
     finally:

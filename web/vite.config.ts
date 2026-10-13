@@ -11,10 +11,12 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    // Never inline assets as data: URIs - the console's CSP (default-src 'self') refuses them.
+    assetsInlineLimit: 0,
   },
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["src/**/*.test.tsx"],
+    include: ["src/**/*.test.tsx", "src/**/*.test.ts"],
   },
 });

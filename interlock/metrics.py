@@ -84,8 +84,23 @@ def snapshot() -> Dict[str, object]:
             "masked": dict(_masked),
             "receipts_dropped": _dropped,
             "latency_us": {"count": _latency_count, "sum": _latency_sum,
-                           "mean": (_latency_sum / _latency_count) if _latency_count else None},
+                           "mean": (_latency_sum / _latency_count) if _latency_count else None,
+                           "p50": _bucket_bound(0.50), "p99": _bucket_bound(0.99)},
         }
+
+
+def _bucket_bound(q: float) -> Optional[int]:
+    """The histogram bucket bound at or below which a fraction ``q`` of the
+    evaluations fall: an upper estimate, never an interpolation. None past the
+    largest bound, or with no samples. Call with ``_lock`` held."""
+    if not _latency_count:
+        return None
+    target, seen = q * _latency_count, 0
+    for bound, n in zip(BUCKETS_US, _latency_buckets):
+        seen += n
+        if seen >= target:
+            return bound
+    return None
 
 
 def _escape(value: str) -> str:

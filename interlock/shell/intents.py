@@ -30,8 +30,10 @@ Kinds:
 ``persist.schedule``        ``crontab``, ``at``, ``launchctl load``, ``systemctl enable``
 ``persist.shell_init``      writes to ``~/.bashrc``, ``~/.zshrc`` ...
 ``priv.escalate``           ``sudo``, ``doas``, ``su``, ``pkexec``
-``interlock.tamper``        ``interlock trust``/``install-hook``, or a write,
-                            move or delete under ``~/.interlock``
+``interlock.tamper``        ``interlock trust``/``install-hook``, a write,
+                            move or delete under ``~/.interlock``, or an HTTP
+                            client calling the local console's unlock or
+                            write API
 ==========================  ==================================================
 """
 from __future__ import annotations
@@ -295,6 +297,14 @@ def _classify(inv: Invocation) -> Iterable[Intent]:
 
 
 _INTERLOCK_CONTROL = frozenset({"trust", "install-hook", "uninstall-hook"})
+
+#: The console's unlock and write routes, on a loopback host. An agent that
+#: reaches them could approve its own reviews or rewrite its own policy, so
+#: calling them is tampering whatever the HTTP client.
+_CONSOLE_WRITE = re.compile(
+    r"(?:^|[\s'\"(=]|https?://)(?:127\.\d+\.\d+\.\d+|localhost|\[::1\]|0\.0\.0\.0)(?::\d+)?"
+    r"/api/(?:unlock|lock|policy(?:[/?#]|$)|reviews/[^/?#]+/(?:approve|reject|revoke))",
+    re.IGNORECASE)
 _MUTATORS = frozenset({"rm", "mv", "cp", "ln", "chmod", "chown", "truncate", "tee",
                        "touch", "install", "rsync", "unlink", "shred"})
 
@@ -334,6 +344,10 @@ def _tamper(inv: Invocation) -> List[Intent]:
     hit = tuple(t for t in targets if _in_interlock_home(t))
     if hit:
         out.append(Intent("interlock.tamper", name, hit, detail="write", critical=True))
+    if name in _FETCHERS or re.match(r"^python[0-9.]*$", name) or name in ("node", "deno", "bun"):
+        urls = tuple(a for a in inv.args if _CONSOLE_WRITE.search(a))
+        if urls:
+            out.append(Intent("interlock.tamper", name, urls, detail="console", critical=True))
     return out
 
 
