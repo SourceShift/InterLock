@@ -40,7 +40,11 @@ pytestmark = pytest.mark.skipif(
 
 
 def _env(**extra):
-    env = dict(os.environ)
+    # Drop every inherited GIT_* variable, not just the config files: a caller
+    # can inject config through GIT_CONFIG_COUNT/KEY_n/VALUE_n (mini-ork's lanes
+    # set every pushurl to no-push:// that way) or point at another repo with
+    # GIT_DIR, and either would leak into the throwaway repos below.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(
         GIT_CONFIG_GLOBAL=os.devnull,
         GIT_CONFIG_NOSYSTEM="1",
