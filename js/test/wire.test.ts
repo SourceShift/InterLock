@@ -202,8 +202,10 @@ test("parseResponse: a verdict must be an integer - a JSON true is not one", () 
     () => parseResponse({ ...OK_RESPONSE, verdict: true }, "op-1"),
     isWireError("bad_request"),
   );
+  // 3 is ESCALATE; the first value past the enum is still refused.
+  assert.equal(parseResponse({ ...OK_RESPONSE, verdict: 3 }, "op-1").verdict, Verdict.ESCALATE);
   assert.throws(
-    () => parseResponse({ ...OK_RESPONSE, verdict: 3 }, "op-1"),
+    () => parseResponse({ ...OK_RESPONSE, verdict: 4 }, "op-1"),
     isWireError("bad_request"),
   );
   assert.throws(
