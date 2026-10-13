@@ -76,6 +76,9 @@ def repo(tmp_path):
     primary = tmp_path / "primary"
     _run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], tmp_path)
     _run(["git", "init", "-q", "-b", "main", str(primary)], tmp_path)
+    (primary / "README").write_text("base\n")
+    _run(["git", "add", "README"], primary)
+    _run(["git", "commit", "-q", "-m", "base, before the guards existed"], primary)
     for rel in GUARD_FILES:
         dest = primary / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -190,3 +193,22 @@ def test_ship_leaves_a_primary_on_another_branch_untouched(repo):
     assert not (primary / "land.txt").exists()
     origin_main = _run(["git", "rev-parse", "main"], repo["origin"]).stdout.strip()
     assert _run(["git", "rev-parse", "main"], primary).stdout.strip() == origin_main
+
+
+def test_the_guards_hold_even_on_a_branch_that_predates_them(repo):
+    """The primary checkout on an old branch has no .githooks/ on disk; the
+    installed copies in the shared hooks dir must still refuse the commit."""
+    primary = repo["primary"]
+    _run(["git", "checkout", "-q", "-b", "old", "HEAD~1"], primary, ALLOW_WORKTREE_BRANCH_CREATE="1")
+    assert not (primary / ".githooks").exists()
+    res = _commit(primary, "old.txt")
+    assert res.returncode != 0 and "G1" in res.stderr
+
+
+def test_uninstall_removes_only_the_guards(repo):
+    hooks = Path(_run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], repo["primary"]).stdout.strip()) / "hooks"
+    (hooks / "post-checkout").write_text("#!/bin/sh\nexit 0\n")
+    _run(["bash", "scripts/install-worktree-guards.sh", "--uninstall"], repo["primary"])
+    assert not (hooks / "pre-commit").exists()
+    assert (hooks / "post-checkout").exists()
+    assert _commit(repo["primary"], "after.txt").returncode == 0

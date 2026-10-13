@@ -65,9 +65,10 @@ console binds loopback only; start it on a free port and stop it when done.
 
 ## Guards
 
-Install once per clone: `bash scripts/install-worktree-guards.sh` (sets
-`core.hooksPath=.githooks`, shared by every worktree). They keep the primary
-checkout a pure fast-forward of origin/main.
+Install once per clone, and again whenever `.githooks/` changes:
+`bash scripts/install-worktree-guards.sh` copies them into the shared `.git/hooks/`, so they
+guard every checkout whatever branch it has. They keep the primary checkout a pure
+fast-forward of origin/main.
 
 | Guard | Hook | Refuses | Escape (deliberate, reviewed only) |
 |---|---|---|---|
