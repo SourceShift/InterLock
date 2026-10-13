@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..enforce import Verdict
 from .base import (
@@ -80,6 +80,43 @@ class ClaudeCodeAdapter(Adapter):
         elif event == "SessionStart":
             call.kind = "lifecycle"
         return call
+
+    def result_view(self, call: HookCall) -> Tuple[Dict[str, Any], Callable[[Any], Any]]:
+        """Judge a result as the model will read it, not as Claude Code stores it.
+
+        ``Read`` nests the file text in ``file.content``, where no result rule
+        looks - so an injection in a read file went unseen. ``Write``/``NotebookEdit``
+        echo back the agent's own content, which the model never reads again -
+        so the agent's own text tripped result rules. ``Edit``/``MultiEdit`` show
+        the model a snippet of the file: its context lines are the file's, the
+        added lines the agent's own. Each view puts in front of the rules what
+        the model reads, and a rewrite of a ``Read`` view is put back into
+        ``file.content`` so Claude Code receives its own shape.
+        """
+        resp = call.result
+        if not isinstance(resp, dict):
+            return super().result_view(call)
+        if call.tool_name == "Read":
+            file = resp.get("file")
+            if isinstance(file, dict) and isinstance(file.get("content"), str):
+                view = {"content": file["content"], "file_path": file.get("filePath")}
+
+                def rebuild(modified: Any) -> Any:
+                    text = modified.get("content") if isinstance(modified, dict) else modified
+                    if not isinstance(text, str):
+                        return modified
+                    return {**resp, "file": {**file, "content": text}}
+                return view, rebuild
+        path = resp.get("filePath") or call.tool_input.get("file_path") or call.tool_input.get("notebook_path")
+        if call.tool_name in ("Edit", "MultiEdit"):
+            context = _patch_context(resp.get("structuredPatch"))
+            view: Dict[str, Any] = {"file_path": path}
+            if context:
+                view["context"] = context
+            return view, lambda modified: resp
+        if call.tool_name in ("Write", "NotebookEdit"):
+            return {"file_path": path}, lambda modified: resp
+        return super().result_view(call)
 
     def render(self, call: HookCall, outcome: HookOutcome) -> Rendered:
         if call.kind == "pre":
@@ -180,6 +217,17 @@ class ClaudeCodeAdapter(Adapter):
             return find_command(read_json(settings or self.settings_path()).get("hooks"))
         except (OSError, ValueError):
             return None
+
+
+def _patch_context(patch: Any) -> str:
+    """The unchanged lines of an edit's hunks: the file's own text around the
+    change, which the model sees in Claude Code's snippet."""
+    lines: List[str] = []
+    for hunk in patch if isinstance(patch, list) else []:
+        for line in (hunk.get("lines") if isinstance(hunk, dict) else None) or []:
+            if isinstance(line, str) and line.startswith(" "):
+                lines.append(line[1:])
+    return "\n".join(lines)
 
 
 def _verb(verdict: Optional[Verdict]) -> str:

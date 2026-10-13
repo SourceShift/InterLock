@@ -33,7 +33,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..enforce import Decision, Verdict
 from ..event import SensorEvent, result_payload
@@ -105,6 +105,12 @@ class Adapter:
     def render(self, call: HookCall, outcome: HookOutcome) -> Rendered:
         raise NotImplementedError
 
+    def result_view(self, call: HookCall) -> Tuple[Dict[str, Any], Callable[[Any], Any]]:
+        """The result as rules should judge it - what the agent's model will
+        read - and how to turn a rewrite of that view back into the shape the
+        agent expects. Default: the tool's response as returned, unchanged."""
+        return result_payload(call.result), _same
+
     def render_lifecycle(self, call: HookCall, summary: str) -> Rendered:
         return "", "", 0
 
@@ -144,7 +150,35 @@ def normalize_path(path: str, cwd: Optional[str]) -> str:
     expanded = os.path.expanduser(path)
     if not os.path.isabs(expanded):
         expanded = os.path.join(cwd or os.getcwd(), expanded)
-    return os.path.normpath(expanded)
+    return _disk_case(os.path.normpath(expanded))
+
+
+def _disk_case(path: str) -> str:
+    """``path`` with each existing component spelled as it is on disk.
+
+    On a case-insensitive volume (macOS, Windows) ``~/.SSH/id_rsa`` opens
+    ``~/.ssh/id_rsa``; a rule that names ``~/.ssh/`` must see that spelling.
+    A component is respelled only when the volume itself resolves the
+    variant to an existing entry; on a case-sensitive volume nothing changes.
+    """
+    parts = path.split(os.sep)
+    out = parts[0] or os.sep
+    for i, part in enumerate(parts[1:], start=1):
+        if not part:
+            continue
+        candidate = os.path.join(out, part)
+        if not os.path.lexists(candidate):
+            return os.path.join(out, *parts[i:])  # the rest doesn't exist yet
+        try:
+            names = os.listdir(out)
+        except OSError:
+            return os.path.join(out, *parts[i:])
+        if part not in names:
+            folded = [n for n in names if n.lower() == part.lower()]
+            if len(folded) == 1:
+                part = folded[0]
+        out = os.path.join(out, part)
+    return out
 
 
 def patch_targets(patch: str, cwd: Optional[str]) -> List[str]:
@@ -213,6 +247,10 @@ def combine(decisions: List[Decision]) -> Decision:
                               "patch: " + rewrites[0].reason, rewrites[0].policy_id,
                               attributed_to=rewrites[0].attributed_to)
     return Decision.allow()
+
+
+def _same(value: Any) -> Any:
+    return value
 
 
 def run_hook(adapter: Adapter, payload: Dict[str, Any], engine: Any, *,
@@ -311,7 +349,9 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
 
 
 def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: str) -> Rendered:
-    event = result_event(call)
+    view, rebuild = adapter.result_view(call)
+    event = SensorEvent(action=call.tool_name, args=view, principal=call.agent,
+                        span_id=call.session_id, call_id=call.call_id, phase="result")
     started = time.perf_counter()
     decision = engine.evaluate(event)
     elapsed = int((time.perf_counter() - started) * 1_000_000)
@@ -330,7 +370,8 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
                                                 decision.policy_id, policy, observed=True))
     verdict = Verdict.BLOCK if policy == Verdict.ESCALATE else policy
     outcome = HookOutcome(verdict, decision.reason, decision.policy_id, policy,
-                          modified_result=decision.modified_result)
+                          modified_result=rebuild(decision.modified_result)
+                          if verdict == Verdict.MODIFY else decision.modified_result)
     emit_receipt(event, replace(decision, verdict=verdict), policy_epoch=epoch,
                  elapsed_us=elapsed,
                  policy_verdict=policy.name if verdict != policy else None)

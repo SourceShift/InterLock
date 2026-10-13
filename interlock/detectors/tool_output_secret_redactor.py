@@ -57,13 +57,15 @@ PATTERNS: List[Tuple[str, "re.Pattern[str]", int]] = [
 
 
 #: Values of a secret-named assignment that are not secrets: a type in
-#: source code (``link_token: string;``) or a reference to where the secret
-#: lives (``API_KEY = os.environ[...]``, ``token: ${TOKEN}``).
+#: source code (``link_token: string;``), a reference to where the secret
+#: lives (``API_KEY = os.environ[...]``, ``token: ${TOKEN}``), or another
+#: identifier (``policy_id: tool_output_secret_redact``).
 _NOT_A_VALUE = re.compile(
     r"^(?:string|number|boolean|bigint|any|unknown|never|void|object|null|undefined|none|"
     r"str|int|float|bool|bytes|optional|list|dict|true|false)\b[\[\]<>|?;,)]*$"
     r"|^(?:process\.env|os\.environ|os\.getenv|env\.|getenv|config\.|settings\.|self\.|this\.)"
-    r"|^\$|^%\(|[(){};]$",
+    r"|^\$|^%\(|[(){};]$"
+    r"|^[a-z]+(?:_[a-z]+)+$",  # a snake_case identifier names something; it isn't one
     re.IGNORECASE)
 
 
