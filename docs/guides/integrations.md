@@ -10,6 +10,7 @@ agent. All of them run the same rules, so you can mix them freely.
 | An MCP client session | [`guard_mcp_session`](#mcp-sessions) | yes | yes |
 | LangChain tools | [`guard_langchain_tools`](#langchain-tools) | yes | yes |
 | A model SDK's tool loop (OpenAI, Anthropic, others) or any other framework | [`enforce_tool_call` + `enforce_tool_result`](#a-model-sdk-or-any-other-framework) | yes | yes, when you call it |
+| A framework tool loop: OpenAI SDK, LiteLLM, CrewAI, Google ADK | [`guard_tool_loop`](#framework-tool-loops) | yes | yes |
 | A Node.js agent | [the `interlock-guard` npm package](#nodejs-agents) | yes | yes for MCP and model-SDK tools |
 | Subprocesses your agent launches | [BRACE sandbox](sandbox.md) | the launch | OS-level confinement instead |
 
@@ -128,6 +129,51 @@ rewritten. Always call the tool with its return value, not with the original
 arguments.
 
 Both functions accept `engine=`, `enforcement=`, and `principal=`.
+
+## Framework tool loops
+
+The loop above is what every agent framework bottoms out in: a *tool runner*
+that takes the model's tool request and returns the tool's result. interlock
+ships a thin adapter per framework that guards that runner for you, so you don't
+hand-write the `try`/`enforce_tool_call`/`enforce_tool_result` wrapper. Each one
+routes through the same two core functions, so the rules you already wrote apply
+unchanged.
+
+```python
+from interlock.interceptors.openai import guard_tool_loop      # or .litellm,
+                                                               # .crewai, .google_adk
+dispatch = guard_tool_loop(run_tool)          # run_tool(name, args) -> result
+
+for call in response.choices[0].message.tool_calls:
+    result = dispatch(call.function.name, json.loads(call.function.arguments))
+```
+
+`guard_tool_loop` is the same symbol in each adapter module:
+
+| Framework | Import | Wraps |
+|---|---|---|
+| OpenAI SDK | `interlock.interceptors.openai` | the tool loop's dispatcher |
+| LiteLLM | `interlock.interceptors.litellm` | the `litellm.completion` tool loop |
+| CrewAI | `interlock.interceptors.crewai` | a tool's `run` entrypoint |
+| Google ADK | `interlock.interceptors.google_adk` | a tool's `run_async` entrypoint |
+
+Hand it the `(name, args) -> result` dispatcher your loop already calls, or a
+native tool object (recognized by duck-typing on `run` / `run_async` - the SDK is
+never imported). It hands back a callable of the same `(name, args)` shape, async
+when the tool is. A call that the policy blocks raises `Blocked` **before** the
+tool runs; a `MODIFY` hands the tool the rewritten arguments; the result is
+checked before the model reads it. All of them accept `engine=`, `enforcement=`
+(default `"blocking"`; use `"monitor"` to trial), and `principal=`.
+
+None of these adapters import their SDK at module scope, so importing interlock
+never pulls in `openai`, `litellm`, `crewai` or `google.adk` - the framework is
+only needed when you actually use it.
+
+`interlock doctor` reports one `framework.<name>` row per adapter: **detected**
+(the package is importable here, so its surface can be guarded) or **uncovered**
+(the package is not importable, so interlock cannot attest that surface is
+guarded). An uncovered surface is a warning, not silence - a framework that is
+absent is never quietly reported as covered.
 
 ## Node.js agents
 

@@ -53,6 +53,7 @@ def run(args) -> int:
     checks.extend(_sandbox_checks())
     checks.extend(_receipt_checks(args))
     checks.extend(_hook_checks())
+    checks.extend(_framework_checks())
     for provider in EXTRA_CHECKS:
         try:
             checks.extend(provider(args))
@@ -168,6 +169,36 @@ def _ago(seconds: float) -> str:
         if seconds >= size:
             return "{}{}".format(int(seconds // size), unit)
     return "{}s".format(int(seconds))
+
+
+def _framework_checks() -> List[Check]:
+    """Name each framework interlock ships an adapter for, covered or not.
+
+    Doctor runs outside the user's process, so it cannot see which frameworks
+    that process actually uses; it can only ask the import system. A framework
+    present here gets an OK row naming its guarded surface. One that is absent
+    is reported ``uncovered``: interlock cannot attest that its tool surface is
+    guarded in this environment, and silence would read as "covered" - the
+    failure this check exists to prevent. WARN keeps it "degraded" (exit 1), not
+    "unprotected".
+    """
+    from ..interceptors import FRAMEWORK_ADAPTERS
+
+    checks: List[Check] = []
+    for adapter in FRAMEWORK_ADAPTERS:
+        module = adapter.MODULE
+        short = adapter.__name__.rsplit(".", 1)[-1]
+        if adapter.framework_available():
+            checks.append(Check("framework." + adapter.FRAMEWORK, OK,
+                                "detected: {}".format(adapter.SURFACE)))
+        else:
+            checks.append(Check("framework." + adapter.FRAMEWORK, WARN,
+                                "uncovered: {} is not importable here, so its tool "
+                                "surface is not guarded".format(module),
+                                "install {} and wrap its tool runner with "
+                                "interlock.interceptors.{}.guard_tool_loop".format(
+                                    module, short)))
+    return checks
 
 
 def _hook_checks() -> List[Check]:

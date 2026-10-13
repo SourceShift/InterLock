@@ -31,9 +31,15 @@ from .context import (
 )
 from .enforce import Blocked, Decision, NotApproved, Verdict
 from .event import SensorEvent, new_call_id
+from .interceptors import (
+    guard_adk_tool_loop,
+    guard_crewai_tool_loop,
+    guard_litellm_tool_loop,
+)
 from .interceptors.decorator import guard, monitor
 from .interceptors.langchain import guard_langchain_tools
 from .interceptors.mcp import enforce_tool_call, enforce_tool_result, guard_mcp_session
+from .interceptors.openai import guard_tool_loop
 from .policy.engine import PolicyEngine, Rule, deny_tool, deny_when
 from .receipt import set_sink
 
@@ -47,6 +53,10 @@ __all__ = [
     "enforce_tool_call",
     "enforce_tool_result",
     "guard_langchain_tools",
+    "guard_tool_loop",
+    "guard_litellm_tool_loop",
+    "guard_crewai_tool_loop",
+    "guard_adk_tool_loop",
     "PolicyEngine",
     "Rule",
     "deny_tool",
