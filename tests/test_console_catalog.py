@@ -87,7 +87,7 @@ def test_every_detector_has_the_required_shape(tmp_path):
         for factory in detector["factories"]:
             assert factory["name"]
             assert factory["signature"].startswith("(")
-        assert set(detector["verdicts"]) <= {"ALLOW", "BLOCK", "MODIFY"}
+        assert set(detector["verdicts"]) <= {"ALLOW", "BLOCK", "MODIFY", "ESCALATE"}
         assert detector["category"] in category_names
 
     shell_guard = next(d for d in payload["detectors"] if d["module"] == "shell_injection_guard")
