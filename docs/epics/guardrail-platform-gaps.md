@@ -522,7 +522,7 @@ The smoke test prints `R30 smoke pass`; an unchanged surface exits zero;
 
 ---
 
-## Dependency summary
+## Dependency summary (ignore)
 
 | Epic | Hard deps | Soft |
 |---|---|---|
