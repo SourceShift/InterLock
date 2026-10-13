@@ -32,6 +32,7 @@ from typing import Optional
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
+from ..shell import analyze
 
 POLICY_ID = "git_credential_read"
 
@@ -45,11 +46,15 @@ PATTERN = re.compile(
 )
 
 
-def git_credential_guard() -> Rule:
+def git_credential_guard(*, parse: bool = True) -> Rule:
     """Build a Rule that blocks an argument naming a git credential store.
 
     Every top-level str value of a dict ``args`` is tested against
-    :data:`PATTERN`. On the first match the rule returns a BLOCK naming the
+    :data:`PATTERN` and, unless ``parse=False``, parsed for a
+    ``credential.read`` intent (:mod:`interlock.shell`). Parsing catches the
+    spellings the pattern cannot see - ``git -C repo config --get ...``,
+    ``git config --list`` (which prints embedded URL credentials) and
+    ``git credential fill`` - and only ever adds findings. On the first match the rule returns a BLOCK naming the
     offending argument, so the caller can tell which parameter carried the
     read. A non-dict ``args``, a dict with no str values, and a dict whose str
     values are all clean each return None (no opinion). The rule never raises.
@@ -63,7 +68,7 @@ def git_credential_guard() -> Rule:
         for name, value in args.items():
             if not isinstance(value, str):
                 continue
-            if PATTERN.search(value):
+            if PATTERN.search(value) or (parse and _credential_read(value)):
                 return Decision.block(
                     reason="git_credential_read: {}".format(name),
                     policy_id=POLICY_ID,
@@ -73,3 +78,10 @@ def git_credential_guard() -> Rule:
         return None
 
     return rule
+
+
+def _credential_read(value: str) -> bool:
+    try:
+        return any(i.kind == "credential.read" for i in analyze(value))
+    except Exception:  # a parser bug falls back to the raw-text check alone
+        return False

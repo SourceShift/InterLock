@@ -91,13 +91,14 @@ the next rule. If no rule objects, the call is allowed.
 
 ## Verdicts
 
-A decision carries one of three verdicts:
+A decision carries one of four verdicts:
 
 | Verdict | Build it with | On a call | On a result |
 |---|---|---|---|
 | **allow** | `Decision.allow()` or return `None` | the tool runs as asked | the agent gets the result |
 | **block** | `Decision.block(reason, policy_id, attributed_to)` | `Blocked` is raised, the tool never runs | `Blocked` is raised, the agent never sees the result |
 | **rewrite** | `Decision.modify(new_args, ...)` on calls, `Decision.modify_result(new_result, ...)` on results | the tool runs with the new argument values | the agent gets the replacement |
+| **ask** | `Decision.escalate(reason, policy_id, attributed_to)` | the tool runs only if the installed approver approves this exact call; otherwise `NotApproved` (a `Blocked`) is raised | the result is delivered only if approved |
 
 Rewrites matter because blocking isn't always the right answer. Masking a card
 number and sending the email is often better than refusing to send it.
@@ -119,6 +120,9 @@ Every rule gets a say, in the order you installed them:
 - **Rewrites stack.** When a rule rewrites the call, the rest of the rules judge
   the *rewritten* call. Several rewrites combine, and if two change the same
   argument, the later one wins.
+- **An ask waits for no-block.** An escalation doesn't stop evaluation: a later
+  block still wins, so a human is only asked about a call no rule refuses. An
+  approved call runs with any rewrites applied. See [approvals](guides/approvals.md).
 - **No objection means allow.**
 
 So a redaction rule and an egress allowlist work together in either order. The
@@ -166,8 +170,8 @@ Two things to remember about results:
 - **Blocking a result doesn't undo the tool.** By the time a result exists, the
   tool has run and its side effects stand. Blocking only keeps the output from
   your agent.
-- **Most detectors check calls.** Of the 105 built-in detectors, only
-  `tool_result_injection_guard` is a result rule. To scan results for anything
+- **Most detectors check calls.** Of the 107 built-in detectors, only
+  `tool_result_injection_guard` and `tool_output_secret_redactor` are result rules. To scan results for anything
   else, write a result rule. [Writing rules](guides/writing-rules.md#check-results)
   shows how.
 

@@ -53,7 +53,7 @@ worse at both jobs.
 | # | Item | Status | Size | Pull |
 |---|---|---|---|---|
 | R1 | Delegation chains and scope attenuation | `shipped` | M | T1 · 68 papers (top cluster) |
-| R2 | `Verdict.ESCALATE` | `not started` | S | T9 · 15 papers |
+| R2 | `Verdict.ESCALATE` | `shipped` | S→M | T9 · 15 papers · agentjail review |
 | R3 | Verdict provenance (`reason`, `attributed_to`) | `shipped` | S | T2, T3 |
 | R4 | Signed execution receipts + append-only audit sink | `shipped` | M | T3 · M4 TODO resolved |
 | R5 | Guardrail robustness harness (FP rate, DoS) | `not started` | M | T5 · nothing ships today |
@@ -61,10 +61,19 @@ worse at both jobs.
 | R7 | Tool-result and observation sanitization | `shipped` | M | T8 |
 | R8 | BRACE escape-resistance suite + unprivileged egress | `shipped` | M | T7 |
 | R9 | Flow-typed policy dimension | `not started` | L | T6 · a constraint on R10 |
-| R10 | Declarative YAML/JSON policies | `not started` | L | carried from M0 → M2 |
+| R10 | Declarative YAML/JSON policies | `shipped` | L | carried from M0 → M2 · agentjail review |
 | R11 | Automatic interception (import hooks) | `not started` | L | carried from M0 → M1/M3 |
 | R12 | Overhead benchmark suite, with methodology | `not started` | S | carried from M0 |
 | R13 | Node.js sensor | `shipped` | L | carried from M0 |
+| R14 | Parsed shell commands and intents | `shipped` | M | agentjail review |
+| R15 | Protection attestation (`attest`, `require`, `doctor`) | `shipped` | S | agentjail review |
+| R16 | Monitor and activity reports (`interlock report`) | `shipped` | S | agentjail review |
+| R17 | Enforcement provenance in receipts | `shipped` | M | agentjail review |
+| R18 | Coding-agent hook adapters (Claude Code, Codex, Cursor) | `shipped` | L | agentjail review |
+| R19 | Tiered sidecar failure posture | `shipped` | M | agentjail review |
+| R20 | Placeholder credentials | `shipped` | M | agentjail review |
+| R21 | MCP inventory scan | `shipped` | S | agentjail review |
+| R22 | Signed PyPI/npm distribution | `not started` | S | agentjail review |
 
 ---
 
@@ -143,7 +152,15 @@ inference later, behind its own item.
 
 ## R2 · `Verdict.ESCALATE`
 
-**Status:** `not started` — `Verdict` is exactly `ALLOW / BLOCK / MODIFY`.
+**Status:** `shipped` — `Verdict.ESCALATE = 3`, `Decision.escalate`, and
+`NotApproved`. Every enforcement site (Python and Node.js) now dispatches
+through one exhaustive `settle()`, so an unhandled verdict blocks instead of
+falling through. Approvals were built with the bindings the agentjail review
+(`research/agentjail-review.md`, R2+) showed hand-rolled approval gets wrong:
+one-use by default, bound to action, args digest, principal, policy epoch, rule
+and a frozen 512-byte reason; `session`/`ttl` scopes; a block always wins; no
+approver means block. The Rust crate holds only scopes, so the native-engine
+note below no longer applies. Tests: `tests/test_approval.py`.
 **Size:** S
 **Literature:** T9 (15 papers converging on approval as a distinct outcome),
 plus T3's "verifiable action card".
@@ -693,7 +710,15 @@ more would be false assurance. Depends on R10; should not ship before it.
 
 ## R10 · Declarative YAML/JSON policies
 
-**Status:** `not started` — M0 rules are Python (carried from M0 → M2 in the
+**Status:** `shipped` — `interlock/policy/declarative.py`: JSON core (YAML with
+PyYAML), a closed operator set with no attribute access, shell-intent
+conditions, detectors by name, hot reload that keeps the last good policy, and
+the agentjail-review guardrails: typo'd fields and tool arguments fail at load,
+invalid rules are quarantined, `locked` rules can't be disabled, and project
+overlays are additive-only and trust-gated by content hash
+(`interlock/policy/trust.py`). Differential test against the equivalent Python
+rule in `tests/test_declarative_policy.py`. R9's flow typing remains open.
+Previously: `not started` — M0 rules are Python (carried from M0 → M2 in the
 engine docstring).
 **Size:** L
 **Pull:** internal. `interlock/policy/engine.py` names it: "M2 loads declarative
@@ -982,6 +1007,30 @@ R10's to make, not this one's.
   no value logging, digest-only receipts.
 - ~~Depends on R10~~ — decoupled by stage 1 (see *Why now*). Depends on R11's
   lessons about which interception points are stable.
+
+---
+
+## R14–R22 · From the agentjail review
+
+These items came from comparing interlock with agentjail
+([`research/agentjail-review.md`](research/agentjail-review.md), which holds the
+full Problem / What changes / Acceptance / Risks for each). They are recorded
+here in short.
+
+| # | What shipped | Evidence |
+|---|---|---|
+| R14 | `interlock.shell`: a best-effort parser (pipes, chains, wrappers, `sh -c`, substitutions, `find -exec`, interpreter string literals) and an intent classifier. `destructive_command_guard` and `git_credential_guard` gained a parsed path that only adds findings; `command_intent_guard` blocks or asks by intent. The destructive guard went from 3 of 12 spellings of a root wipe to 12 of 12 | `tests/test_shell_parse.py`, `tests/test_command_intent_guard.py` |
+| R15 | `interlock.posture.attest()` / `require()` and `interlock doctor`; every row of the security model's weakening-settings table maps to a check, enforced by a test | `tests/test_posture.py` |
+| R16 | `interlock report`: verified-or-labelled chain, verdict counts, block rate, top rules, "would have blocked", escalations, failures, dropped receipts, latency percentiles | `tests/test_report.py` |
+| R17 | Receipts gained `call_id`, `policy_epoch`, `policy_verdict`, `approval`, `outcome`/`enforcer`, `elapsed_us` (omitted when empty, so old chains verify); a failed sink write blocks fail-closed and is reported by a `receipts.dropped` receipt; `FileSink(shared=True)` for several writers | `tests/test_provenance.py` |
+| R18 | `interlock install-hook` / `interlock hook` for Claude Code, Codex and Cursor, with the `builtin:coding-agent` pack. Verdicts an agent can't express degrade to deny and are recorded with both verdicts. Claude Code's tool output is withheld or redacted on the way back | `tests/test_hook_adapters.py` |
+| R19 | `RemoteEngine(unreachable="deny" \| "degraded" \| "allow")` in Python and Node.js; the sidecar publishes a signed offline fallback policy (`--fallback-policy`). `deny` stays the default | `tests/test_sidecar_fallback.py`, `js/test/fallback.test.ts` |
+| R20 | `interlock.credentials`: `{{secret:id}}` placeholders filled after the decision at the enforcement boundary (not as a rule, which a later rule could observe), bounded by action and host, scrubbed from results | `tests/test_credentials.py` |
+| R21 | `interlock mcp scan` / `where`: every MCP server in seven clients' configs, risk notes (unpinned packages and images, plain HTTP, inline credentials), and `--emit-policy` | `tests/test_mcp_inventory.py` |
+| R22 | `not started`: publish to PyPI and npm with trusted publishing and provenance attestations. Left out of this round because it needs network access to the registries | — |
+
+Also adopted from the review: `tool_output_secret_redactor`, a result-phase
+detector masking credentials in tool output before the agent reads it.
 
 ---
 

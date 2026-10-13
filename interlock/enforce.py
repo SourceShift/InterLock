@@ -7,13 +7,22 @@ from typing import Any, Dict, Optional
 
 
 class Verdict(IntEnum):
-    """Tri-state verdict. The integer values match the native engine's out-param
-    contract (0/1/2), so a Rust engine can drop in behind the same enum later.
+    """What the guard does with an action. The integer values are the wire
+    encoding (see ``interlock.wire``) and must never be renumbered.
+
+    ALLOW    run it.
+    BLOCK    never run it.
+    MODIFY   run it with rewritten arguments (or deliver a rewritten result).
+    ESCALATE the action is legal but a human must decide: it runs only if an
+             approver approves this exact call. With no approver installed it
+             is blocked - never allowed - so a deployment that ignores
+             escalation keeps today's behaviour.
     """
 
     ALLOW = 0
     BLOCK = 1
     MODIFY = 2
+    ESCALATE = 3
 
 
 @dataclass
@@ -58,6 +67,21 @@ class Decision:
         )
 
     @classmethod
+    def escalate(
+        cls,
+        reason: str,
+        policy_id: Optional[str] = None,
+        attributed_to: Optional[str] = None,
+    ) -> "Decision":
+        """Build an ESCALATE: pause the call until an approver decides.
+
+        ``reason`` is shown to the approver verbatim and bound into the
+        approval, so write it for a human: what the call does and why it needs
+        a decision. ``attributed_to`` names the argument that triggered it.
+        """
+        return cls(Verdict.ESCALATE, reason, policy_id, attributed_to=attributed_to)
+
+    @classmethod
     def modify_result(
         cls,
         result: Any,
@@ -82,3 +106,12 @@ class Blocked(Exception):
         self.decision = decision
         self.action = action
         super().__init__("blocked action '{}': {}".format(action, decision.reason))
+
+
+class NotApproved(Blocked):
+    """An ESCALATE that was not approved: no approver was installed, the
+    approver declined, or the approval did not match this exact call.
+
+    A subclass of :class:`Blocked`, so code that handles blocks handles this
+    too; catch it on its own to tell "needs a human" apart from "refused".
+    """

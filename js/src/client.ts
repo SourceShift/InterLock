@@ -25,7 +25,18 @@
 
 import * as net from "node:net";
 
-import { BlockedError, Decision } from "./enforce.js";
+import { BlockedError, Decision, Verdict } from "./enforce.js";
+import {
+  DEFAULT_FALLBACK_MAX_AGE_SECONDS,
+  FallbackError,
+  type FallbackPolicy,
+  UNREACHABLE_LEVELS,
+  UNREACHABLE_POLICY_ID,
+  type Unreachable,
+  fallbackPath,
+  readFallback,
+  readKeyFile,
+} from "./fallback.js";
 import type { SensorEvent } from "./event.js";
 import {
   MAX_LINE,
@@ -200,6 +211,41 @@ export interface RemoteEngineOptions {
    * `BlockedError`, like any other transport failure.
    */
   timeout?: number | null;
+  /**
+   * What to do when the daemon is unreachable (no socket, refused, timed out,
+   * hung up): `"deny"` (default) blocks; `"degraded"` decides with the fallback
+   * policy the sidecar signed (`--fallback-policy`), denying if that file is
+   * missing, tampered or stale; `"allow"` lets the call through. Every
+   * non-deny decision calls `onFallback` (default: `process.emitWarning`). A
+   * daemon that answers with an error frame is reachable: always blocked.
+   */
+  unreachable?: Unreachable;
+  /** Fallback file; default `<path>.fallback.json`. */
+  fallbackFile?: string;
+  /** The sidecar's `--key-file` key, to verify the fallback file. */
+  fallbackKey?: Uint8Array;
+  /** Or the key file itself (64 hex characters, or raw bytes). */
+  fallbackKeyFile?: string;
+  /** Oldest fallback file accepted, in seconds (default 7 days). */
+  fallbackMaxAge?: number;
+  /** Called once per call decided without the daemon. */
+  onFallback?: (message: string) => void;
+}
+
+const UNREACHABLE_CODES = new Set([
+  "ENOENT", "ECONNREFUSED", "ECONNRESET", "EPIPE", "ENOTSOCK", "EACCES", "ETIMEDOUT",
+]);
+
+/** No daemon to ask - as opposed to a live daemon refusing. */
+function isUnreachable(exc: unknown): boolean {
+  if (exc instanceof SocketTimeout) {
+    return true;
+  }
+  if (exc instanceof WireError) {
+    return exc.message === "daemon closed the connection";
+  }
+  const code = (exc as NodeJS.ErrnoException | null)?.code;
+  return typeof code === "string" && UNREACHABLE_CODES.has(code);
 }
 
 export class RemoteEngine {
@@ -211,10 +257,31 @@ export class RemoteEngine {
   private nextId = 1;
   private tail: Promise<unknown> = Promise.resolve();
 
+  readonly unreachable: Unreachable;
+  readonly fallbackFile: string;
+  /** How many calls were decided without the daemon. */
+  fallbacks = 0;
+  private readonly fallbackKey: Uint8Array | null;
+  private readonly fallbackMaxAge: number;
+  private readonly onFallback: (message: string) => void;
+
   constructor(path: string, options: RemoteEngineOptions = {}) {
     this.path = String(path);
     this.timeout =
       options.timeout === undefined ? DEFAULT_TIMEOUT_SECONDS : options.timeout;
+    this.unreachable = options.unreachable ?? "deny";
+    if (!UNREACHABLE_LEVELS.includes(this.unreachable)) {
+      throw new TypeError(`unreachable must be one of ${UNREACHABLE_LEVELS.join(", ")}`);
+    }
+    this.fallbackFile = options.fallbackFile ?? fallbackPath(this.path);
+    this.fallbackKey =
+      options.fallbackKey ?? (options.fallbackKeyFile ? readKeyFile(options.fallbackKeyFile) : null);
+    if (this.unreachable === "degraded" && this.fallbackKey === null) {
+      throw new TypeError('unreachable: "degraded" needs fallbackKey or fallbackKeyFile');
+    }
+    this.fallbackMaxAge = options.fallbackMaxAge ?? DEFAULT_FALLBACK_MAX_AGE_SECONDS;
+    this.onFallback =
+      options.onFallback ?? ((message: string) => process.emitWarning(message, "InterlockFallback"));
   }
 
   /** Ask the daemon for the verdict, or reject with `BlockedError`. */
@@ -224,11 +291,51 @@ export class RemoteEngine {
         return await this.exchange(event);
       } catch (exc) {
         this.drop();
+        if (this.unreachable !== "deny" && isUnreachable(exc)) {
+          return this.withoutDaemon(event, exc);
+        }
         throw new BlockedError(
           Decision.block(this.reasonFor(exc)),
           event.action,
         );
       }
+    });
+  }
+
+  private withoutDaemon(event: SensorEvent, exc: unknown): Decision {
+    this.fallbacks += 1;
+    const why = exc instanceof Error ? `${exc.name}: ${exc.message}` : String(exc);
+    if (this.unreachable === "allow") {
+      this.onFallback(
+        `interlock: guard daemon unreachable at ${this.path} (${why}); ALLOWING ${event.action} unchecked`,
+      );
+      return Decision.allow(`guard daemon unreachable (${why}); allowed unchecked`, UNREACHABLE_POLICY_ID);
+    }
+    let policy: FallbackPolicy;
+    try {
+      policy = readFallback(this.fallbackFile, this.fallbackKey!, this.fallbackMaxAge);
+    } catch (problem) {
+      const detail = problem instanceof FallbackError ? problem.message : String(problem);
+      throw new BlockedError(
+        Decision.block(
+          `guard daemon unreachable at ${this.path} (${why}) and the fallback policy is unusable: ${detail}; denied fail-closed`,
+          UNREACHABLE_POLICY_ID,
+        ),
+        event.action,
+      );
+    }
+    this.onFallback(
+      `interlock: guard daemon unreachable at ${this.path} (${why}); deciding ${event.action} with the offline fallback policy`,
+    );
+    const decision = policy.evaluate(event);
+    if (decision.verdict === Verdict.ALLOW) {
+      return Decision.allow("decided by the offline fallback policy", UNREACHABLE_POLICY_ID);
+    }
+    return new Decision({
+      verdict: decision.verdict,
+      reason: `[guard daemon unreachable: fallback policy] ${decision.reason}`,
+      policy_id: `fallback/${decision.policy_id}`,
+      attributed_to: decision.attributed_to,
     });
   }
 

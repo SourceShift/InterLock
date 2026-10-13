@@ -25,14 +25,18 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 }
 
 /**
- * Tri-state verdict. The integer values match the native engine's out-param
- * contract (0/1/2), and are what travels on the wire - a name is for a human
- * reading a corpus file, an integer is for the protocol.
+ * What the guard does with an action. The integer values are what travels on
+ * the wire - a name is for a human reading a corpus file, an integer is for the
+ * protocol - and must never be renumbered.
+ *
+ * ESCALATE: the action is legal but a human must decide. It runs only if the
+ * `onEscalate` callback approves this exact call; with none, it is blocked.
  */
 export enum Verdict {
   ALLOW = 0,
   BLOCK = 1,
   MODIFY = 2,
+  ESCALATE = 3,
 }
 
 export interface DecisionInit {
@@ -109,6 +113,20 @@ export class Decision {
     });
   }
 
+  /** Build an ESCALATE: pause the call until an approver decides. */
+  static escalate(
+    reason: string,
+    policy_id: string | null = null,
+    attributed_to: string | null = null,
+  ): Decision {
+    return new Decision({
+      verdict: Verdict.ESCALATE,
+      reason,
+      policy_id,
+      attributed_to,
+    });
+  }
+
   /** Build a MODIFY that replaces a tool result instead of its args. */
   static modifyResult(
     result: unknown,
@@ -146,3 +164,10 @@ export class BlockedError extends Error {
     this.action = action;
   }
 }
+
+/**
+ * An ESCALATE that was not approved: no `onEscalate` callback, the callback
+ * declined or threw. A `BlockedError`, so code that handles blocks handles
+ * this too.
+ */
+export class NotApprovedError extends BlockedError {}

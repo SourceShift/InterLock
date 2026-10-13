@@ -22,15 +22,17 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import time
 from dataclasses import replace
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from .._runtime import get_engine
 from ..context import current_parent_principal, current_principal, current_span
-from ..enforce import Blocked, Verdict
-from ..event import SensorEvent, result_payload
+from ..credentials import scrub, substitute_call
+from ..enforce import Verdict
+from ..event import SensorEvent, new_call_id, result_payload
 from ..policy.engine import PolicyEngine
-from ..receipt import emit_receipt
+from ._settle import record_failure, settle
 
 _log = logging.getLogger("interlock")
 
@@ -42,13 +44,19 @@ def enforce_tool_call(
     engine: Optional[PolicyEngine] = None,
     enforcement: str = "blocking",
     principal: Optional[str] = None,
+    call_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Decide on one tool call and enforce the verdict before it runs.
 
     Returns the arguments to actually use: unchanged on ALLOW, rewritten on
     MODIFY (``modified_args`` merged in). Raises :class:`Blocked` on BLOCK under
-    the default ``enforcement="blocking"``. Under ``enforcement="monitor"`` it
-    records the would-be decision and never intervenes.
+    the default ``enforcement="blocking"``. An ESCALATE proceeds only if the
+    installed approver approves this exact call, else raises
+    :class:`NotApproved`. Under ``enforcement="monitor"`` it records the
+    would-be decision and never intervenes.
+
+    ``call_id`` links this call's receipt to its result's: pass the same value
+    to :func:`enforce_tool_result` (the guarded wrappers do this for you).
     """
     args: Dict[str, Any] = dict(arguments or {})
     # The event gets its own copy: a rule that edits event.args in place must not
@@ -59,34 +67,20 @@ def enforce_tool_call(
         principal=principal or current_principal(),
         span_id=current_span(),
         parent_principal=current_parent_principal(),
+        call_id=call_id,
     )
-    decision = (engine or get_engine()).evaluate(event)
-
-    if decision.verdict == Verdict.ALLOW or enforcement == "monitor":
-        observed = enforcement == "monitor" and decision.verdict != Verdict.ALLOW
-        _log.debug(
-            "mcp action=%s verdict=%s observed=%s attributed_to=%s",
-            action, decision.verdict.name, enforcement == "monitor",
-            decision.attributed_to,
-        )
-        emit_receipt(event, decision, observed=observed)
-        return args
-    if decision.verdict == Verdict.BLOCK:
-        _log.debug(
-            "mcp action=%s BLOCK reason=%s attributed_to=%s",
-            action, decision.reason, decision.attributed_to,
-        )
-        emit_receipt(event, decision)
-        raise Blocked(decision, action)
-    if decision.verdict == Verdict.MODIFY:
-        # The MODIFY branch had no log site at all: the one verdict a policy
-        # rewrote the call with went unrecorded. It is a receipt site now.
-        # The receipt digests the arguments the caller passed, not the
-        # rewritten ones.
-        emit_receipt(event, decision)
-        if decision.modified_args:
-            args.update(decision.modified_args)
-    return args
+    active = engine or get_engine()
+    started = time.perf_counter()
+    decision = active.evaluate(event)
+    elapsed_us = int((time.perf_counter() - started) * 1_000_000)
+    # The receipt digests the arguments the caller passed, not the rewritten
+    # ones.
+    outcome = settle(event, decision, engine=active, enforcement=enforcement,
+                     elapsed_us=elapsed_us, site="mcp ")
+    if outcome.verdict == Verdict.MODIFY and outcome.modified_args:
+        args.update(outcome.modified_args)
+    # Placeholders become secrets only now, after the decision is final.
+    return substitute_call(event, args, enforcement=enforcement)
 
 
 def enforce_tool_result(
@@ -96,6 +90,7 @@ def enforce_tool_result(
     engine: Optional[PolicyEngine] = None,
     enforcement: str = "blocking",
     principal: Optional[str] = None,
+    call_id: Optional[str] = None,
 ) -> Any:
     """Decide on one tool result and enforce the verdict before it is returned.
 
@@ -117,7 +112,8 @@ def enforce_tool_result(
     of delivering the payload, so the caller sees the policy refusal, never
     what the tool said.
     """
-    return _enforce_result(action, result, engine, enforcement, principal, None)
+    return _enforce_result(action, result, engine, enforcement, principal, None,
+                           call_id=call_id)
 
 
 def _enforce_result(
@@ -127,9 +123,13 @@ def _enforce_result(
     enforcement: str,
     principal: Optional[str],
     default_policy_id: Optional[str],
+    *,
+    call_id: Optional[str] = None,
 ) -> Any:
     """The body of :func:`enforce_tool_result`; ``default_policy_id`` labels a
     decision that names no policy (``@guard(policy_id=...)`` passes its own)."""
+    # A secret the tool echoed back never reaches a result rule or the caller.
+    result = scrub(result)
     event = SensorEvent(
         action=action,
         args=result_payload(result),
@@ -137,33 +137,18 @@ def _enforce_result(
         span_id=current_span(),
         parent_principal=current_parent_principal(),
         phase="result",
+        call_id=call_id,
     )
-    decision = (engine or get_engine()).evaluate(event)
+    active = engine or get_engine()
+    started = time.perf_counter()
+    decision = active.evaluate(event)
+    elapsed_us = int((time.perf_counter() - started) * 1_000_000)
     if default_policy_id and decision.verdict != Verdict.ALLOW and not decision.policy_id:
         decision = replace(decision, policy_id=default_policy_id)
-
-    if decision.verdict == Verdict.ALLOW or enforcement == "monitor":
-        observed = enforcement == "monitor" and decision.verdict != Verdict.ALLOW
-        _log.debug(
-            "mcp result action=%s verdict=%s observed=%s attributed_to=%s",
-            action, decision.verdict.name, enforcement == "monitor",
-            decision.attributed_to,
-        )
-        emit_receipt(event, decision, observed=observed)
-        return result
-    if decision.verdict == Verdict.BLOCK:
-        _log.debug(
-            "mcp result action=%s BLOCK reason=%s attributed_to=%s",
-            action, decision.reason, decision.attributed_to,
-        )
-        emit_receipt(event, decision)
-        raise Blocked(decision, action)
-    if decision.verdict == Verdict.MODIFY:
-        # Same hole as the call side: this MODIFY branch never recorded
-        # anything, and it is the verdict that rewrites what the caller gets.
-        emit_receipt(event, decision)
-        if decision.modified_result is not None:
-            return decision.modified_result
+    outcome = settle(event, decision, engine=active, enforcement=enforcement,
+                     elapsed_us=elapsed_us, site="mcp result ")
+    if outcome.verdict == Verdict.MODIFY and outcome.modified_result is not None:
+        return outcome.modified_result
     return result
 
 
@@ -204,6 +189,8 @@ def guard_mcp_session(
     """
     original: Callable[..., Any] = session.call_tool
     schema_map: Dict[str, str] = dict(schemas or {})
+    from .decorator import register_mode  # local: decorator imports this module
+    register_mode("mcp_session:{}".format(origin or type(session).__name__), enforcement)
 
     def labelled(name: str, arguments: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         args = {k: v for k, v in (arguments or {}).items() if k not in TRUST_LABELS}
@@ -213,29 +200,50 @@ def guard_mcp_session(
             args["__schema__"] = schema_map[name]
         return args
 
-    def check(name: str, arguments: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def check(name: str, arguments: Optional[Dict[str, Any]], call_id: str) -> Dict[str, Any]:
         safe = enforce_tool_call(
             name, labelled(name, arguments), engine=engine,
-            enforcement=enforcement, principal=principal,
+            enforcement=enforcement, principal=principal, call_id=call_id,
         )
         return {k: v for k, v in safe.items() if k not in TRUST_LABELS}
+
+    def failed(name: str, arguments: Optional[Dict[str, Any]], call_id: str,
+               exc: BaseException) -> None:
+        record_failure(
+            SensorEvent(action=name, args=dict(arguments or {}),
+                        principal=principal or current_principal(),
+                        span_id=current_span(), call_id=call_id),
+            exc, engine=engine or get_engine(),
+        )
 
     @functools.wraps(original)
     async def async_wrapper(name: str, arguments: Optional[Dict[str, Any]] = None,
                             *rest: Any, **kw: Any) -> Any:
-        out = await original(name, check(name, arguments), *rest, **kw)
+        call_id = new_call_id()
+        safe = check(name, arguments, call_id)
+        try:
+            out = await original(name, safe, *rest, **kw)
+        except Exception as exc:
+            failed(name, arguments, call_id, exc)
+            raise
         return enforce_tool_result(
             name, out, engine=engine,
-            enforcement=enforcement, principal=principal,
+            enforcement=enforcement, principal=principal, call_id=call_id,
         )
 
     @functools.wraps(original)
     def sync_wrapper(name: str, arguments: Optional[Dict[str, Any]] = None,
                      *rest: Any, **kw: Any) -> Any:
-        out = original(name, check(name, arguments), *rest, **kw)
+        call_id = new_call_id()
+        safe = check(name, arguments, call_id)
+        try:
+            out = original(name, safe, *rest, **kw)
+        except Exception as exc:
+            failed(name, arguments, call_id, exc)
+            raise
         return enforce_tool_result(
             name, out, engine=engine,
-            enforcement=enforcement, principal=principal,
+            enforcement=enforcement, principal=principal, call_id=call_id,
         )
 
     session.call_tool = (

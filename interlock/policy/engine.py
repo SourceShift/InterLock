@@ -7,6 +7,7 @@ signature stays identical, so nothing above it changes.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional
 
@@ -20,10 +21,36 @@ Rule = Callable[[SensorEvent], Optional[Decision]]
 class PolicyEngine:
     def __init__(self, rules: Optional[List[Rule]] = None):
         self._rules: List[Rule] = list(rules or [])
+        self._epoch: Optional[str] = None
 
     def add_rule(self, rule: Rule) -> "PolicyEngine":
         self._rules.append(rule)
+        self._epoch = None
         return self
+
+    @property
+    def policy_ids(self) -> List[str]:
+        """The ``policy_id`` (or name) of each installed rule, in order."""
+        return [_rule_label(rule) for rule in self._rules]
+
+    @property
+    def epoch(self) -> str:
+        """Identity of the installed rule set, as 16 hex characters.
+
+        It changes whenever a rule is added, and differs between two engines
+        built from fresh rule objects - even with the same names - because a
+        factory's configuration lives in its closure, which a name cannot show.
+        It therefore identifies the rule set *in this process*: receipts carry
+        it so an auditor can tell which policy decided, and approvals bind to
+        it so a reinstall invalidates every grant made under the old rules.
+        """
+        if self._epoch is None:
+            digest = hashlib.sha256()
+            for rule in self._rules:
+                digest.update("{}@{:x}".format(_rule_label(rule), id(rule)).encode("utf-8"))
+                digest.update(b"\0")
+            self._epoch = digest.hexdigest()[:16]
+        return self._epoch
 
     def __len__(self) -> int:
         """How many rules are installed.
@@ -53,6 +80,13 @@ class PolicyEngine:
         ``modified_result``), the reasons joined with ``"; "``, and the first
         rewrite's ``policy_id`` and ``attributed_to``.
 
+        An ESCALATE does not end evaluation either: a later BLOCK still wins,
+        because a human may only be asked about a call that no rule refuses.
+        When no rule blocks, the first ESCALATE is the result, carrying any
+        rewrites the other rules made, so an approved call runs rewritten. A
+        verdict the engine does not know ends evaluation like a BLOCK and is
+        returned as-is; every enforcement site treats it as a block.
+
         Phase separation: a rule tagged ``phase="result"`` (set the attribute
         on the callable) sees only result-phase events; an untagged rule is
         call-side - the side every existing rule was written for - and sees
@@ -66,11 +100,16 @@ class PolicyEngine:
         merged_args: Dict[str, Any] = {}
         final_result: Any = None
         replaced_result = False
+        escalation: Optional[Decision] = None
         for rule in self._rules:
             if (getattr(rule, "phase", "call") == "result") != is_result:
                 continue
             decision = rule(working)
             if decision is None or decision.verdict == Verdict.ALLOW:
+                continue
+            if decision.verdict == Verdict.ESCALATE:
+                if escalation is None:
+                    escalation = decision
                 continue
             if decision.verdict != Verdict.MODIFY:
                 return decision
@@ -83,6 +122,17 @@ class PolicyEngine:
             elif decision.modified_args:
                 merged_args.update(decision.modified_args)
                 working = replace(working, args={**working.args, **decision.modified_args})
+        if escalation is not None:
+            if not rewrites:
+                return escalation
+            return Decision(
+                verdict=Verdict.ESCALATE,
+                reason=escalation.reason,
+                policy_id=escalation.policy_id,
+                modified_args=merged_args or None,
+                attributed_to=escalation.attributed_to,
+                modified_result=final_result if replaced_result else None,
+            )
         if not rewrites:
             return Decision.allow()
         if len(rewrites) == 1:
@@ -96,6 +146,34 @@ class PolicyEngine:
             attributed_to=first.attributed_to,
             modified_result=final_result if replaced_result else None,
         )
+
+
+def _rule_label(rule: Any) -> str:
+    label = getattr(rule, "policy_id", None)
+    if isinstance(label, str) and label:
+        return label
+    return "{}.{}".format(
+        getattr(rule, "__module__", "?"),
+        getattr(rule, "__qualname__", type(rule).__name__),
+    )
+
+
+def epoch_of(engine: Any, event: Optional[SensorEvent] = None) -> Optional[str]:
+    """The policy epoch an engine decided ``event`` under, or None if unknown.
+
+    Engines may expose ``epoch_for(event)`` (a scoped engine, whose rule set
+    depends on the event) or an ``epoch`` attribute. A sidecar client exposes
+    neither and gets None.
+    """
+    per_event = getattr(engine, "epoch_for", None)
+    if callable(per_event) and event is not None:
+        try:
+            value = per_event(event)
+        except Exception:
+            return None
+        return value if isinstance(value, str) else None
+    value = getattr(engine, "epoch", None)
+    return value if isinstance(value, str) else None
 
 
 def deny_tool(

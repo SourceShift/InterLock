@@ -39,7 +39,8 @@ or set `PYTHONPATH`.
 ## Command line
 
 ```
-interlock-sidecar --rules MODULE:ATTR [--socket SOCKET] [--receipts PATH] [--key-file PATH] [--check]
+interlock-sidecar --rules MODULE:ATTR [--socket SOCKET] [--receipts PATH] [--key-file PATH]
+                  [--fallback-policy FILE] [--check]
 ```
 
 | Flag | Meaning |
@@ -48,6 +49,7 @@ interlock-sidecar --rules MODULE:ATTR [--socket SOCKET] [--receipts PATH] [--key
 | `--socket PATH` | Where to listen. Default: `$XDG_RUNTIME_DIR/interlock/guard.sock`, or `~/.interlock/guard.sock` when `XDG_RUNTIME_DIR` is unset. |
 | `--receipts PATH` | Append a signed receipt for every decision to `PATH`. Default: no receipts. |
 | `--key-file PATH` | The receipt signing key: a file holding 64 hex characters, or raw bytes. A trailing newline is stripped. Without it, a random per-process key is used, which only this daemon run can verify (it prints a warning). |
+| `--fallback-policy FILE` | Publish this offline policy, signed with `--key-file`, as `<socket>.fallback.json` for clients running with `unreachable="degraded"` (below). Needs `--key-file`. The file must use the offline subset of the [policy language](../guides/policies.md). |
 | `--check` | Load and validate the rules, print how many there are, and exit without touching the socket or reading the key file. Use it in CI or before a deploy. |
 
 **The rule set must not be empty.** An empty engine allows every call, so a daemon
@@ -142,10 +144,39 @@ two differences:
 
 ## When the daemon is down
 
-Clients fail closed. If the daemon isn't running, can't be reached, dies
-mid-session, or answers with an error, **every guarded call is denied**. That
-includes monitor mode: an unreachable guard is an infrastructure failure, not a
-policy decision, so it is never treated as an allow.
+By default clients fail closed. If the daemon isn't running, can't be reached,
+dies mid-session, or answers with an error, **every guarded call is denied**.
+That includes monitor mode: an unreachable guard is an infrastructure failure,
+not a policy decision, so it is never treated as an allow.
+
+That makes the daemon an availability dependency. A client can choose what an
+*unreachable* daemon (no socket, refused, timed out, hung up) means:
+
+| `unreachable` | When the daemon can't be reached |
+|---|---|
+| `"deny"` (default) | every guarded call is blocked |
+| `"degraded"` | the call is decided by the daemon's signed **fallback policy**; a missing, unsigned, tampered or stale (over 7 days) file blocks |
+| `"allow"` | every guarded call is allowed unchecked |
+
+```python
+RemoteEngine(path, unreachable="degraded", fallback_key=key)   # Python
+new RemoteEngine(path, { unreachable: "degraded", fallbackKeyFile: "/etc/interlock/key" })  // Node.js
+```
+
+`degraded` and `allow` log a warning on **every** call they decide (Node.js:
+`process.emitWarning`, or your `onFallback` callback), and decisions made
+without the daemon carry policy id `sidecar_unreachable` or `fallback/<rule>`. A
+daemon that is reachable but answers with an error frame is refusing, not
+unreachable: that always blocks.
+
+The fallback file stores the policy as a JSON string and signs
+`"<written_at>\n<policy>"` with HMAC-SHA256, so the Python and Node.js clients
+verify the same bytes. It's limited to what both evaluate identically: `block`
+and `escalate` rules whose conditions use `all`/`any`/`not`, `action`, `field`
+and `arg` with `eq ne in not_in gt ge lt le contains startswith endswith glob
+exists`. No detectors, shell intents, regexes or rewrites. Keep it to the rules
+you need standing with the daemon down. It isn't equivalent to your real
+policy, which is why `degraded` is never the default.
 
 Deploy the daemon as part of the agent, with the same lifecycle and health checks.
 
@@ -208,7 +239,7 @@ The reference implementation is [`interlock/wire.py`](https://github.com/SourceS
 | `event.action` | yes | Non-empty string. |
 | `event.args` | yes | JSON object. A missing `args` is refused rather than treated as `{}`. |
 | `event.phase` | no | `"call"` (default) or `"result"`. |
-| `event.principal`, `event.span_id`, `event.parent_principal` | no | String or `null`. |
+| `event.principal`, `event.span_id`, `event.parent_principal`, `event.call_id` | no | String or `null`. `call_id` links a call's and its result's events. |
 | `event.ts` | no | A finite number. |
 
 **Response**
@@ -218,7 +249,9 @@ The reference implementation is [`interlock/wire.py`](https://github.com/SourceS
 ```
 
 `verdict` is the integer [`Verdict`](python-api.md#verdict): `0` allow, `1`
-block, `2` modify. The other keys mirror [`Decision`](python-api.md#decision). A
+block, `2` modify, `3` escalate (the client asks its approver; Python
+`set_approver`, Node.js `onEscalate`; with none it blocks). A client that
+doesn't know a verdict blocks. The other keys mirror [`Decision`](python-api.md#decision). A
 `modified_result` of `null` means "no replacement", as in-process.
 
 **Error**

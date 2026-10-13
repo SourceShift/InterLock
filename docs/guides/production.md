@@ -12,11 +12,21 @@ traffic. Each item links to the page with the details.
 
   ```python
   import interlock
+  from interlock.posture import require
   from my_service.policies import RULES
 
-  engine = interlock.install(rules=RULES)
-  assert len(engine) > 0, "interlock has no rules installed"
+  interlock.install(rules=RULES, sink=FileSink(path, key=KEY))
+  require()          # raises ProtectionError unless protection is fully on
   ```
+
+  `require()` checks every setting in the security model's "settings that
+  weaken protection" table: no rules, monitor-mode guards, `allow_unscoped`, a
+  per-process sink key, a soft sandbox backend, a sidecar without a timeout or
+  that allows calls when it's down. `require("degraded")` accepts warnings but
+  not failures. `interlock.posture.attest()` returns the same report without
+  raising. From a shell, `interlock doctor --rules my_service.policies:RULES
+  --receipts audit.jsonl --key-file audit.key` checks the policy loads, the
+  sidecar answers, and the log's chain verifies.
 
   With [scopes](scopes.md), a call made outside any `span(principal=...)`
   matches no scope and is blocked. Set `default_scope=("root",)` to apply your
@@ -61,11 +71,13 @@ Decisions are logged at `DEBUG` on the `interlock` logger:
 
 ```text
 interlock action=send_email verdict=BLOCK reason=external email span=2b4a2ac5a5b2433c817329101259e728 observed=True attributed_to=None
-interlock mcp result action=send_email verdict=ALLOW observed=True attributed_to=None
+interlock mcp result action=send_email verdict=ALLOW reason= span=2b4a2ac5a5b2433c817329101259e728 observed=False attributed_to=None
 ```
 
 `observed=True` means monitor mode recorded it without acting. Route this logger
-wherever your logs go.
+wherever your logs go. With a receipt sink installed,
+`interlock report audit.jsonl --since 24h --monitor` lists what would have been
+stopped, by rule and tool.
 
 ## Handle refusals in the agent
 

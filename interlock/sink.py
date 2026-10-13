@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from .receipt import (
     GENESIS,
@@ -57,6 +57,9 @@ class ChainedSink:
     ) -> None:
         self._signer = signer
         self._key = key if key is not None else process_secret()
+        # True when no key was given: the per-process secret dies with the
+        # process, so nobody can verify these receipts after a restart.
+        self.ephemeral_key = key is None
         self._lock = threading.Lock()
         self._last_mac = GENESIS
 
@@ -135,12 +138,36 @@ class FileSink(ChainedSink):
         *,
         signer: Signer = hmac_sha256,
         key: Optional[bytes] = None,
+        shared: bool = False,
     ) -> None:
         super().__init__(signer=signer, key=key)
         self.path = str(path)
+        # shared=True: several processes may append (each coding-agent hook
+        # call is its own process). Every write then takes an exclusive file
+        # lock and re-reads the chain head from the file, so the writers
+        # extend one chain instead of forking it. Needs fcntl (POSIX).
+        self.shared = shared
         last = _last_receipt(self.path)
         if last is not None:
             self._last_mac = last.mac
+
+    def write(self, receipt: Receipt) -> None:
+        if not self.shared:
+            super().write(receipt)
+            return
+        with self._lock:
+            with open(self.path, "a", encoding="utf-8") as fh:
+                _lock_file(fh)
+                try:
+                    last = _last_receipt(self.path)
+                    self._last_mac = last.mac if last is not None else GENESIS
+                    receipt.prev = self._last_mac
+                    receipt.mac = compute_mac(receipt, self._signer, self._key)
+                    fh.write(receipt.to_json() + "\n")
+                    fh.flush()
+                    self._last_mac = receipt.mac
+                finally:
+                    _unlock_file(fh)
 
     def _append(self, receipt: Receipt) -> None:
         with open(self.path, "a", encoding="utf-8") as fh:
@@ -239,3 +266,19 @@ def verify_file(
                 except Exception:
                     return "receipt {}: not a readable receipt".format(len(receipts))
     return verify_chain(receipts, signer, key or b"", verifier=verifier, head=head)
+
+
+def _lock_file(fh: Any) -> None:
+    try:
+        import fcntl
+    except ImportError:  # not POSIX: no cross-process lock available
+        return
+    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_file(fh: Any) -> None:
+    try:
+        import fcntl
+    except ImportError:
+        return
+    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)

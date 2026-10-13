@@ -6,18 +6,18 @@ Guard a Node.js agent's tool calls with **the same policy engine** the Python
 This is not a port. There is one engine and one set of rules, and both live in
 Python. You run a small Python daemon, `interlock-sidecar`, next to your Node.js
 agent. Before each guarded call, this package sends the call to the daemon over
-a unix socket and gets back a verdict: allow, block, or rewrite. The call only
-runs if the verdict allows it. Because there's no second implementation, the
+a unix socket and gets back a verdict: allow, block, rewrite, or ask a human.
+The call only runs if the verdict allows it. Because there's no second implementation, the
 JS side can't drift from the Python one.
 
 Use it when your agent is written in Node.js and you want the same guardrails
 (and the same rules) as your Python services.
 
-> **Warning: this package needs a running daemon, and it fails closed.**
+> **Warning: this package needs a running daemon, and by default it fails closed.**
 > There is no engine bundled in the JS package. If the daemon isn't running,
 > can't be reached, or dies mid-session, **every guarded call is denied** with a
 > `BlockedError`. No warning, no pass-through. An agent without its daemon does
-> not act at all.
+> not act at all, unless you choose otherwise with `unreachable` (below).
 >
 > This includes `monitor` mode. An unreachable daemon is an infrastructure
 > failure, not a policy decision, so it is never turned into a silent allow.
@@ -142,7 +142,42 @@ const safeOutput = await enforceToolResult("shell", output, { engine });
   it has already run. It only keeps the output away from your agent.
 
 Pass `enforcement: "monitor"` to record decisions without acting on them, and
-`principal: "acme/agent42"` to say who is acting.
+`principal: "acme/agent42"` to say who is acting. Pass the same `callId` to both
+calls to link their receipts (`guardMcpSession` does this for you).
+
+### Ask a human
+
+A rule can return `Decision.escalate(...)`: legal, but a person must decide.
+Pass `onEscalate` to decide. It resolves `true` to run this one call; anything
+else (including a throw, or no callback at all) rejects with `NotApprovedError`,
+a `BlockedError`:
+
+```ts
+const options = {
+  engine,
+  onEscalate: async (request) => askOnCall(request.action, request.reason, request.args),
+};
+```
+
+`request.reason` is one line of at most 512 bytes. A block from any rule wins
+over an escalation, so you're only asked about calls nothing refused. A verdict
+this client doesn't know is blocked.
+
+### When the daemon is down
+
+```ts
+new RemoteEngine(path, { unreachable: "deny" });                       // default
+new RemoteEngine(path, { unreachable: "degraded", fallbackKeyFile: "/etc/interlock/key" });
+new RemoteEngine(path, { unreachable: "allow" });
+```
+
+`degraded` decides calls with the offline fallback policy the daemon signed
+(`interlock-sidecar --fallback-policy FILE --key-file KEY`), and blocks if that
+file is missing, tampered or stale. `allow` lets every call through. Both call
+`onFallback` (default `process.emitWarning`) on every call they decide, and
+`engine.fallbacks` counts them. A daemon that answers with an error is reachable
+and refusing, so it always blocks. See the
+[sidecar reference](../docs/reference/sidecar.md#when-the-daemon-is-down).
 
 ## Guard your app's fs, exec, and fetch calls
 

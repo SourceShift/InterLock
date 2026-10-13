@@ -14,4 +14,12 @@ from interlock import PolicyEngine  # noqa: E402
 def _reset_engine():
     # The policy engine is process-global; isolate every test from the last.
     interlock.install(engine=PolicyEngine())
+    # So are the approver, its grants, and the dropped-receipt counter.
+    from interlock import approval, receipt
+    from interlock.interceptors import decorator
+    decorator._MODES.clear()
+    approval.set_approver(None)
+    approval.grants().clear()
+    receipt._dropped = 0
+    receipt._last_drop_error = ""
     yield

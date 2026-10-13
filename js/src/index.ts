@@ -17,3 +17,4 @@ export * from "./exec.js";
 export * from "./http.js";
 export * from "./install.js";
 export * from "./model.js";
+export * from "./fallback.js";

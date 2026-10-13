@@ -60,19 +60,24 @@ Agents make mistakes, and some get tricked. Sooner or later one will run
 found in a web page. Most guardrails watch what the model *says*. interlock
 watches what it *does*, at the last moment you can still say no.
 
-- **Three verdicts, not two.** A call can be allowed, blocked, or **rewritten**
-  (mask a secret, cap an amount, force a dry run), so safety doesn't always cost
-  you the task.
+- **Four verdicts, not two.** A call can be allowed, blocked, **rewritten**
+  (mask a secret, cap an amount, force a dry run), or **held for a human** who
+  approves that exact call, so safety doesn't always cost you the task.
 - **Checks results too.** Injected instructions arrive in tool output: a web
   page, an email, a document. interlock checks what tools return before your
   agent reads it.
 - **One policy everywhere.** The same rules guard decorated functions, MCP
-  sessions, LangChain tools, your own tool loop, and Node.js agents.
-- **105 ready-made detectors** for prompt injection, SQL and shell injection,
+  sessions, LangChain tools, your own tool loop, Node.js agents, and coding
+  agents: **Claude Code, Codex and Cursor**, through their hooks.
+- **107 ready-made detectors** for prompt injection, SQL and shell injection,
   secret and PII redaction, SSRF, egress, MCP server trust, budgets, and loops.
+  Shell rules judge **what a command does**, not its spelling: `rm -fr ~`,
+  `bash -c 'rm -rf /'` and `sudo /bin/rm -Rf /` are the same act.
 - **Built for real deployments:** per-tenant policies with safe delegation to
-  sub-agents, a tamper-evident audit log, and an OS sandbox for the subprocesses
-  your agent launches.
+  sub-agents, declarative policy files with locked rules and trust-gated
+  project overlays, a tamper-evident audit log you can report on, an OS sandbox
+  for the subprocesses your agent launches, and `interlock doctor` to prove
+  protection is actually on.
 - **Nothing to sign up for.** Pure Python, no runtime dependencies, works
   offline.
 
@@ -149,10 +154,15 @@ catches most people.
 | Feature | What it does | Guide |
 |---|---|---|
 | Rules | Python functions that block, rewrite, or check results | [Writing rules](docs/guides/writing-rules.md) |
-| Detectors | 105 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
+| Declarative policies | The same rules as JSON/YAML: typo-checked at load, locked rules, hot reload, trust-gated project overlays | [Policies](docs/guides/policies.md) |
+| Approvals | `ESCALATE`: hold a call for a human; approvals are one-use and bound to the exact call | [Approvals](docs/guides/approvals.md) |
+| Coding agents | Guard Claude Code, Codex and Cursor tool calls with one command | [Coding agents](docs/guides/coding-agents.md) |
+| Credentials | The agent writes `{{secret:id}}`; the value is filled in after the decision, only where allowed | [Credentials](docs/guides/credentials.md) |
+| Detectors | 107 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
 | MCP trust | Allowlist servers, pin tool schemas, catch changed tool listings, time-limited grants | [MCP](docs/guides/mcp.md) |
 | Scopes | Per-tenant and per-agent policies; sub-agents can't exceed their parent | [Scopes](docs/guides/scopes.md) |
-| Audit log | Chained, signed receipts of every decision; arguments hashed, not stored | [Audit log](docs/guides/audit-log.md) |
+| Audit log | Chained, signed receipts of every decision; arguments hashed, not stored; `interlock report` summarizes them | [Audit log](docs/guides/audit-log.md) |
+| Doctor | `attest()` / `require()` in-process, `interlock doctor` from a shell: is protection actually on? | [Production checklist](docs/guides/production.md) |
 | BRACE sandbox | Runs subprocesses under bubblewrap (Linux) or Seatbelt (macOS), built from your policy | [Sandbox](docs/guides/sandbox.md) |
 | Node.js client | Guards JS agents with the same Python policy through a local daemon | [js/README.md](js/README.md) |
 
@@ -165,8 +175,10 @@ catches most people.
 | LangChain tools | `guard_langchain_tools(tools)` |
 | An OpenAI, Anthropic, or other tool loop | `enforce_tool_call` / `enforce_tool_result` |
 | A Node.js agent | the `interlock-guard` npm package + `interlock-sidecar` |
+| Claude Code, Codex or Cursor | `interlock install-hook --for claude-code` (or `codex`, `cursor`, `all`) |
 
-Each one is covered in [integrations](docs/guides/integrations.md).
+Each one is covered in [integrations](docs/guides/integrations.md); coding agents
+in [their own guide](docs/guides/coding-agents.md).
 
 ## How is this different?
 
@@ -181,8 +193,8 @@ Each one is covered in [integrations](docs/guides/integrations.md).
 
 interlock is a strong layer, not a complete defence. The ones that matter most:
 
-- **No rules means everything is allowed.** Check that rules are installed at
-  startup.
+- **No rules means everything is allowed.** Call `interlock.posture.require()`
+  at startup to fail if protection isn't on.
 - **Blocking a result doesn't undo the tool.** Results are checked after the
   tool ran; a block keeps the output from your agent, but side effects stand.
 - **Detectors match patterns, not meaning.** A reworded attack can get past
@@ -206,11 +218,10 @@ Start with [getting started](docs/getting-started.md), then
 
 ## Status
 
-**Alpha (v0.0.1).** The core API is stable and covered by over 2,300 tests. Not
-yet on PyPI or npm. Next on the [roadmap](ROADMAP.md): an "ask a human"
-verdict, a false-positive harness for the detectors, rules over data flow
-between tools, declarative YAML/JSON policies, and automatic interception of MCP
-clients and model SDKs.
+**Alpha (v0.0.1).** The core API is stable and covered by over 2,700 tests. Not
+yet on PyPI or npm. Next on the [roadmap](ROADMAP.md): a false-positive harness
+for the detectors, rules over data flow between tools, automatic interception of
+MCP clients and model SDKs, and signed PyPI/npm releases.
 
 ## Contributing
 

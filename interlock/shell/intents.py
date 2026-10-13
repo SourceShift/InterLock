@@ -1,0 +1,509 @@
+"""Classify parsed shell invocations into semantic intents.
+
+A rule that wants to stop "force-pushing to main" should not have to know that
+``git push -f``, ``git push --force origin main``, ``git -C repo push origin
++main`` and ``git -c alias.p='push --force' p`` are the same act. The parser
+recovers the invocations; this module names what they do.
+
+Each :class:`Intent` has a dotted ``kind`` and, where it matters, the
+``targets`` it acts on, a ``detail`` qualifier, and ``critical`` - set when the
+act is unrecoverable for the host (a recursive delete of ``/`` or ``~``, a raw
+disk write, fetched code piped into a shell). Rules match on ``kind`` prefixes:
+``"git"`` covers every ``git.*`` intent.
+
+Kinds:
+
+==========================  ==================================================
+``fs.delete.recursive``     ``rm -r``, ``find -delete``; targets are the paths
+``fs.permissions.recursive`` ``chmod/chown/chgrp -R``; targets are the paths
+``disk.overwrite``          ``dd of=/dev/...``, ``> /dev/sda``, ``shred /dev/..``
+``disk.format``             ``mkfs*``, ``wipefs``, ``diskutil eraseDisk`` ...
+``git.push``                any push; ``detail`` names the branch class
+``git.push.force``          ``-f``, ``--force*``, ``--mirror``, ``+refspec``;
+                            ``detail`` is ``default``, ``topic`` or ``implicit``
+``git.push.delete``         ``--delete`` or ``:branch``
+``git.discard``             ``reset --hard``, ``clean -f``, ``checkout .`` ...
+``credential.read``         ``git config --get ...password``, ``git credential fill``
+``net.fetch``               ``curl``, ``wget`` ...
+``net.fetch_exec``          fetched content piped or substituted into a shell
+``pkg.publish``             ``npm publish``, ``cargo publish``, ``twine upload`` ...
+``persist.schedule``        ``crontab``, ``at``, ``launchctl load``, ``systemctl enable``
+``persist.shell_init``      writes to ``~/.bashrc``, ``~/.zshrc`` ...
+``priv.escalate``           ``sudo``, ``doas``, ``su``, ``pkexec``
+``interlock.tamper``        ``interlock trust``/``install-hook``, or a write,
+                            move or delete under ``~/.interlock``
+==========================  ==================================================
+"""
+from __future__ import annotations
+
+import posixpath
+import re
+from dataclasses import dataclass
+from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
+
+from .parser import _WRAPPERS, Invocation, ParsedCommand, parse
+
+
+@dataclass(frozen=True)
+class Intent:
+    """One semantic act recovered from a command string."""
+
+    kind: str
+    binary: str
+    targets: Tuple[str, ...] = ()
+    detail: str = ""
+    critical: bool = False
+
+    def matches(self, selector: str) -> bool:
+        """Whether a selector names this intent.
+
+        A selector is a kind or kind prefix (``"git"`` matches
+        ``"git.push.force"``), optionally followed by ``":qualifier"``, where
+        the qualifier is either this intent's ``detail`` or ``"critical"``:
+        ``"git.push.force:default"``, ``"fs.delete.recursive:critical"``.
+        """
+        kind, _, qualifier = selector.partition(":")
+        if not (self.kind == kind or self.kind.startswith(kind + ".")):
+            return False
+        if not qualifier:
+            return True
+        if qualifier == "critical":
+            return self.critical
+        return self.detail == qualifier
+
+
+def analyze(command: Union[str, ParsedCommand]) -> Tuple[Intent, ...]:
+    """Every intent a command string carries, duplicates removed, in order."""
+    parsed = parse(command) if isinstance(command, str) else command
+    found: List[Intent] = []
+    for inv in parsed.invocations:
+        found.extend(_classify(inv))
+    found.extend(_fetch_exec(parsed.invocations))
+    unique: Dict[Intent, None] = {}
+    for intent in found:
+        unique.setdefault(intent, None)
+    return tuple(unique)
+
+
+# --- critical paths ----------------------------------------------------------
+
+#: Top-level directories whose recursive deletion or permission change breaks
+#: the host. A target equal to one of these (or to its ``/*`` glob) is critical.
+SYSTEM_DIRS: FrozenSet[str] = frozenset(
+    {"/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/opt", "/proc",
+     "/root", "/sbin", "/srv", "/sys", "/usr", "/usr/bin", "/usr/lib",
+     "/usr/local", "/usr/sbin", "/var", "/var/lib", "/home", "/Users", "/System",
+     "/Library", "/Applications", "/private", "/private/etc", "/private/var"}
+)
+
+_HOME_VAR = re.compile(r"^\$(?:HOME\b|\{HOME\})")
+
+
+def is_critical_path(target: str) -> bool:
+    """Whether deleting (or re-permissioning) ``target`` recursively is fatal.
+
+    Root-equivalent targets - ``/``, ``/*``, ``~``, ``$HOME``, ``~/*``, ``..``
+    climbs above them - and the :data:`SYSTEM_DIRS` (with their ``/*``)
+    count. Relative paths never do: ``./build`` and ``node_modules`` are routine.
+    """
+    t = target.strip()
+    if not t:
+        return False
+    t = _HOME_VAR.sub("~", t)
+    if t.startswith("~"):
+        # "~" or "~user", then an optional path under it.
+        _, sep, rest = t.partition("/")
+        rest = _normalise("/" + rest) if sep else "/"
+        return rest in ("/", "/*", "/.*")
+    if not t.startswith("/"):
+        return False
+    norm = _normalise(t)
+    if norm in ("/", "/*", "/.*"):
+        return True
+    if norm.endswith("/*"):
+        norm = norm[:-2]
+    return norm in SYSTEM_DIRS
+
+
+def _normalise(path: str) -> str:
+    collapsed = re.sub(r"/+", "/", path)
+    glob = collapsed.endswith("/*")
+    base = collapsed[:-2] if glob else collapsed
+    norm = posixpath.normpath(base) if base else "/"
+    if norm == ".":
+        norm = "/"
+    return norm.rstrip("/") + "/*" if glob else norm
+
+
+# --- classification ----------------------------------------------------------
+
+_BLOCK_DEVICE = re.compile(
+    r"^/dev/(?:r?disk\d|sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|md\d|dm-\d|mapper/|loop\d)"
+)
+_FORMATTERS = re.compile(r"^(?:mkfs(?:\..+)?|mke2fs|mkswap|newfs(?:_.+)?|wipefs|sfdisk|sgdisk)$")
+_DISKUTIL_ERASE = frozenset(
+    {"erasedisk", "erasevolume", "zerodisk", "randomdisk", "secureerase",
+     "partitiondisk", "reformat"}
+)
+_FETCHERS = frozenset({"curl", "wget", "fetch", "http", "https", "aria2c", "xh"})
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish"})
+_STDIN_INTERPRETER = re.compile(r"^(python[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|php[0-9.]*)$")
+_SUBST_FETCH = re.compile(r"(?:\$\(|`|<\()\s*(?:curl|wget)\b")
+_DEFAULT_BRANCHES = frozenset({"main", "master", "trunk", "develop", "production"})
+_SHELL_INIT = frozenset(
+    {".bashrc", ".bash_profile", ".bash_login", ".profile", ".zshrc", ".zshenv",
+     ".zprofile", ".zlogin", ".cshrc", ".tcshrc", ".kshrc", "config.fish"}
+)
+_PRIVILEGE = frozenset({"sudo", "doas", "su", "pkexec", "run0"})
+
+
+def _flags(args: Sequence[str]) -> Tuple[set, List[str]]:
+    """Short-flag letters / long flags set, and the operands (non-options)."""
+    letters: set = set()
+    operands: List[str] = []
+    after_dashdash = False
+    for tok in args:
+        if after_dashdash:
+            operands.append(tok)
+        elif tok == "--":
+            after_dashdash = True
+        elif tok.startswith("--"):
+            letters.add(tok.split("=", 1)[0])
+        elif tok.startswith("-") and len(tok) > 1:
+            letters.update(tok[1:])
+        else:
+            operands.append(tok)
+    return letters, operands
+
+
+def _classify(inv: Invocation) -> Iterable[Intent]:
+    name = inv.name
+    args = inv.args
+    out: List[Intent] = []
+
+    if name in ("rm", "srm"):
+        flags, targets = _flags(args)
+        if flags & {"r", "R", "--recursive"}:
+            out.append(Intent("fs.delete.recursive", name, tuple(targets),
+                              critical=any(is_critical_path(t) for t in targets)))
+
+    elif name == "find":
+        roots = []
+        for tok in args:
+            if tok in ("-H", "-L", "-P"):
+                continue
+            if tok.startswith("-") or tok in ("(", "!", ")"):
+                break
+            roots.append(tok)
+        if "-delete" in args:
+            roots = roots or ["."]
+            out.append(Intent("fs.delete.recursive", name, tuple(roots),
+                              detail="find -delete",
+                              critical=any(is_critical_path(r) for r in roots)))
+
+    elif name in ("chmod", "chown", "chgrp"):
+        flags, operands = _flags(args)
+        if flags & {"R", "--recursive"}:
+            targets = tuple(operands[1:])  # first operand is the mode / owner
+            mode = operands[0] if operands else ""
+            out.append(Intent("fs.permissions.recursive", name, targets, detail=mode,
+                              critical=any(is_critical_path(t) for t in targets)))
+
+    elif name == "dd":
+        for tok in args:
+            if tok.startswith("of=") and _BLOCK_DEVICE.match(tok[3:]):
+                out.append(Intent("disk.overwrite", name, (tok[3:],), critical=True))
+
+    elif name == "shred":
+        _, operands = _flags(args)
+        devices = tuple(t for t in operands if _BLOCK_DEVICE.match(t))
+        if devices:
+            out.append(Intent("disk.overwrite", name, devices, critical=True))
+
+    elif _FORMATTERS.match(name):
+        _, operands = _flags(args)
+        out.append(Intent("disk.format", name, tuple(operands), critical=True))
+
+    elif name == "diskutil":
+        verbs = [a.lower() for a in args if not a.startswith("-")]
+        if verbs and verbs[0] in _DISKUTIL_ERASE:
+            out.append(Intent("disk.format", name, tuple(args[1:]), detail=verbs[0],
+                              critical=True))
+
+    elif name == "git":
+        out.extend(_git(inv))
+
+    elif name in _FETCHERS:
+        out.append(Intent("net.fetch", name, tuple(_flags(args)[1])))
+
+    elif name in ("npm", "pnpm", "yarn", "bun"):
+        verbs = list(args[1:2]) if name == "yarn" and args[:1] == ("npm",) else list(args[:1])
+        if verbs and verbs[0] in ("publish", "unpublish"):
+            out.append(Intent("pkg.publish", name, detail=verbs[0]))
+    elif name == "cargo" and args and args[0] in ("publish", "yank"):
+        out.append(Intent("pkg.publish", name, detail=args[0]))
+    elif name == "twine" and args and args[0] == "upload":
+        out.append(Intent("pkg.publish", name, detail="upload"))
+    elif name == "gem" and args and args[0] in ("push", "yank"):
+        out.append(Intent("pkg.publish", name, detail=args[0]))
+    elif name in ("poetry", "uv", "flit", "hatch") and args and args[0] == "publish":
+        out.append(Intent("pkg.publish", name, detail="publish"))
+    elif name == "docker" and args and args[0] == "push":
+        out.append(Intent("pkg.publish", name, tuple(args[1:]), detail="push"))
+    elif name == "gh" and tuple(args[:2]) == ("release", "create"):
+        out.append(Intent("pkg.publish", name, detail="release"))
+    elif re.match(r"^python[0-9.]*$", name) and tuple(args[:3]) == ("-m", "twine", "upload"):
+        out.append(Intent("pkg.publish", name, detail="upload"))
+
+    elif name == "crontab":
+        if "-l" not in args:
+            out.append(Intent("persist.schedule", name, tuple(args)))
+    elif name in ("at", "batch"):
+        out.append(Intent("persist.schedule", name, tuple(args)))
+    elif name == "launchctl" and args and args[0] in ("load", "bootstrap", "submit", "enable"):
+        out.append(Intent("persist.schedule", name, tuple(args[1:]), detail=args[0]))
+    elif name == "systemctl":
+        verbs = [a for a in args if not a.startswith("-")]
+        if verbs and verbs[0] in ("enable", "link"):
+            out.append(Intent("persist.schedule", name, tuple(verbs[1:]), detail=verbs[0]))
+
+    if name in _PRIVILEGE:
+        out.append(Intent("priv.escalate", name))
+
+    out.extend(_tamper(inv))
+
+    for target in inv.redirects:
+        if _BLOCK_DEVICE.match(target):
+            out.append(Intent("disk.overwrite", name, (target,), detail="redirect",
+                              critical=True))
+        if _is_shell_init(target):
+            out.append(Intent("persist.shell_init", name, (target,), detail="redirect"))
+    if name == "tee":
+        for target in _flags(args)[1]:
+            if _is_shell_init(target):
+                out.append(Intent("persist.shell_init", name, (target,), detail="tee"))
+    if name in ("sed", "perl") and any(a.startswith("-i") or a == "--in-place" for a in args):
+        for target in _flags(args)[1]:
+            if _is_shell_init(target):
+                out.append(Intent("persist.shell_init", name, (target,), detail="in-place"))
+
+    if name in _SHELLS or name == "eval" or name in (".", "source"):
+        joined = " ".join(args)
+        if _SUBST_FETCH.search(joined):
+            out.append(Intent("net.fetch_exec", name, detail="substitution", critical=True))
+    return out
+
+
+_INTERLOCK_CONTROL = frozenset({"trust", "install-hook", "uninstall-hook"})
+_MUTATORS = frozenset({"rm", "mv", "cp", "ln", "chmod", "chown", "truncate", "tee",
+                       "touch", "install", "rsync", "unlink", "shred"})
+
+
+def _in_interlock_home(target: str) -> bool:
+    import os
+
+    t = _HOME_VAR.sub("~", target.strip())
+    if t.startswith("~/"):
+        t = os.path.expanduser("~") + t[1:]
+    home = os.path.join(os.path.expanduser("~"), ".interlock")
+    norm = posixpath.normpath(t) if t.startswith("/") else ""
+    return bool(norm) and (norm == home or norm.startswith(home + "/"))
+
+
+def _tamper(inv: Invocation) -> List[Intent]:
+    """Commands that would switch interlock off from inside the agent."""
+    out: List[Intent] = []
+    name = inv.name
+    args = list(inv.args)
+    if re.match(r"^python[0-9.]*$", name) and args[:2] == ["-m", "interlock"]:
+        name, args = "interlock", args[2:]
+    if name == "interlock":
+        verbs = [a for a in args if not a.startswith("-")]
+        if verbs and verbs[0] in _INTERLOCK_CONTROL:
+            out.append(Intent("interlock.tamper", "interlock", tuple(verbs[1:]),
+                              detail="control", critical=True))
+    targets = list(inv.redirects)
+    if name in _MUTATORS or (name in ("sed", "perl") and any(
+            a.startswith("-i") for a in inv.args)):
+        targets.extend(_flags(inv.args)[1])
+    if name == "dd":
+        targets.extend(a[3:] for a in inv.args if a.startswith("of="))
+    hit = tuple(t for t in targets if _in_interlock_home(t))
+    if hit:
+        out.append(Intent("interlock.tamper", name, hit, detail="write", critical=True))
+    return out
+
+
+def _is_shell_init(target: str) -> bool:
+    base = target.rstrip("/").rsplit("/", 1)[-1]
+    if base not in _SHELL_INIT:
+        return False
+    return (target.startswith(("~", "$HOME", "${HOME}", "/"))
+            or "/" not in target)
+
+
+def _fetch_exec(invocations: Sequence[Invocation]) -> List[Intent]:
+    """A fetcher piped into a shell or stdin-reading interpreter, same pipeline."""
+    out: List[Intent] = []
+    for fetch in invocations:
+        if fetch.name not in _FETCHERS:
+            continue
+        for sink in invocations:
+            if sink.pipeline != fetch.pipeline or sink.stage <= fetch.stage:
+                continue
+            # The sink may sit behind wrappers (``curl ... | sudo bash``), but
+            # not inside a script or substitution of its own.
+            extra = sink.via[len(fetch.via):]
+            if sink.via[:len(fetch.via)] != fetch.via or any(
+                v not in _WRAPPERS for v in extra
+            ):
+                continue
+            if _reads_stdin_as_code(sink):
+                out.append(Intent("net.fetch_exec", sink.name, (fetch.name,),
+                                  detail="pipe", critical=True))
+    return out
+
+
+def _reads_stdin_as_code(inv: Invocation) -> bool:
+    name = inv.name
+    if name in _SHELLS:
+        operands = [a for a in inv.args if not a.startswith("-")]
+        return not operands or "-s" in inv.args or operands[0] == "-"
+    if _STDIN_INTERPRETER.match(name):
+        operands = [a for a in inv.args if not a.startswith("-")]
+        return not operands or operands[0] == "-"
+    if name in ("sudo", "doas", "env", "xargs"):
+        return False  # the wrapped command is recorded on its own
+    return False
+
+
+# --- git ---------------------------------------------------------------------
+
+_GIT_VALUED = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                         "--exec-path", "--config-env"})
+
+
+def _git(inv: Invocation) -> List[Intent]:
+    args = list(inv.args)
+    aliases: Dict[str, List[str]] = {}
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok == "-c" and i + 1 < len(args):
+            key, _, value = args[i + 1].partition("=")
+            if key.startswith("alias."):
+                aliases[key[len("alias."):]] = value.split()
+            i += 2
+            continue
+        if tok in _GIT_VALUED:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        break
+    if i >= len(args):
+        return []
+    sub, rest = args[i], args[i + 1:]
+    if sub in aliases and aliases[sub] and not aliases[sub][0].startswith("!"):
+        expanded = aliases[sub]
+        sub, rest = expanded[0], expanded[1:] + rest
+
+    if sub == "push":
+        return _git_push(rest)
+    if sub == "reset" and "--hard" in rest:
+        return [Intent("git.discard", "git", detail="reset --hard")]
+    if sub == "clean":
+        flags, _ = _flags(rest)
+        if "f" in flags or "--force" in flags:
+            return [Intent("git.discard", "git", detail="clean")]
+    if sub in ("checkout", "restore"):
+        _, operands = _flags(rest)
+        if "--staged" not in rest and any(o in (".", ":/", "*") for o in operands):
+            return [Intent("git.discard", "git", detail=sub)]
+    if sub == "branch" and any(a in ("-D",) or (a.startswith("-") and "D" in a[1:]
+                                                and not a.startswith("--")) for a in rest):
+        return [Intent("git.discard", "git", detail="branch -D")]
+    if sub == "stash" and rest[:1] in (["clear"], ["drop"]):
+        return [Intent("git.discard", "git", detail="stash " + rest[0])]
+    if sub == "filter-branch" or (sub == "update-ref" and "-d" in rest):
+        return [Intent("git.discard", "git", detail=sub)]
+    if sub == "config":
+        reads = any(a.startswith("--get") or a in ("-l", "--list") for a in rest)
+        keyish = " ".join(rest).lower()
+        if reads and (any(k in keyish for k in ("password", "credential", "url", "token"))
+                      or any(a in ("-l", "--list") for a in rest)):
+            return [Intent("credential.read", "git", detail="config")]
+    if sub == "credential" and rest[:1] in (["fill"], ["get"]):
+        return [Intent("credential.read", "git", detail="credential " + rest[0])]
+    return []
+
+
+def _git_push(args: Sequence[str]) -> List[Intent]:
+    flags: set = set()
+    operands: List[str] = []
+    skip_next = False
+    for tok in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in ("-o", "--push-option", "--repo", "--receive-pack", "--exec"):
+            skip_next = True
+            continue
+        if tok.startswith("--"):
+            flags.add(tok.split("=", 1)[0])
+        elif tok.startswith("-") and len(tok) > 1:
+            flags.update("-" + c for c in tok[1:])
+        else:
+            operands.append(tok)
+    refspecs = operands[1:]  # the first operand is the remote
+    force = bool(flags & {"-f", "--force", "--force-with-lease", "--mirror"}) or any(
+        r.startswith("+") for r in refspecs
+    )
+    delete = bool(flags & {"-d", "--delete"}) or any(
+        r.startswith(":") and len(r) > 1 for r in refspecs
+    )
+    branches = tuple(_dest_branch(r) for r in refspecs)
+    if not branches or flags & {"--all", "--mirror"}:
+        detail = "implicit"
+    elif any(b in _DEFAULT_BRANCHES for b in branches):
+        detail = "default"
+    elif any(b in ("HEAD", "@") for b in branches):
+        detail = "implicit"
+    else:
+        detail = "topic"
+    out = [Intent("git.push", "git", branches, detail=detail)]
+    if force:
+        out.append(Intent("git.push.force", "git", branches, detail=detail,
+                          critical=detail != "topic"))
+    if delete:
+        out.append(Intent("git.push.delete", "git", branches, detail=detail))
+    return out
+
+
+def _dest_branch(refspec: str) -> str:
+    ref = refspec.lstrip("+")
+    if ":" in ref:
+        ref = ref.split(":", 1)[1] or ref.split(":", 1)[0]
+    if ref.startswith("refs/heads/"):
+        ref = ref[len("refs/heads/"):]
+    return ref
+
+
+def intents_in(values: Iterable[str]) -> Tuple[Intent, ...]:
+    """Intents across several strings (each parsed on its own)."""
+    found: Dict[Intent, None] = {}
+    for value in values:
+        for intent in analyze(value):
+            found.setdefault(intent, None)
+    return tuple(found)
+
+
+def first_match(intents: Iterable[Intent], selectors: Iterable[str]) -> Optional[Tuple[Intent, str]]:
+    """The first (intent, selector) pair where the selector names the intent."""
+    selectors = list(selectors)
+    for intent in intents:
+        for selector in selectors:
+            if intent.matches(selector):
+                return intent, selector
+    return None

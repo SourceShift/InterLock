@@ -11,6 +11,14 @@ from typing import Any, List, Optional
 
 from . import brace
 from ._runtime import get_engine, set_engine
+from .approval import (
+    Approval,
+    ApprovalRequest,
+    approve_for,
+    approve_for_session,
+    approve_once,
+    set_approver,
+)
 from .brace import Sandbox, SandboxProfile, compile_profile
 from .context import (
     current_parent_principal,
@@ -20,8 +28,8 @@ from .context import (
     set_principal,
     span,
 )
-from .enforce import Blocked, Decision, Verdict
-from .event import SensorEvent
+from .enforce import Blocked, Decision, NotApproved, Verdict
+from .event import SensorEvent, new_call_id
 from .interceptors.decorator import guard, monitor
 from .interceptors.langchain import guard_langchain_tools
 from .interceptors.mcp import enforce_tool_call, enforce_tool_result, guard_mcp_session
@@ -45,7 +53,15 @@ __all__ = [
     "Decision",
     "Verdict",
     "Blocked",
+    "NotApproved",
     "SensorEvent",
+    "new_call_id",
+    "set_approver",
+    "Approval",
+    "ApprovalRequest",
+    "approve_once",
+    "approve_for_session",
+    "approve_for",
     "brace",
     "Sandbox",
     "SandboxProfile",
@@ -66,6 +82,7 @@ def install(
     engine: Optional[PolicyEngine] = None,
     rules: Optional[List[Rule]] = None,
     sink: Optional[Any] = None,
+    approver: Optional[Any] = None,
 ) -> PolicyEngine:
     """Wire the guard runtime and return the active engine.
 
@@ -75,6 +92,9 @@ def install(
     ``sink`` optionally installs a receipt sink (e.g. ``interlock.sink.FileSink``),
     the explicit opt-in that turns decision receipts on; without one no
     receipt is ever written.
+
+    ``approver`` installs the callable that decides ESCALATE verdicts (see
+    :mod:`interlock.approval`). Without one, every escalation is blocked.
     """
     if engine is None:
         engine = PolicyEngine(rules=rules)
@@ -89,5 +109,7 @@ def install(
             engine.add_rule(rule)
     if sink is not None:
         set_sink(sink)
+    if approver is not None:
+        set_approver(approver)
     set_engine(engine)
     return engine

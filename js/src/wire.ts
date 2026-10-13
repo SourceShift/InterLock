@@ -5,7 +5,7 @@
  * newline-delimited canonical JSON:
  *
  *     request   {"v":1,"id":...,"event":{action,args,principal,span_id,
- *                                        parent_principal,phase,ts}}
+ *                                        parent_principal,phase,ts,call_id}}
  *     response  {"v":1,"id":...,"verdict":0|1|2,"reason":...,"policy_id":...,
  *                "attributed_to":...,"modified_args":...,"modified_result":...}
  *
@@ -57,6 +57,7 @@ const EVENT_KEYS: ReadonlySet<string> = new Set([
   "parent_principal",
   "phase",
   "ts",
+  "call_id",
 ]);
 const RESPONSE_KEYS: ReadonlySet<string> = new Set([
   "v",
@@ -335,7 +336,7 @@ export function requestFrame(opId: string, event: SensorEvent): Record<string, u
     args: encodeValue(event.args),
     phase: event.phase,
   };
-  for (const key of ["principal", "span_id", "parent_principal"] as const) {
+  for (const key of ["principal", "span_id", "parent_principal", "call_id"] as const) {
     const value = event[key];
     if (value !== null && value !== undefined) {
       payload[key] = value;
@@ -401,18 +402,20 @@ export function parseRequest(frame: Record<string, unknown>): ParsedRequest {
     }
   }
 
-  return {
-    opId,
-    event: {
-      action,
-      args: decodeValue(args) as Record<string, unknown>,
-      principal: optStr(event, "principal"),
-      span_id: optStr(event, "span_id"),
-      parent_principal: optStr(event, "parent_principal"),
-      phase,
-      ts: typeof rawTs === "number" ? rawTs : Date.now() / 1000,
-    },
+  const parsed: SensorEvent = {
+    action,
+    args: decodeValue(args) as Record<string, unknown>,
+    principal: optStr(event, "principal"),
+    span_id: optStr(event, "span_id"),
+    parent_principal: optStr(event, "parent_principal"),
+    phase,
+    ts: typeof rawTs === "number" ? rawTs : Date.now() / 1000,
   };
+  const callId = optStr(event, "call_id");
+  if (callId !== null) {
+    parsed.call_id = callId;
+  }
+  return { opId, event: parsed };
 }
 
 /**
@@ -471,7 +474,12 @@ export function parseResponse(frame: Record<string, unknown>, opId: string): Dec
   if (typeof rawVerdict !== "number" || !Number.isInteger(rawVerdict)) {
     throw new WireError("bad_request", "verdict must be an integer");
   }
-  if (rawVerdict !== Verdict.ALLOW && rawVerdict !== Verdict.BLOCK && rawVerdict !== Verdict.MODIFY) {
+  if (
+    rawVerdict !== Verdict.ALLOW &&
+    rawVerdict !== Verdict.BLOCK &&
+    rawVerdict !== Verdict.MODIFY &&
+    rawVerdict !== Verdict.ESCALATE
+  ) {
     throw new WireError("bad_request", `unknown verdict ${JSON.stringify(rawVerdict)}`);
   }
 

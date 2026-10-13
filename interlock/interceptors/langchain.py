@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any, List, Optional
 
 from ..policy.engine import PolicyEngine
+from ..event import new_call_id
 from .mcp import enforce_tool_call, enforce_tool_result
 
 
@@ -56,11 +57,14 @@ def _guard_one(
     principal: Optional[str],
 ) -> Any:
     name = tool.name
+    from .decorator import register_mode  # local: decorator imports mcp
+    register_mode("langchain:{}".format(name), enforcement)
 
     def _run(**kwargs: Any) -> Any:
+        call_id = new_call_id()
         safe = enforce_tool_call(
             name, kwargs, engine=engine,
-            enforcement=enforcement, principal=principal,
+            enforcement=enforcement, principal=principal, call_id=call_id,
         )
         # Delegate to the untouched original with the vetted arguments. Its own
         # sync/async paths and error handling stay exactly as the author wrote
@@ -70,7 +74,7 @@ def _guard_one(
         out = tool.invoke(safe)
         return enforce_tool_result(
             name, out, engine=engine,
-            enforcement=enforcement, principal=principal,
+            enforcement=enforcement, principal=principal, call_id=call_id,
         )
 
     return structured_tool_cls.from_function(

@@ -34,7 +34,7 @@ Guide: [concepts](../concepts.md), [writing rules](../guides/writing-rules.md).
 ### `install`
 
 ```python
-install(engine=None, rules=None, sink=None) -> PolicyEngine
+install(engine=None, rules=None, sink=None, approver=None) -> PolicyEngine
 ```
 
 Sets the process-wide engine that every interceptor consults, and returns it.
@@ -44,6 +44,7 @@ Sets the process-wide engine that every interceptor consults, and returns it.
 | `engine` | The engine to install. If omitted, a new `PolicyEngine(rules=rules)` is built. |
 | `rules` | Rules to use. With no `engine`, they become the new engine. With an `engine`, each one is appended to **your** engine via `engine.add_rule`, which changes that object. |
 | `sink` | A receipt sink (for example `FileSink("audit.jsonl")`). Installs it with `set_sink`. Omitting it leaves any previously installed sink in place. |
+| `approver` | The callable that decides `ESCALATE` verdicts ([approvals](#approvals-interlockapproval)). Without one, escalations are blocked. |
 
 Things to know:
 
@@ -369,8 +370,10 @@ Guide: [concepts](../concepts.md).
 
 ### `Verdict`
 
-An `IntEnum`: `ALLOW = 0`, `BLOCK = 1`, `MODIFY = 2`. The integers are stable and
-are what the [wire protocol](sidecar.md#wire-protocol) sends.
+An `IntEnum`: `ALLOW = 0`, `BLOCK = 1`, `MODIFY = 2`, `ESCALATE = 3`. The
+integers are stable and are what the [wire protocol](sidecar.md#wire-protocol)
+sends. Every enforcement site handles each member explicitly; a value it
+doesn't know is blocked.
 
 ### `Decision`
 
@@ -393,6 +396,7 @@ Build decisions with the class methods:
 | `Decision.block(reason, policy_id=None, attributed_to=None)` | Deny the call. |
 | `Decision.modify(modified_args, reason="", policy_id=None, attributed_to=None)` | Let the call continue with some arguments replaced. Only the keys you pass change. |
 | `Decision.modify_result(result, reason="", policy_id=None, attributed_to=None)` | Replace a tool's result (use in a result-phase rule). |
+| `Decision.escalate(reason, policy_id=None, attributed_to=None)` | Hold the call for a human approver ([approvals](../guides/approvals.md)). A block from any other rule still wins. |
 
 ### `Blocked`
 
@@ -406,6 +410,12 @@ The exception raised when a call or result is denied. It has two attributes,
 
 On the call side, the tool never ran. On the result side, it already ran and only
 its output was withheld.
+
+### `NotApproved`
+
+A subclass of `Blocked`, raised for an `ESCALATE` that wasn't approved: no
+approver installed, the approver declined or raised, or the policy changed while
+it was deciding. Catch it on its own to tell "needs a human" from "refused".
 
 ---
 
@@ -1008,3 +1018,126 @@ with serve(PolicyEngine(rules=[deny_tool("shell_exec")]), path):
         decision = remote.evaluate(SensorEvent(action="shell_exec", args={}))
         assert decision.verdict.name == "BLOCK"
 ```
+
+---
+
+## Added for operations and coding agents
+
+### Call identity and policy epoch
+
+| Name | What it is |
+|---|---|
+| `SensorEvent.call_id` | One guarded call's id, shared by its call, result and outcome events and receipts. The interceptors mint it with `interlock.new_call_id()`. |
+| `enforce_tool_call(..., call_id=None)`, `enforce_tool_result(..., call_id=None)` | Pass the same `call_id` to link a call and its result when you drive them yourself. |
+| `PolicyEngine.epoch` | 16 hex characters identifying the installed rule set in this process. Changes when a rule is added. |
+| `PolicyEngine.policy_ids` | Each installed rule's `policy_id` or qualified name, in order. |
+| `interlock.policy.engine.epoch_of(engine, event=None)` | The epoch an engine decides `event` under (per scope for a `ScopedEngine`), or `None`. |
+
+### Approvals (`interlock.approval`)
+
+Guide: [approvals](../guides/approvals.md).
+
+| Name | What it is |
+|---|---|
+| `set_approver(fn)` / `get_approver()` | Install or read the process approver. `fn(request) -> True / Approval / False / None`. |
+| `approve_once()`, `approve_for_session()`, `approve_for(seconds)` | What an approver returns to approve. |
+| `ApprovalRequest` | Frozen: `request_id`, `action`, `phase`, `args_digest`, `reason` (one line, at most 512 bytes), `principal`, `span_id`, `call_id`, `policy_id`, `attributed_to`, `policy_epoch`, `created`, `event` (the full call, for display), and `binding`, the tuple an approval is bound to. |
+| `grants()` | The `GrantStore` of session and TTL grants: `active()`, `revoke(action=, principal=, session=)`, `clear()`. |
+| `tty_approver(show_args=True)` | Asks at `/dev/tty`; declines without a terminal. |
+| `bound_reason(text)` | The one-line, 512-byte form a reason is shown and bound in. |
+
+### Protection posture (`interlock.posture`)
+
+Guide: [production checklist](../guides/production.md).
+
+| Name | What it is |
+|---|---|
+| `attest(*, engine=None, sink=None, probe_sidecar=False) -> Posture` | Read-only report on the protection in force. |
+| `require(min_level="enforced", **kwargs) -> Posture` | Raises `ProtectionError` below `min_level` (`"enforced"` or `"degraded"`). |
+| `Posture` | `.level` (`enforced`, `degraded`, `unprotected`), `.checks`, `.check(id)`, `.to_dict()`, `.to_json()`, `.render()`. |
+| `Check` | `id`, `status` (`ok`, `info`, `warn`, `fail`), `summary`, `fix`. |
+| `WEAKENING_SETTINGS` | Each "settings that weaken protection" row of the security model, mapped to its check id. |
+
+### Receipt reports (`interlock.report`)
+
+| Name | What it is |
+|---|---|
+| `read_receipts(path) -> (receipts, bad_line_numbers)` | Parse a log. |
+| `verification(receipts, *, key=None, verifier=None, head=None)` | `{"status": "verified" / "broken" / "unverified", "detail": ...}`. |
+| `summarize(receipts, *, since_seconds=None, now=None, top=10) -> dict` | The report `interlock report --json` prints: verdict counts, block rate, top rules, what monitor mode would have done, escalations, failed outcomes, dropped receipts, latency percentiles. |
+| `parse_since("24h")` | `30m` / `24h` / `7d` / `1w` to seconds; `0` or `all` to `None`. |
+
+New receipt fields (`call_id`, `policy_epoch`, `policy_verdict`, `approval`,
+`outcome`, `enforcer`, `elapsed_us`) are described in the
+[audit log guide](../guides/audit-log.md#what-a-receipt-records).
+`interlock.receipt.dropped_receipts()` counts writes that failed and aren't yet
+reported. `FileSink(path, *, key=None, signer=..., shared=False)`: `shared=True`
+locks the file per write so several processes keep one chain.
+
+### Shell commands (`interlock.shell`)
+
+Guide: [parsed shell commands](../guides/detectors.md#parsed-shell-commands).
+
+| Name | What it is |
+|---|---|
+| `parse(cmd) -> ParsedCommand` | Never raises. `.invocations` (each an `Invocation`: `binary`, `name` (lowercased), `args`, `via`, `redirects`, `pipeline`, `stage`), `.binaries`, `.partial`. |
+| `analyze(cmd_or_parsed) -> tuple[Intent, ...]` | Semantic intents: `kind`, `binary`, `targets`, `detail`, `critical`, and `matches(selector)`. |
+| `intents_in(strings)`, `first_match(intents, selectors)` | Helpers for rules. |
+| `is_critical_path(path)` | Whether a recursive delete of `path` is host-fatal (`/`, `~`, `$HOME`, system directories). |
+| `MAX_DEPTH`, `MAX_INPUT`, `MAX_INVOCATIONS` | The parser's bounds. |
+
+### Declarative policies (`interlock.policy.declarative`, `interlock.policy.trust`)
+
+Guide: [declarative policies](../guides/policies.md).
+
+| Name | What it is |
+|---|---|
+| `load_policy(doc, *, source="<policy>", overlays=(), base_dir=None)` | Compile a document (and already-trusted overlay documents) into a `DeclarativeEngine`. |
+| `load_policy_file(path, *, overlays=(), trust=None, watch=None)` | Load a JSON/YAML file. Overlays apply only if `trust` approves their content; `watch` hot-reloads. |
+| `DeclarativeEngine` | A `PolicyEngine` with `.quarantined`, `.locked`, `.overlays`, `.documents`, `.reload()`, `.last_error`, and a content-hash `.epoch`. |
+| `check_policy_file(path, *, overlays=(), trust=None) -> dict` | What `interlock policy check` prints. |
+| `register_tool_schema(action, arg_names)` | Declare an action's arguments so misspelled `arg` conditions fail at load. |
+| `parse_policy_text(text, *, fmt="json")`, `read_policy_file(path)`, `PolicyError` | Lower-level loading. |
+| `TrustStore(path=None)` | `status(path)`, `add(path)`, `remove(path)`, `entries()`; default `~/.interlock/trusted.json`. |
+| `find_overlay(start)` | The nearest `.interlock/policy.{json,yaml,yml}` up to the git root. |
+| `interlock.policy.packs.builtin_pack("coding-agent")` | The built-in pack's document. |
+
+### Credentials (`interlock.credentials`)
+
+Guide: [credentials](../guides/credentials.md).
+
+| Name | What it is |
+|---|---|
+| `SecretStore().add(id, *, actions, value=/env=/file=/getter=, hosts=(), label="", tags=())` | Register a secret with exactly one source. Chainable. |
+| `SecretStore.catalog()` | Ids, labels, tags, actions and hosts, never values. |
+| `install_store(store)` / `get_store()` | The process store. Without one, placeholders are left alone. |
+| `placeholder(id)` | `"{{secret:<id>}}"`. |
+| `substitute_call`, `scrub`, `used_ids` | The boundary steps the interceptors run. |
+
+### Coding-agent adapters (`interlock.adapters`)
+
+Guide: [coding agents](../guides/coding-agents.md).
+
+| Name | What it is |
+|---|---|
+| `get_adapter("claude-code" / "codex" / "cursor")` | An `Adapter`: `parse(payload)`, `render(call, outcome)`, `install(command, settings=None)`, `uninstall(settings=None)`, `installed_command()`, `settings_path()`. |
+| `run_hook(adapter, payload, engine, *, enforcement="blocking") -> (stdout, stderr, exit_code)` | Decide one hook invocation. |
+| `interlock.adapters.config.load_engine(...)` / `ensure_home()` | How the hook builds its engine, and `~/.interlock` setup. |
+
+### Sidecar client options
+
+`RemoteEngine(path, *, timeout=5.0, unreachable="deny", fallback=None,
+fallback_key=None, fallback_max_age=604800)`: `unreachable` is `"deny"`,
+`"degraded"` (needs `fallback_key`) or `"allow"`; `.fallbacks` counts calls
+decided without the daemon. `interlock.sidecar.fallback` holds
+`write_fallback`, `read_fallback`, `validate_offline` and `fallback_path`
+([sidecar reference](sidecar.md#when-the-daemon-is-down)).
+
+### MCP inventory (`interlock.mcp_inventory`)
+
+| Name | What it is |
+|---|---|
+| `scan(cwd=None) -> (servers, unreadable)` | Every MCP server in known client configs, as `McpServer` (`name`, `client`, `config`, `scope`, `transport`, `command`, `args`, `url`, `env_keys`, `project`, `risks`). |
+| `where(servers, name)` | The entries defining one server. |
+| `starter_policy(servers)` | A policy blocking `mcp__*` tools from servers not in the list. |
+

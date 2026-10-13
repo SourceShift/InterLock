@@ -456,3 +456,18 @@ class ScopedEngine:
                 policy_id=RESOLUTION_POLICY_ID,
             )
         return engine.evaluate(event)
+
+    def epoch_for(self, event: SensorEvent) -> Optional[str]:
+        """The epoch of the scope engine that decides ``event`` (see
+        ``PolicyEngine.epoch``). That engine is rebuilt when the scope's
+        bindings change, so a rebind changes the epoch. None when the event
+        has no resolvable scope."""
+        scope = self.scope_of(event) or self.default_scope
+        if not scope:
+            return None
+        try:
+            engine = self.registry.for_scope(scope)
+        except (DelegationError, UnknownTemplate):
+            return None
+        epoch = getattr(engine, "epoch", None)
+        return epoch if isinstance(epoch, str) else None

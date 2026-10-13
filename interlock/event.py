@@ -1,6 +1,7 @@
 """The event a sensor produces for every intercepted action."""
 from __future__ import annotations
 
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -31,6 +32,16 @@ class SensorEvent:
     # meant - including call-shaped events whose action name says
     # "tool_result".
     phase: str = "call"
+    # One guarded call's identity, shared by its call-side and result-side
+    # events (and by an agent hook's PreToolUse/PostToolUse pair, R18), so the
+    # receipts of one action can be joined. None when the caller did not mint
+    # one; see new_call_id().
+    call_id: Optional[str] = None
+
+
+def new_call_id() -> str:
+    """A fresh, unguessable id for one guarded call."""
+    return secrets.token_hex(8)
 
 
 def result_payload(result: Any) -> Dict[str, Any]:

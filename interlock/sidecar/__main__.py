@@ -176,6 +176,21 @@ def _build_sink(receipts: Optional[str], key_file: Optional[str]):
         raise RulesError("cannot use receipts file {}: {}".format(receipts, exc))
 
 
+def _publish_fallback(policy_file: Optional[str], key_file: Optional[str], socket_path: str) -> None:
+    """Validate, sign and write the offline fallback policy next to the socket."""
+    if not policy_file:
+        return
+    if not key_file:
+        raise RulesError("--fallback-policy needs --key-file to sign it")
+    from ..policy.declarative import PolicyError, read_policy_file
+    from .fallback import FallbackError, fallback_path, write_fallback
+    try:
+        doc, _ = read_policy_file(policy_file)
+        write_fallback(fallback_path(socket_path), doc, _read_key(key_file))
+    except (PolicyError, FallbackError, OSError) as exc:
+        raise RulesError("fallback policy {}: {}".format(policy_file, exc))
+
+
 def _parse_args(argv):
     parser = argparse.ArgumentParser(
         prog="interlock-sidecar",
@@ -203,6 +218,13 @@ def _parse_args(argv):
         default=None,
         metavar="PATH",
         help="receipt MAC key: 64 hex characters or raw bytes (default: per-process secret)",
+    )
+    parser.add_argument(
+        "--fallback-policy",
+        default=None,
+        metavar="FILE",
+        help="publish this offline declarative policy, signed with --key-file, for "
+             "clients running with unreachable='degraded' (see interlock.sidecar.fallback)",
     )
     parser.add_argument(
         "--check",
@@ -233,6 +255,7 @@ def main(argv: Optional[list] = None) -> int:
     try:
         sink = _build_sink(args.receipts, args.key_file)
         _prepare_socket(path)
+        _publish_fallback(args.fallback_policy, args.key_file, path)
     except RulesError as exc:
         sys.stderr.write("interlock-sidecar: {}\n".format(exc))
         return EXIT_BAD_RULES

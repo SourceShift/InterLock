@@ -17,13 +17,16 @@ verdict, so it must not be downgraded into a silent pass-through.
 from __future__ import annotations
 
 import itertools
+import logging
 import os
 import socket
 import threading
-from typing import Optional
+from dataclasses import replace
+from typing import Any, Optional
 
-from ..enforce import Blocked, Decision
+from ..enforce import Blocked, Decision, Verdict
 from ..event import SensorEvent
+from .fallback import FallbackError, fallback_path, read_fallback
 from ..wire import (
     MAX_LINE,
     WireError,
@@ -40,6 +43,21 @@ from ..wire import (
 #: instead of hanging it forever.
 DEFAULT_TIMEOUT = 5.0
 
+#: What a client does when its daemon cannot be reached (see sidecar.fallback).
+UNREACHABLE_LEVELS = ("deny", "degraded", "allow")
+#: The policy id on decisions made without the daemon.
+UNREACHABLE_POLICY_ID = "sidecar_unreachable"
+
+_log = logging.getLogger("interlock")
+
+
+def _is_unreachable(exc: Exception) -> bool:
+    """No daemon to ask: no socket, refused, timed out, or it hung up. An error
+    frame from a live daemon is not unreachable - it is a refusal."""
+    if isinstance(exc, WireError):
+        return str(exc) == "daemon closed the connection"
+    return isinstance(exc, (OSError, socket.timeout))
+
 
 class RemoteEngine:
     """An engine that decides by asking the daemon over a unix socket.
@@ -55,25 +73,92 @@ class RemoteEngine:
     """
 
     def __init__(
-        self, path: str, *, timeout: Optional[float] = DEFAULT_TIMEOUT
+        self,
+        path: str,
+        *,
+        timeout: Optional[float] = DEFAULT_TIMEOUT,
+        unreachable: str = "deny",
+        fallback: Optional[str] = None,
+        fallback_key: Optional[bytes] = None,
+        fallback_max_age: float = 7 * 86400,
     ) -> None:
+        if unreachable not in UNREACHABLE_LEVELS:
+            raise ValueError("unreachable must be one of {}".format(", ".join(UNREACHABLE_LEVELS)))
+        if unreachable == "degraded" and fallback_key is None:
+            raise ValueError("unreachable='degraded' needs fallback_key to verify the fallback file")
         self.path = str(path)
         self.timeout = timeout
+        self.unreachable = unreachable
+        self.fallback = fallback or fallback_path(self.path)
+        self._fallback_key = fallback_key
+        self.fallback_max_age = fallback_max_age
+        self.fallbacks = 0  # how many calls were decided without the daemon
+        self._fallback_engine: Any = None
+        self._fallback_stamp: Any = None
         self._lock = threading.Lock()
         self._sock: Optional[socket.socket] = None
         self._reader = None
         self._ids = itertools.count(1)
 
     def evaluate(self, event: SensorEvent) -> Decision:
-        """Ask the daemon for the verdict, or raise ``Blocked``."""
+        """Ask the daemon for the verdict, or raise ``Blocked``.
+
+        When the daemon is *unreachable* (no socket, refused, timed out, hung
+        up) and ``unreachable`` is ``degraded`` or ``allow``, the call is
+        decided without it, and a warning is logged every time. A daemon that
+        answers with an error frame is reachable and refusing: always blocked.
+        """
         with self._lock:
             try:
                 return self._exchange(event)
             except Exception as exc:
                 self._drop()
+                if self.unreachable != "deny" and _is_unreachable(exc):
+                    return self._without_daemon(event, exc)
                 raise Blocked(
                     Decision.block(self._reason_for(exc)), event.action
                 )
+
+    def _without_daemon(self, event: SensorEvent, exc: Exception) -> Decision:
+        self.fallbacks += 1
+        why = "{}: {}".format(type(exc).__name__, exc)
+        if self.unreachable == "allow":
+            _log.warning("interlock: guard daemon unreachable at %s (%s); ALLOWING %r "
+                         "unchecked (unreachable='allow')", self.path, why, event.action)
+            return Decision.allow(
+                "guard daemon unreachable ({}); allowed unchecked".format(why),
+                policy_id=UNREACHABLE_POLICY_ID)
+        try:
+            engine = self._load_fallback()
+        except FallbackError as problem:
+            raise Blocked(Decision.block(
+                "guard daemon unreachable at {} ({}) and the fallback policy is "
+                "unusable: {}; denied fail-closed".format(self.path, why, problem),
+                policy_id=UNREACHABLE_POLICY_ID), event.action)
+        _log.warning("interlock: guard daemon unreachable at %s (%s); deciding %r with "
+                     "the offline fallback policy", self.path, why, event.action)
+        decision = engine.evaluate(event)
+        if decision.verdict == Verdict.ALLOW:
+            return Decision.allow("decided by the offline fallback policy",
+                                  policy_id=UNREACHABLE_POLICY_ID)
+        return replace(decision, policy_id="fallback/{}".format(decision.policy_id),
+                       reason="[guard daemon unreachable: fallback policy] {}".format(
+                           decision.reason))
+
+    def _load_fallback(self) -> Any:
+        try:
+            st = os.stat(self.fallback)
+            stamp = (st.st_mtime, st.st_size)
+        except OSError:
+            stamp = None
+        if self._fallback_engine is not None and stamp == self._fallback_stamp:
+            return self._fallback_engine
+        from ..policy.declarative import load_policy
+        assert self._fallback_key is not None
+        doc = read_fallback(self.fallback, self._fallback_key, max_age=self.fallback_max_age)
+        self._fallback_engine = load_policy(doc, source=self.fallback)
+        self._fallback_stamp = stamp
+        return self._fallback_engine
 
     def close(self) -> None:
         with self._lock:

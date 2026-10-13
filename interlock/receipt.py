@@ -47,6 +47,33 @@ that would have blocked or rewritten the call is recorded with
 ``observed=True``: the call went through, and the receipt must not read as
 enforcement. The field is serialized (and covered by the mac) only when true,
 so receipts written before it existed verify unchanged.
+
+Design note - provenance fields (R17). Every field added after the first
+release is optional and omitted from the serialized form (and the mac) while
+empty, the same rule ``observed`` follows, so older chains verify unchanged:
+
+- ``call_id`` links the receipts of one guarded call: its call-side decision,
+  its result-side decision, and an ``outcome`` receipt if the tool failed.
+- ``policy_epoch`` identifies the rule set that decided (see
+  ``PolicyEngine.epoch``).
+- ``policy_verdict`` is set when what happened differs from what policy said:
+  an ESCALATE that was approved (``verdict`` ALLOW) or not (``verdict`` BLOCK).
+  ``verdict`` is what was enforced. Monitor-mode receipts are the one
+  exception, kept for compatibility: their ``verdict`` is the policy verdict
+  and ``observed`` says it was not enforced.
+- ``approval`` records how an escalation was settled: ``approved:once``,
+  ``approved:session``, ``approved:ttl``, ``reused:session``, ``reused:ttl``,
+  ``declined``, ``no-approver`` or ``approver-error``.
+- ``outcome`` and ``enforcer`` appear on ``phase="outcome"`` receipts, written
+  when a tool that was allowed to run then failed: ``outcome`` is ``failed``
+  and ``enforcer`` is ``os`` for a permission error from the operating system
+  (which, under BRACE, is the sandbox refusing), else ``tool``.
+- ``elapsed_us`` is how long the policy evaluation took.
+
+A sink that fails to write is not allowed to turn into a silent gap: the
+failed write raises :class:`~interlock.enforce.Blocked` (fail closed), and the
+next successful write is preceded by a ``receipts.dropped`` receipt saying how
+many were lost.
 """
 from __future__ import annotations
 
@@ -55,10 +82,11 @@ import hashlib
 import hmac
 import json
 import secrets
+import threading
 import time
 from typing import Any, Callable, Optional
 
-from .enforce import Decision
+from .enforce import Blocked, Decision
 from .event import SensorEvent
 
 # A signer maps (key, message) -> tag. hmac_sha256 below is the default; an
@@ -146,12 +174,23 @@ class Receipt:
     # the serialized form (and the mac) while False, so older receipts and
     # older readers are unaffected.
     observed: bool = False
+    # Provenance (R17). Each is omitted while None, like observed while False.
+    call_id: Optional[str] = None
+    policy_epoch: Optional[str] = None
+    policy_verdict: Optional[str] = None
+    approval: Optional[str] = None
+    outcome: Optional[str] = None
+    enforcer: Optional[str] = None
+    elapsed_us: Optional[int] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape."""
         body = dataclasses.asdict(self)
         if not body["observed"]:
             del body["observed"]
+        for name in _OPTIONAL_FIELDS:
+            if body[name] is None:
+                del body[name]
         if not include_mac:
             del body["mac"]
         return body
@@ -163,6 +202,12 @@ class Receipt:
     @classmethod
     def from_json(cls, line: str) -> "Receipt":
         return cls(**json.loads(line))
+
+
+_OPTIONAL_FIELDS = (
+    "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
+    "enforcer", "elapsed_us",
+)
 
 
 def signing_payload(receipt: Receipt) -> bytes:
@@ -244,30 +289,96 @@ def get_sink() -> Optional[Any]:
     return _sink
 
 
+#: The policy id on a block caused by the audit sink itself failing.
+SINK_POLICY_ID = "audit_sink"
+
+_drop_lock = threading.Lock()
+_dropped = 0
+_last_drop_error = ""
+
+
+def dropped_receipts() -> int:
+    """How many receipts failed to write and are not yet reported in the log."""
+    with _drop_lock:
+        return _dropped
+
+
 def emit_receipt(
-    event: SensorEvent, decision: Decision, *, observed: bool = False
+    event: SensorEvent,
+    decision: Decision,
+    *,
+    observed: bool = False,
+    policy_epoch: Optional[str] = None,
+    policy_verdict: Optional[str] = None,
+    approval: Optional[str] = None,
+    outcome: Optional[str] = None,
+    enforcer: Optional[str] = None,
+    elapsed_us: Optional[int] = None,
+    phase: Optional[str] = None,
 ) -> None:
     """Build one Receipt from the enforced decision and write it to the sink.
 
     No sink installed: a no-op. Called from the enforcement sites only - the
-    decorator's ``_emit`` and both MCP enforce functions - never from a rule.
-    ``observed`` marks a monitor-mode decision that was recorded, not enforced.
+    decorator, the MCP enforce functions and the approval path - never from a
+    rule. ``observed`` marks a monitor-mode decision that was recorded, not
+    enforced; the keyword fields are the R17 provenance fields described in
+    the module docstring.
+
+    A write that raises is fail-closed: it raises :class:`Blocked` (policy id
+    :data:`SINK_POLICY_ID`) chained to the sink's error, so the guarded call
+    does not proceed unrecorded, and the loss is counted and reported by a
+    ``receipts.dropped`` receipt ahead of the next successful write.
     """
     sink = get_sink()
     if sink is None:
         return
-    sink.write(
-        Receipt(
-            ts=time.time(),
-            action=event.action,
-            verdict=decision.verdict.name,
-            reason=decision.reason,
-            policy_id=decision.policy_id,
-            attributed_to=decision.attributed_to,
-            principal=event.principal,
-            span_id=event.span_id,
-            phase=getattr(event, "phase", "call"),
-            args_digest=digest_args(event.args),
-            observed=observed,
-        )
+    receipt = Receipt(
+        ts=time.time(),
+        action=event.action,
+        verdict=decision.verdict.name,
+        reason=decision.reason,
+        policy_id=decision.policy_id,
+        attributed_to=decision.attributed_to,
+        principal=event.principal,
+        span_id=event.span_id,
+        phase=phase or getattr(event, "phase", "call"),
+        args_digest=digest_args(event.args),
+        observed=observed,
+        call_id=getattr(event, "call_id", None),
+        policy_epoch=policy_epoch,
+        policy_verdict=policy_verdict,
+        approval=approval,
+        outcome=outcome,
+        enforcer=enforcer,
+        elapsed_us=elapsed_us,
     )
+    _write(sink, receipt, event.action)
+
+
+def _write(sink: Any, receipt: Receipt, action: str) -> None:
+    global _dropped, _last_drop_error
+    with _drop_lock:
+        try:
+            if _dropped:
+                sink.write(Receipt(
+                    ts=time.time(),
+                    action="receipts.dropped",
+                    verdict="ALLOW",
+                    reason="{} receipt(s) could not be written; last error: {}".format(
+                        _dropped, _last_drop_error),
+                    policy_id=SINK_POLICY_ID,
+                ))
+                _dropped = 0
+                _last_drop_error = ""
+            sink.write(receipt)
+        except Exception as exc:
+            _dropped += 1
+            _last_drop_error = type(exc).__name__
+            raise Blocked(
+                Decision.block(
+                    "audit sink write failed, denied fail-closed: {}".format(
+                        type(exc).__name__),
+                    policy_id=SINK_POLICY_ID,
+                ),
+                action,
+            ) from exc

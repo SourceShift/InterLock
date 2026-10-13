@@ -5,8 +5,8 @@ its own rules. It gets a socket to this process, which owns the one engine. Two
 frames cross it, both newline-delimited canonical JSON:
 
     request   {"v":1,"id":...,"event":{action,args,principal,span_id,
-                                       parent_principal,phase,ts}}
-    response  {"v":1,"id":...,"verdict":0|1|2,"reason":...,"policy_id":...,
+                                       parent_principal,phase,ts,call_id}}
+    response  {"v":1,"id":...,"verdict":0|1|2|3,"reason":...,"policy_id":...,
                "attributed_to":...,"modified_args":...,"modified_result":...}
 
 ``verdict`` is the integer ``Verdict`` value, not the name: ``enforce.py``
@@ -52,7 +52,8 @@ _BYTES = "bytes"
 
 _REQUEST_KEYS = frozenset({"v", "id", "event"})
 _EVENT_KEYS = frozenset(
-    {"action", "args", "principal", "span_id", "parent_principal", "phase", "ts"}
+    {"action", "args", "principal", "span_id", "parent_principal", "phase", "ts",
+     "call_id"}
 )
 _RESPONSE_KEYS = frozenset(
     {
@@ -222,7 +223,7 @@ def request_frame(op_id: str, event: SensorEvent) -> Dict[str, Any]:
         "args": encode_value(event.args),
         "phase": event.phase,
     }
-    for key in ("principal", "span_id", "parent_principal"):
+    for key in ("principal", "span_id", "parent_principal", "call_id"):
         value = getattr(event, key, None)
         if value is not None:
             payload[key] = value
@@ -274,6 +275,7 @@ def parse_request(frame: Dict[str, Any]) -> Tuple[str, SensorEvent]:
     principal = _opt_str(event, "principal")
     span_id = _opt_str(event, "span_id")
     parent_principal = _opt_str(event, "parent_principal")
+    call_id = _opt_str(event, "call_id")
 
     kwargs: Dict[str, Any] = {}
     if ts is not None:
@@ -285,6 +287,7 @@ def parse_request(frame: Dict[str, Any]) -> Tuple[str, SensorEvent]:
         span_id=span_id,
         parent_principal=parent_principal,
         phase=phase,
+        call_id=call_id,
         **kwargs,
     )
 

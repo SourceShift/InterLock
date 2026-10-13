@@ -12,16 +12,33 @@ import dataclasses
 import functools
 import inspect
 import logging
+import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from .._runtime import get_engine
 from ..context import current_parent_principal, current_principal, current_span
-from ..enforce import Blocked, Decision, Verdict
-from ..event import SensorEvent
+from ..credentials import get_store, substitute_call
+from ..enforce import Decision, Verdict
+from ..event import SensorEvent, new_call_id
 from ..receipt import emit_receipt
+from ._settle import record_failure, settle
 from .mcp import _enforce_result
 
 _log = logging.getLogger("interlock")
+
+# What each guarded callable was wrapped with, keyed "module.qualname". Read by
+# interlock.posture so attest() can say "these tools only observe".
+_MODES: Dict[str, str] = {}
+
+
+def register_mode(name: str, enforcement: str) -> None:
+    """Record a wrapper's enforcement mode for :func:`interlock.posture.attest`."""
+    _MODES[name] = enforcement
+
+
+def registered_modes() -> Dict[str, str]:
+    """Every guarded callable seen so far and its enforcement mode."""
+    return dict(_MODES)
 
 
 def _event_for(
@@ -42,6 +59,7 @@ def _event_for(
         principal=principal or current_principal(),
         span_id=current_span(),
         parent_principal=current_parent_principal(),
+        call_id=new_call_id(),
     )
 
 
@@ -116,25 +134,30 @@ def _enforce(
     kwargs: Dict[str, Any],
     enforcement: str,
     event: SensorEvent,
+    engine: Any = None,
+    elapsed_us: Optional[int] = None,
 ) -> Tuple[tuple, Dict[str, Any]]:
-    if decision.verdict == Verdict.ALLOW:
-        _emit(event, decision)
-        return args, kwargs
-    if enforcement == "monitor":
-        # Observe-only: record what would have happened, never intervene.
-        _emit(event, decision, observed=True)
-        return args, kwargs
-    if decision.verdict == Verdict.BLOCK:
-        _emit(event, decision)
-        raise Blocked(decision, event.action)
-    if decision.verdict == Verdict.MODIFY:
-        if decision.modified_args:
-            args, kwargs = _apply_modified_args(
-                func, args, kwargs, decision.modified_args
-            )
-        _emit(event, decision)
-        return args, kwargs
+    outcome = settle(
+        event, decision, engine=engine if engine is not None else get_engine(),
+        enforcement=enforcement, elapsed_us=elapsed_us,
+    )
+    if outcome.verdict == Verdict.MODIFY and outcome.modified_args:
+        args, kwargs = _apply_modified_args(func, args, kwargs, outcome.modified_args)
+    if get_store() is not None:
+        # Placeholders become secrets only now, after the decision is final.
+        packed = substitute_call(event, [list(args), dict(kwargs)], enforcement=enforcement)
+        args, kwargs = tuple(packed[0]), packed[1]
     return args, kwargs
+
+
+def _decide(func: Callable, args: tuple, kwargs: Dict[str, Any],
+            principal: Optional[str], policy_id: Optional[str]):
+    event = _event_for(func, args, kwargs, principal)
+    engine = get_engine()
+    started = time.perf_counter()
+    decision = _labelled(engine.evaluate(event), policy_id)
+    elapsed_us = int((time.perf_counter() - started) * 1_000_000)
+    return event, engine, decision, elapsed_us
 
 
 def guard(
@@ -155,27 +178,49 @@ def guard(
     it as a phase="result" event, and may rewrite it (MODIFY) or withhold it
     (Blocked - the tool already ran, but the caller never receives the
     payload).
+
+    An ESCALATE runs the tool only if the installed approver approves this
+    exact call (see :mod:`interlock.approval`); otherwise it raises
+    :class:`NotApproved`, a :class:`Blocked`. Both receipts of one call share a
+    ``call_id``, and a tool that raises after being allowed leaves a
+    ``phase="outcome"`` receipt.
     """
 
     def decorator(func: Callable) -> Callable:
+        register_mode(
+            "{}.{}".format(getattr(func, "__module__", "?"),
+                           getattr(func, "__qualname__", repr(func))),
+            enforcement,
+        )
+
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            event = _event_for(func, args, kwargs, principal)
-            decision = _labelled(get_engine().evaluate(event), policy_id)
-            args, kwargs = _enforce(func, decision, args, kwargs, enforcement, event)
-            result = func(*args, **kwargs)
+            event, engine, decision, elapsed = _decide(func, args, kwargs, principal, policy_id)
+            args, kwargs = _enforce(func, decision, args, kwargs, enforcement, event,
+                                    engine, elapsed)
+            try:
+                result = func(*args, **kwargs)
+            except Exception as exc:
+                record_failure(event, exc, engine=engine)
+                raise
             return _enforce_result(
                 event.action, result, None, enforcement, principal, policy_id,
+                call_id=event.call_id,
             )
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            event = _event_for(func, args, kwargs, principal)
-            decision = _labelled(get_engine().evaluate(event), policy_id)
-            args, kwargs = _enforce(func, decision, args, kwargs, enforcement, event)
-            result = await func(*args, **kwargs)
+            event, engine, decision, elapsed = _decide(func, args, kwargs, principal, policy_id)
+            args, kwargs = _enforce(func, decision, args, kwargs, enforcement, event,
+                                    engine, elapsed)
+            try:
+                result = await func(*args, **kwargs)
+            except Exception as exc:
+                record_failure(event, exc, engine=engine)
+                raise
             return _enforce_result(
                 event.action, result, None, enforcement, principal, policy_id,
+                call_id=event.call_id,
             )
 
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper

@@ -20,6 +20,10 @@ doing harm with the tools you gave it. Typical cases:
 | A sub-agent grants itself more than its parent had | Scope delegation refuses the over-grant when rules are resolved |
 | The agent launches a subprocess that escapes in-process checks | BRACE runs it in an OS sandbox built from the same policy |
 | Someone edits the record of what the agent was allowed to do | Chained receipts make tampering detectable |
+| A coding agent (Claude Code, Codex, Cursor) runs `rm -fr ~`, force-pushes, or reads `~/.ssh` | The [hook adapters](guides/coding-agents.md) apply the same policy to its tool calls, parse shell commands by what they do, and withhold injected or secret-bearing tool output |
+| A legal but consequential call (a payment, a publish) happens without anyone deciding | An [ESCALATE](guides/approvals.md) verdict holds it for an approver bound to that exact call |
+| A credential in the agent's context leaks into arguments or logs | [Placeholder credentials](guides/credentials.md) keep the value out of the model's reach |
+| Protection is silently off (no rules, monitor mode, a dead sidecar) | `interlock.posture.attest()` / `require()` and `interlock doctor` report it |
 
 ## What interlock assumes
 
@@ -66,8 +70,10 @@ Each of these is sometimes the right choice. Make it on purpose.
 | `Sandbox(..., backend="soft")`, or a host where only `soft` is available | Resource limits and a clean environment only; **not a security boundary** | Local development. In production, pass `require=` so `run()` refuses a weak backend |
 | Granting hosts to a sandbox profile | bubblewrap and Seatbelt can't filter by host, so the child gets **all** network; `net` is left out of `enforced` | The child is trusted with network access, and in-process egress rules cover the rest |
 | `FileSink(path)` without `key=` | A random per-process key; after a restart, nobody can verify the old receipts | Tests |
-| Several processes appending to one audit file at once | Their receipts fork the chain; `verify()` reports the fork as a break | Never. One writer per file at a time |
+| Several processes appending to one audit file at once | Their receipts fork the chain; `verify()` reports the fork as a break. `FileSink(path, shared=True)` locks the file and keeps one chain | Never without `shared=True` |
 | `RemoteEngine(..., timeout=None)` (Python or Node.js) | No timeout: a hung sidecar hangs every guarded call. The default is 5 seconds | Never in production |
+| `RemoteEngine(..., unreachable="allow")` (Python or Node.js) | When the sidecar can't be reached, every call is **allowed unchecked** (with a warning each time). A sidecar that answers with an error still blocks | Availability matters more than enforcement, and someone watches the warnings |
+| `RemoteEngine(..., unreachable="degraded")` (Python or Node.js) | When the sidecar can't be reached, only its signed offline fallback policy is enforced, which is a subset of the real one. A missing, tampered or stale fallback file still blocks | You keep the fallback to the rules you need standing with the daemon down |
 
 ## Known gaps
 
@@ -79,8 +85,21 @@ Each of these is sometimes the right choice. Make it on purpose.
   configure (`origin=`, `schemas=`). If you build MCP events yourself with
   `enforce_tool_call`, never copy those keys from model-generated arguments
   ([MCP guide](guides/mcp.md)).
-- **No "ask a human" verdict.** A call can be allowed, blocked, or rewritten. A
-  fourth verdict that pauses for human approval (`ESCALATE`) is planned.
+- **Approvals run in the agent's process.** An `ESCALATE` waits for the
+  installed approver, which runs in-process: code that is already malicious
+  there could install its own. The coding-agent hooks avoid this by handing
+  escalations to the agent's native prompt ([approvals](guides/approvals.md)).
+- **Shell commands are parsed best-effort.** The parser sees through respelling,
+  wrappers (`sudo`, `env`, `xargs`), `sh -c`, substitutions and inline
+  interpreter code, but obfuscation (`$'\x72\x6d'`, base64, a downloaded
+  script) gets past it. It can only add findings to the raw-text checks, never
+  remove them. Contain untrusted commands with BRACE.
+- **Coding-agent hooks are cooperative, and agents differ.** Hooks see the tools
+  an agent routes through them; they are not an OS boundary. Codex can't ask or
+  rewrite at `PreToolUse` (those verdicts are refused) or withhold tool output;
+  Cursor has no result hook. Claude Code's rewrite and output-replacement paths
+  follow its documentation and are worth confirming on your version
+  ([coding agents](guides/coding-agents.md)).
 - **No measured false-positive rate.** The detectors are tested for matches and
   non-matches, but there's no published benchmark of how often they block
   harmless traffic. An attacker who can *trigger* blocks can use a fail-closed
@@ -109,8 +128,10 @@ Each of these is sometimes the right choice. Make it on purpose.
   `*Sync` calls, and handle-returning openers like `fs.createReadStream` aren't
   guarded. `installInterceptors().uncovered` lists them
   ([js/README.md](https://github.com/SourceShift/InterLock/blob/main/js/README.md)).
-- **The Node.js client depends on a sidecar.** If it's down, every guarded call is
-  denied. That's safe, but it makes the sidecar an availability dependency.
+- **The Node.js client depends on a sidecar.** By default, if it's down, every
+  guarded call is denied. `unreachable="degraded"` falls back to a signed
+  offline subset of the policy, and `unreachable="allow"` lets calls through;
+  both weaken protection and are listed above ([sidecar](reference/sidecar.md#when-the-daemon-is-down)).
 
 ## Reporting a vulnerability
 

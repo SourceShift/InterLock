@@ -1,6 +1,6 @@
 # Using detectors
 
-Detectors are ready-made rules, one per kind of attack. interlock ships 105 of
+Detectors are ready-made rules, one per kind of attack. interlock ships 107 of
 them: prompt-injection signatures, SQL injection, secret and PII redaction,
 egress allowlists, SSRF checks, loop and budget limits, MCP trust checks, and
 more. This guide shows how to pick them, how to avoid the one mistake that makes
@@ -215,6 +215,61 @@ BUSINESS_RULES = [
 | `update_ticket(id=7, is_admin=True)` | blocked: `mass_assignment` |
 | `send_email(to=..., body="Your SSN 123-45-6789 is on file")` | rewritten: `Your SSN [REDACTED SSN] is on file` |
 
+## Parsed shell commands
+
+A detector that matches command text loses to respelling: `rm -rf /` is caught,
+`rm -fr /`, `rm -r -f /`, `/bin/rm -Rf /` and `bash -c 'rm -rf /'` aren't. The
+shell-command detectors therefore also **parse** each argument with
+`interlock.shell` and judge the act:
+
+- segments split on `|`, `&&`, `||`, `;` and newlines (never inside quotes);
+- wrappers looked through: `sudo`, `env`, `xargs`, `timeout`, `nice`, `nohup`,
+  `busybox`, `ssh host '...'` and more;
+- scripts parsed recursively: `sh -c`, `bash -lc`, `eval`, `su -c`, `$(...)`,
+  backticks, `<(...)`;
+- `find -exec` parsed with `{}` replaced by the paths `find` searches;
+- string literals in inline interpreter code (`python -c`, `node -e`,
+  `perl -e`, `osascript -e`) parsed as commands, which catches
+  `os.system("rm -rf /")` and `subprocess.run(["rm", "-rf", "/"])`.
+
+The parsed check only ever **adds** findings to the text pattern. Pass
+`parse=False` to `destructive_command_guard` or `git_credential_guard` to keep the
+text check alone.
+
+To block (or ask about) any act by name, use `command_intent_guard`:
+
+```python
+from interlock.detectors.command_intent_guard import command_intent_guard
+
+command_intent_guard(
+    block=["git.push.force:default", "net.fetch_exec", "fs.delete.recursive:critical"],
+    escalate=["pkg.publish", "persist.shell_init"],
+    keys=["command"],          # which arguments hold commands (default: every str)
+)
+```
+
+| Intent | Recognises |
+|---|---|
+| `fs.delete.recursive` | `rm -r` in any spelling, `find -delete`; `:critical` when a target is `/`, `~`, `$HOME` or a system directory |
+| `fs.permissions.recursive` | `chmod/chown/chgrp -R`; critical as above |
+| `disk.overwrite`, `disk.format` | `dd of=/dev/...`, `> /dev/sda`, `shred /dev/...`; `mkfs*`, `wipefs`, `diskutil eraseDisk` |
+| `git.push`, `git.push.force`, `git.push.delete` | with detail `default` (main/master/trunk/...), `topic` or `implicit` (no branch named); sees `git -C`, `+refspec`, `--force-with-lease` and inline aliases |
+| `git.discard` | `reset --hard`, `clean -f`, `checkout .`, `restore .`, `branch -D`, `stash clear/drop` |
+| `credential.read` | `git config --get ...password/url`, `git config --list`, `git credential fill` |
+| `net.fetch`, `net.fetch_exec` | `curl`/`wget`; fetched content piped (`\| sh`, `\| sudo bash`, `\| python3`) or substituted (`bash -c "$(curl ...)"`, `bash <(curl ...)`) into a shell |
+| `pkg.publish` | `npm/pnpm/yarn/bun/cargo/gem/poetry/uv publish`, `twine upload`, `docker push`, `gh release create` |
+| `persist.schedule`, `persist.shell_init` | `crontab`, `at`, `launchctl load`, `systemctl enable`; writes to `~/.bashrc`, `~/.zshrc` and friends |
+| `priv.escalate` | `sudo`, `doas`, `su`, `pkexec` |
+| `interlock.tamper` | `interlock trust`/`install-hook` or a write under `~/.interlock` |
+
+A selector names a kind or a prefix of one (`"git"` covers all `git.*`), and
+`:detail` or `:critical` narrows it. The same selectors work in
+[declarative policies](policies.md) as `{"intent": ...}`.
+
+Parsing is best-effort and **not a boundary**: obfuscated commands
+(`$'\x72\x6d'`, base64, a downloaded script) get past it. Contain untrusted
+commands with the [sandbox](sandbox.md).
+
 ## Extend a detector's patterns
 
 Many signature detectors accept `extra_patterns=` to add your own phrases, matched
@@ -249,7 +304,7 @@ The catalog's **Factory** column shows each detector's parameters.
 
 ## Next
 
-- [Detector catalog](../reference/detectors.md): all 105, grouped, with scope
+- [Detector catalog](../reference/detectors.md): all 107, grouped, with scope
   and parameters.
 - [Writing rules](writing-rules.md): for anything a detector doesn't cover.
 - [Adding a detector](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md#adding-a-detector): contributing a

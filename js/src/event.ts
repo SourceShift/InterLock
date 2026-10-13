@@ -33,6 +33,11 @@ export interface SensorEvent {
   /** Audit trail: who spawned this principal. */
   parent_principal: string | null;
   phase: Phase;
+  /**
+   * One guarded call's identity, shared by its call-side and result-side
+   * events so their receipts can be joined. Absent when the caller minted none.
+   */
+  call_id?: string | null;
 }
 
 export interface SensorEventInit {
@@ -43,6 +48,7 @@ export interface SensorEventInit {
   ts?: number;
   parent_principal?: string | null;
   phase?: Phase;
+  call_id?: string | null;
 }
 
 /**
@@ -50,7 +56,7 @@ export interface SensorEventInit {
  * empty argument object, the current time, and the call side.
  */
 export function sensorEvent(init: SensorEventInit): SensorEvent {
-  return {
+  const event: SensorEvent = {
     action: init.action,
     args: init.args ?? {},
     principal: init.principal ?? null,
@@ -59,4 +65,15 @@ export function sensorEvent(init: SensorEventInit): SensorEvent {
     parent_principal: init.parent_principal ?? null,
     phase: init.phase ?? "call",
   };
+  if (init.call_id) {
+    event.call_id = init.call_id;
+  }
+  return event;
+}
+
+/** A fresh, unguessable id for one guarded call (16 hex characters). */
+export function newCallId(): string {
+  const bytes = new Uint8Array(8);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }

@@ -52,7 +52,7 @@ forge one or quietly skip one. Allowed calls get receipts too.
 |---|---|
 | `ts` | when the call was captured (Unix time) |
 | `action` | the tool or function name |
-| `verdict` | `ALLOW`, `BLOCK`, or `MODIFY` |
+| `verdict` | what was enforced: `ALLOW`, `BLOCK`, `MODIFY`, or `ESCALATE` (handed to an agent's own approval prompt) |
 | `reason` | the rule's reason, copied as written |
 | `policy_id` | the rule's policy id, if it set one |
 | `attributed_to` | the *name* of the argument that triggered the decision |
@@ -63,6 +63,18 @@ forge one or quietly skip one. Allowed calls get receipts too.
 | `prev` | the previous receipt's `mac` (64 zeros for the first) |
 | `mac` | the signature over every other field |
 | `observed` | `true` when monitor mode recorded a decision without enforcing it; absent otherwise |
+| `call_id` | one guarded call's id, shared by its call, result and outcome receipts |
+| `policy_epoch` | which rule set decided (`PolicyEngine.epoch`) |
+| `policy_verdict` | what the policy said, when it differs from `verdict` (an approved or refused `ESCALATE`, a rewrite an agent couldn't apply) |
+| `approval` | how an escalation was settled: `approved:once`, `reused:session`, `declined`, `no-approver`, `delegated:claude-code`, ... |
+| `outcome`, `enforcer` | on `phase="outcome"` receipts for an allowed tool that then failed: `failed`, and `os` (a permission error, which under the sandbox is the sandbox refusing), `policy` (a guard inside the tool) or `tool` |
+| `elapsed_us` | how long the policy evaluation took, in microseconds |
+
+Every field below `observed` is optional and left out while empty, so logs
+written before it existed verify unchanged. `verdict` never overstates
+enforcement: it is what happened. Monitor-mode receipts are the one exception,
+kept for compatibility: their `verdict` is the policy's and `observed` says it
+wasn't enforced.
 
 The digest proves *which* payload was seen without storing it. If you have the
 arguments in hand, you can check them against a receipt:
@@ -105,6 +117,33 @@ with span(principal="acme/agent42"):
 `observed` is covered by the signature like every other field. Receipts for
 enforced decisions leave it out, so logs written before it existed verify
 unchanged.
+
+## When a write fails
+
+A sink that can't write (a full disk, a revoked permission) doesn't leave a
+silent gap. The write raises `Blocked` with policy id `audit_sink`, so the
+guarded call doesn't proceed unrecorded, and the next successful write is
+preceded by a `receipts.dropped` receipt: "3 receipt(s) could not be written;
+last error: OSError". `interlock.receipt.dropped_receipts()` counts the ones not
+yet reported.
+
+## Several writers, one log
+
+Each coding-agent hook call is its own process. `FileSink(path, key=...,
+shared=True)` makes every write take an exclusive file lock and re-read the
+chain head first, so several processes extend one chain instead of forking it.
+POSIX only (`fcntl`).
+
+## Summarize the log
+
+```bash
+interlock report audit.jsonl --key-file audit.key           # totals, top rules, latency
+interlock report audit.jsonl --since 24h --monitor          # what monitor mode would have stopped
+interlock report audit.jsonl --json
+```
+
+The report verifies the chain first when given the key, and always says whether
+it did. Exit code 2 means the chain is broken.
 
 ## Verify the log
 

@@ -74,7 +74,8 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
             "pem_private_key_redactor", "db_uri_redactor", "stripe_key_redactor",
             "slack_webhook_redactor", "s3_presigned_redactor", "output_secret_redactor",
             "secret_entropy_egress_guard", "env_secret_read_guard",
-            "git_credential_guard", "email_pii_redactor", "output_email_redactor",
+            "git_credential_guard", "tool_output_secret_redactor", "email_pii_redactor",
+            "output_email_redactor",
             "iban_redactor", "ssn_redactor", "us_phone_redactor", "ipv4_redactor",
         ],
     ),
@@ -93,7 +94,7 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
         [
             "execution_guard", "code_eval_exec_guard", "code_dunder_escape_guard",
             "code_filesystem_guard", "code_network_guard", "dynamic_import_guard",
-            "subprocess_spawn_guard", "destructive_command_guard",
+            "subprocess_spawn_guard", "destructive_command_guard", "command_intent_guard",
             "sensitive_file_write_guard", "signal_kill_guard", "memory_bomb_guard",
         ],
     ),
@@ -155,6 +156,8 @@ SCOPE_NOTES: Dict[str, str] = {
     "call_rate_limiter": "any call, counted per principal",
     "tool_budget_limiter": "any call, counted per tool name",
     "duplicate_call_loop_guard": "any call, identical repeats in a row",
+    "command_intent_guard": "any call (or the `actions` you name); parses every str "
+                            "argument (or the `keys` you name) as a shell command",
 }
 
 SHOWN_ACTIONS = 8
@@ -198,6 +201,8 @@ def _verdicts(source: str) -> str:
         kinds.append("block")
     if re.search(r"Decision\.modify(_result)?\b", source):
         kinds.append("rewrite")
+    if re.search(r"Decision\.escalate\b", source):
+        kinds.append("ask")
     return ", ".join(kinds) or "–"
 
 
@@ -272,7 +277,8 @@ def render() -> str:
         "  `from interlock.detectors.sql_injection_guard import sql_injection_guard`.",
         "  `=…` marks an optional parameter.",
         "- **Verdict** is what the rule returns on a match: *block* stops the call,",
-        "  *rewrite* lets it continue with the matched text masked or the event stamped.",
+        "  *rewrite* lets it continue with the matched text masked or the event stamped,",
+        "  *ask* pauses it for a human approver (an ESCALATE; blocked when there is none).",
         "- **Scoped to** is which events the rule looks at. A detector scoped to named",
         "  actions **does nothing for a tool with a different name**, so check this",
         "  column before you rely on one. \"any call\" means every call-phase event.",
