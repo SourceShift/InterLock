@@ -82,7 +82,7 @@ worse at both jobs.
 | R27 | Framework sensor adapters | `shipped` | M | operational review |
 | R28 | A2A policy dimension | `shipped` | M | operational review |
 | R29 | MCP transport controls and scoped engine over the sidecar | `shipped` | M | operational review |
-| R30 | Upstream-drift detector | `not started` | M | operational review |
+| R30 | Upstream-drift detector | `shipped` | M | operational review |
 
 ---
 
@@ -1067,9 +1067,9 @@ These came from mapping what operators who deploy agents in an enterprise
 actually ask for — the questions asked when someone has to run an agent fleet
 and answer to a security team — against what interlock ships today. Each is a
 capability *gap*, recorded with the capability named and no reference to any
-particular vendor. Six of the eight are now shipped — R23 and R25–R29 landed with live smoke
-tests — while R24 and R30 remain open (no longer blocked). Each one is what
-makes the detectors usable in a deployment.
+particular vendor. Seven of the eight are now shipped — R23 and R25–R30 landed with live smoke
+tests — while R24 remains open (no longer blocked). Each one is what makes the
+detectors usable in a deployment.
 
 | # | Item | Status | Size | Pull |
 |---|---|---|---|---|
@@ -1080,7 +1080,7 @@ makes the detectors usable in a deployment.
 | R27 | Framework sensor adapters (SDK loops, LiteLLM, CrewAI, ADK) | `shipped` | M | operational review |
 | R28 | A2A policy dimension | `shipped` | M | operational review |
 | R29 | MCP transport controls + scoped engine over the sidecar | `shipped` | M | operational review |
-| R30 | Upstream-drift detector | `not started` | M | operational review |
+| R30 | Upstream-drift detector | `shipped` | M | operational review |
 
 ---
 
@@ -1317,7 +1317,11 @@ policy, and the sidecar keeps refusing an unsigned overlay. Depends on R13
 
 ## R30 · Upstream-drift detector
 
-**Status:** `not started`
+**Status:** `shipped` — `interlock/drift.py` and the `interlock drift` command diff a
+recorded tool listing against the live surface and exit non-zero on any addition,
+removal or schema change. A weekly/PR `Drift` workflow diffs the CLI's own command
+table; live smoke: a corpus of `[read, write]` vs a live `[read, write, exec]`
+reports the added tool and exits 1.
 **Size:** M
 
 ### Problem
