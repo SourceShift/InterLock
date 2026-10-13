@@ -35,6 +35,8 @@ from ..wire import (
     error_frame,
     parse_request,
     response_frame,
+    scope_identity,
+    verify_scope_envelope,
 )
 
 _log = logging.getLogger("interlock")
@@ -45,6 +47,11 @@ _SO_PEERCRED = getattr(socket, "SO_PEERCRED", None)
 _LOCAL_PEERCRED = getattr(socket, "LOCAL_PEERCRED", None)
 _SOL_LOCAL = getattr(socket, "SOL_LOCAL", 0)
 _UID_AT = {"linux": 1, "bsd": 1}  # offset of cr_uid within the returned struct
+
+# Returned by ``_Handler._scope_for`` when the frame's overlay was refused: the
+# error frame has been sent, and the caller must not decide the event. A unique
+# sentinel, not None, because None legitimately means "no scope document".
+_REFUSED = object()
 
 
 def peer_uid(connection: Any) -> Optional[int]:
@@ -112,14 +119,57 @@ class _Handler(socketserver.StreamRequestHandler):
                 self._reply(error_frame(op_id, exc.code, str(exc)))
                 continue
 
+            # A scope overlay rides the request and must verify before the
+            # engine sees the event: an unverified overlay has no decision, so
+            # the far end is told to block rather than served a verdict under a
+            # scope set this daemon did not agree to.
+            scope_document = self._scope_for(frame, op_id)
+            if scope_document is _REFUSED:
+                continue
+
             decision = self._decide(event)
             # Recorded before it is transmitted: the decision happened whether
             # or not the answer could be encoded.
-            emit_receipt(event, decision)
+            emit_receipt(event, decision, scope_document=scope_document)
             try:
                 self._reply(response_frame(op_id, decision))
             except WireError as exc:
                 self._reply(error_frame(op_id, exc.code, str(exc)))
+
+    def _scope_for(self, frame: dict, op_id: str) -> Any:
+        """Resolve this frame's scope-document identity, or :data:`_REFUSED`.
+
+        A frame with no overlay is governed by the daemon's own scope document,
+        if it has one. An overlay must verify under the daemon's key - and, when
+        the daemon serves a document of its own, must be *that* document. Any
+        shortfall (no key to verify with, no signature, a signature that does
+        not verify, a different document) is answered with an error frame, so
+        the far end has no verdict and blocks, and :data:`_REFUSED` keeps the
+        decision from being made.
+        """
+        overlay = frame.get("scope")
+        configured = self.server.scope_document  # type: ignore[attr-defined]
+        if overlay is None:
+            return scope_identity(configured) if configured is not None else None
+        key = self.server.scope_key  # type: ignore[attr-defined]
+        if key is None:
+            self._reply(error_frame(
+                op_id, "unauthenticated_scope",
+                "this daemon has no scope key to verify the overlay",
+            ))
+            return _REFUSED
+        try:
+            verify_scope_envelope(overlay, key)
+        except WireError as exc:
+            self._reply(error_frame(op_id, exc.code, str(exc)))
+            return _REFUSED
+        if configured is not None and scope_identity(overlay) != scope_identity(configured):
+            self._reply(error_frame(
+                op_id, "scope_mismatch",
+                "the presented scope document is not the one this daemon serves",
+            ))
+            return _REFUSED
+        return scope_identity(overlay)
 
     def _decide(self, event: Any) -> Decision:
         engine: PolicyEngine = self.server.engine  # type: ignore[attr-defined]
@@ -188,8 +238,16 @@ class SidecarServer(socketserver.ThreadingUnixStreamServer):
         engine: PolicyEngine,
         *,
         sink: Optional[Any] = None,
+        scope_key: Optional[bytes] = None,
+        scope_document: Optional[Any] = None,
     ) -> None:
         self.engine = engine
+        # The key a request's signed scope overlay must verify under, and the
+        # signed scope document this daemon serves (its envelope). Both optional:
+        # a daemon with neither behaves exactly as before and refuses any overlay
+        # it is handed (there is no key to prove one with).
+        self.scope_key = scope_key
+        self.scope_document = scope_document
         # Connections whose handler thread is still running. ``server_close``
         # shuts them down: a daemon thread would otherwise keep answering on an
         # open connection long after the server stopped accepting new ones.

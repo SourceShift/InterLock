@@ -75,6 +75,12 @@ empty, the same rule ``observed`` follows, so older chains verify unchanged:
   :mod:`interlock.tokens`), a name-free integer a rule may stamp onto the event
   as the plain attribute ``event.tokens`` (a token budget guard does). Omitted
   when no rule estimated one, so an event no rule accounted carries no field.
+- ``scope_document`` identifies the signed scope document that decided the
+  call, as ``"<written_at>:<mac>"`` (the scope document's timestamp and MAC).
+  It is an identity, not a value: the MAC is a digest and ``written_at`` an
+  integer, so no policy content and no argument value rides along. Set by the
+  sidecar when it serves a scoped engine, and by a request that carried a
+  verified scope overlay.
 
 A sink that fails to write is not allowed to turn into a silent gap: the
 failed write raises :class:`~interlock.enforce.Blocked` (fail closed), and the
@@ -193,6 +199,10 @@ class Receipt:
     # that accounts tokens (see token_budget_guard). Omitted while None, like
     # the other optional fields, so older chains verify unchanged.
     tokens: Optional[int] = None
+    # The signed scope document that decided the call, as "<written_at>:<mac>"
+    # (identity only). Omitted while None, like the other R17 fields, so older
+    # chains verify unchanged.
+    scope_document: Optional[str] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape."""
@@ -217,7 +227,7 @@ class Receipt:
 
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
-    "enforcer", "elapsed_us", "masked", "tokens",
+    "enforcer", "elapsed_us", "masked", "tokens", "scope_document",
 )
 
 
@@ -326,6 +336,7 @@ def emit_receipt(
     enforcer: Optional[str] = None,
     elapsed_us: Optional[int] = None,
     phase: Optional[str] = None,
+    scope_document: Optional[str] = None,
 ) -> None:
     """Build one Receipt from the enforced decision and write it to the sink.
 
@@ -373,6 +384,7 @@ def emit_receipt(
         elapsed_us=elapsed_us,
         masked=dict(decision.masked) if getattr(decision, "masked", None) else None,
         tokens=tokens,
+        scope_document=scope_document,
     )
     _write(sink, receipt, event.action)
 

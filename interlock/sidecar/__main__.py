@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
+import secrets
 import signal
 import stat
 import sys
-from typing import Optional
+import tempfile
+from typing import Any, Optional
 
 from .client import probe
 from .rules import RulesError, load_rules
@@ -176,6 +179,101 @@ def _build_sink(receipts: Optional[str], key_file: Optional[str]):
         raise RulesError("cannot use receipts file {}: {}".format(receipts, exc))
 
 
+def _engine_size(engine: Any) -> int:
+    """A rule count for a ``PolicyEngine`` or a ``ScopedEngine``.
+
+    The banner and the admin endpoint both want "how many rules is this daemon
+    serving". A ``PolicyEngine`` answers with ``len``; a ``ScopedEngine`` has
+    neither ``__len__`` nor ``policy_ids`` (it resolves per scope), so its size
+    is the number of templates it can bind.
+    """
+    policy_ids = getattr(engine, "policy_ids", None)
+    if policy_ids is not None:
+        try:
+            return len(policy_ids)
+        except TypeError:
+            pass
+    try:
+        return len(engine)
+    except TypeError:
+        pass
+    registry = getattr(engine, "registry", None)
+    templates = getattr(registry, "templates", None)
+    if isinstance(templates, dict):
+        return len(templates)
+    return 0
+
+
+def _scope_key(key_file: Optional[str]) -> bytes:
+    """The key a scope document is signed and verified with.
+
+    ``--key-file`` when given, else a random per-process secret - the same
+    default receipts use, and the same consequence: a document signed with a
+    per-process key is verifiable only by this run and prints a warning.
+    """
+    if key_file is not None:
+        return _read_key(key_file)
+    return secrets.token_bytes(32)
+
+
+def _write_scope_document(path: str, envelope: dict) -> None:
+    """Atomically write a signed scope document (mode 0600)."""
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".scope-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(envelope, fh)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _load_scope(args: Any) -> "tuple":
+    """Build ``(scoped_engine, key, envelope)`` for ``--scope-document``.
+
+    An existing ``PATH`` must hold a signed document that verifies under the
+    key; a missing one is *published* from the rules module's declared scope
+    document, signed the same way - mirroring ``--fallback-policy``. Either way
+    the document is compiled against the module's ``templates``, and any
+    shortfall (unreadable/unverified document, an unknown template, a module
+    that declares no scopes) is a :class:`RulesError`: a guard told to serve a
+    scope set it cannot build must refuse to start, not start scoping nothing.
+    """
+    from ..wire import WireError, scope_envelope, verify_scope_envelope
+    from .rules import build_scoped_engine, load_rules_module, scope_document_of
+
+    module = load_rules_module(args.rules)
+    key = _scope_key(args.key_file)
+    path = args.scope_document
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                envelope = json.load(fh)
+        except (OSError, ValueError) as exc:
+            raise RulesError("cannot read scope document {}: {}".format(path, exc))
+        try:
+            policy = verify_scope_envelope(envelope, key)
+        except WireError as exc:
+            raise RulesError("scope document {}: {}".format(path, exc))
+        document = json.loads(policy)
+    else:
+        document = scope_document_of(module)
+        envelope = scope_envelope(document, key)
+        try:
+            _write_scope_document(path, envelope)
+        except OSError as exc:
+            raise RulesError(
+                "cannot publish scope document {}: {}".format(path, exc.strerror or exc)
+            )
+    engine = build_scoped_engine(document, getattr(module, "templates", None) or {})
+    return engine, key, envelope
+
+
 def _publish_fallback(policy_file: Optional[str], key_file: Optional[str], socket_path: str) -> None:
     """Validate, sign and write the offline fallback policy next to the socket."""
     if not policy_file:
@@ -234,6 +332,16 @@ def _parse_args(argv):
              "clients running with unreachable='degraded' (see interlock.sidecar.fallback)",
     )
     parser.add_argument(
+        "--scope-document",
+        default=None,
+        metavar="PATH",
+        help="serve a scoped engine from this signed scope document. An existing "
+             "PATH is read and verified (signed with --key-file); a missing PATH is "
+             "published there from the rules module's scope_document, like "
+             "--fallback-policy. The module must export the `templates` the "
+             "document binds (see interlock.sidecar.rules.build_scoped_engine)",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="validate the rules and exit without serving",
@@ -258,6 +366,15 @@ def main(argv: Optional[list] = None) -> int:
         )
         return 0
 
+    scope_key = None
+    scope_document = None
+    if args.scope_document:
+        try:
+            engine, scope_key, scope_document = _load_scope(args)
+        except RulesError as exc:
+            sys.stderr.write("interlock-sidecar: {}\n".format(exc))
+            return EXIT_BAD_RULES
+
     path = args.socket or default_socket_path()
     try:
         sink = _build_sink(args.receipts, args.key_file)
@@ -270,7 +387,10 @@ def main(argv: Optional[list] = None) -> int:
     _disable_core_dumps()
 
     try:
-        server = SidecarServer(path, engine, sink=sink)
+        server = SidecarServer(
+            path, engine, sink=sink,
+            scope_key=scope_key, scope_document=scope_document,
+        )
     except OSError as exc:
         sys.stderr.write(
             "interlock-sidecar: cannot listen on {}: {}\n".format(path, exc)
@@ -281,10 +401,14 @@ def main(argv: Optional[list] = None) -> int:
     sys.stderr.write(
         "interlock-sidecar: listening on {}\n"
         "  rules:    {} ({} rules)\n"
+        "  scopes:   {}\n"
         "  receipts: {}\n".format(
             path,
             args.rules,
-            len(engine),
+            _engine_size(engine),
+            args.scope_document
+            if args.scope_document
+            else "off - one rule set for every principal",
             args.receipts
             if args.receipts
             else "off - decisions will not be recorded",
@@ -295,6 +419,11 @@ def main(argv: Optional[list] = None) -> int:
             "  WARNING:  receipts are signed with a per-process secret, so the "
             "chain is verifiable only by this process. Use --key-file for a "
             "durable key.\n"
+        )
+    if args.scope_document and args.key_file is None:
+        sys.stderr.write(
+            "  WARNING:  the scope document is signed with a per-process secret, so "
+            "it is verifiable only by this process. Use --key-file for a durable key.\n"
         )
 
     def _stop(signum, frame):  # pragma: no cover - delivered by the OS
@@ -311,11 +440,12 @@ def main(argv: Optional[list] = None) -> int:
         from .admin import start as start_admin
         try:
             admin = start_admin(args.admin, lambda: {
-                "rules": engine.policy_ids if hasattr(engine, "policy_ids") else len(engine),
+                "rules": _engine_size(engine),
                 "epoch": getattr(engine, "epoch", None),
                 "socket": path,
                 "receipts": bool(args.receipts),
                 "fallback_policy": bool(args.fallback_policy),
+                "scope_document": bool(args.scope_document),
             })
         except (ValueError, OSError) as exc:
             sys.stderr.write("interlock-sidecar: admin endpoint: {}\n".format(exc))

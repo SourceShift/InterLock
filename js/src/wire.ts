@@ -5,7 +5,8 @@
  * newline-delimited canonical JSON:
  *
  *     request   {"v":1,"id":...,"event":{action,args,principal,span_id,
- *                                        parent_principal,phase,ts,call_id}}
+ *                                        parent_principal,phase,ts,call_id},
+ *                "scope":{... signed scope document, optional ...}}
  *     response  {"v":1,"id":...,"verdict":0|1|2,"reason":...,"policy_id":...,
  *                "attributed_to":...,"modified_args":...,"modified_result":...}
  *
@@ -48,7 +49,7 @@ export const MAX_LINE = 8 * 1024 * 1024;
 const TAG = "__interlock__";
 const BYTES = "bytes";
 
-const REQUEST_KEYS: ReadonlySet<string> = new Set(["v", "id", "event"]);
+const REQUEST_KEYS: ReadonlySet<string> = new Set(["v", "id", "event", "scope"]);
 const EVENT_KEYS: ReadonlySet<string> = new Set([
   "action",
   "args",
@@ -70,6 +71,21 @@ const RESPONSE_KEYS: ReadonlySet<string> = new Set([
   "modified_result",
 ]);
 const PHASES: readonly Phase[] = ["call", "result"];
+
+/**
+ * The signed scope-document envelope. Same key set as the Python
+ * (`interlock.wire.SCOPE_KEYS`) and the offline fallback policy; a request may
+ * carry one under the optional `scope` key. The daemon verifies the MAC (it
+ * holds the key); this reader only checks the envelope's shape, so an unsigned
+ * or malformed overlay is refused before it is trusted.
+ */
+export const SCOPE_VERSION = 1;
+const SCOPE_KEYS: ReadonlySet<string> = new Set([
+  "version",
+  "written_at",
+  "policy",
+  "mac",
+]);
 
 /**
  * A frame that cannot be honoured. `code` is one of the wire codes.
@@ -330,7 +346,11 @@ function optStr(frame: Record<string, unknown>, key: string): string | null {
 }
 
 /** Build the frame that asks the engine to decide one event. */
-export function requestFrame(opId: string, event: SensorEvent): Record<string, unknown> {
+export function requestFrame(
+  opId: string,
+  event: SensorEvent,
+  scope?: Record<string, unknown> | null,
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     action: event.action,
     args: encodeValue(event.args),
@@ -345,12 +365,66 @@ export function requestFrame(opId: string, event: SensorEvent): Record<string, u
   if (event.ts) {
     payload["ts"] = event.ts;
   }
-  return { v: PROTOCOL_VERSION, id: opId, event: payload };
+  const frame: Record<string, unknown> = { v: PROTOCOL_VERSION, id: opId, event: payload };
+  if (scope !== undefined && scope !== null) {
+    frame["scope"] = scope;
+  }
+  return frame;
+}
+
+/**
+ * Read the optional signed scope overlay out of a request frame.
+ *
+ * Mirrors `interlock.wire.parse_scope`: returns null when the frame carries no
+ * scope, and otherwise checks the envelope's shape - exact keys, the right
+ * version, a string `policy` that is valid JSON, and a non-empty `mac` - raising
+ * a `WireError` with code `unauthenticated_scope` on any shortfall. The MAC
+ * itself is the daemon's to check; it holds the key.
+ */
+function parseScope(frame: Record<string, unknown>): Record<string, unknown> | null {
+  const scope = frame["scope"];
+  if (scope === undefined || scope === null) {
+    return null;
+  }
+  if (typeof scope !== "object" || Array.isArray(scope)) {
+    throw new WireError("unauthenticated_scope", "scope must be a JSON object");
+  }
+  const record = scope as Record<string, unknown>;
+  checkKeys(record, SCOPE_KEYS, "scope");
+  if (record["version"] !== SCOPE_VERSION) {
+    throw new WireError(
+      "unauthenticated_scope",
+      `scope.version must be ${SCOPE_VERSION}`,
+    );
+  }
+  const writtenAt = record["written_at"];
+  if (typeof writtenAt !== "number" || !Number.isInteger(writtenAt)) {
+    throw new WireError("unauthenticated_scope", "scope.written_at must be an integer");
+  }
+  const policy = record["policy"];
+  if (typeof policy !== "string") {
+    throw new WireError("unauthenticated_scope", "scope.policy must be a string");
+  }
+  try {
+    JSON.parse(policy);
+  } catch (err) {
+    throw new WireError(
+      "unauthenticated_scope",
+      `scope.policy is not valid JSON: ${(err as Error).message}`,
+    );
+  }
+  const mac = record["mac"];
+  if (typeof mac !== "string" || mac.length === 0) {
+    throw new WireError("unauthenticated_scope", "scope document is unsigned (no mac)");
+  }
+  return record;
 }
 
 export interface ParsedRequest {
   opId: string;
   event: SensorEvent;
+  /** The signed scope overlay the request carried, or null when it carried none. */
+  scope: Record<string, unknown> | null;
 }
 
 /**
@@ -363,6 +437,7 @@ export interface ParsedRequest {
  */
 export function parseRequest(frame: Record<string, unknown>): ParsedRequest {
   checkKeys(frame, REQUEST_KEYS, "request");
+  const scope = parseScope(frame);
   const opId = frame["id"];
   if (typeof opId !== "string" || opId.length === 0) {
     throw new WireError("bad_request", "id must be a non-empty string");
@@ -415,7 +490,7 @@ export function parseRequest(frame: Record<string, unknown>): ParsedRequest {
   if (callId !== null) {
     parsed.call_id = callId;
   }
-  return { opId, event: parsed };
+  return { opId, event: parsed, scope };
 }
 
 /**

@@ -306,6 +306,11 @@ CASES = [
     ("mcp_tool_pinning",
      lambda: dmod("mcp_tool_pinning"),
      "search", {"__schema__": "schema-v2"}, "__schema__", Verdict.BLOCK),
+    ("mcp_transport_guard",
+     lambda: dmod("mcp_transport_guard").mcp_transport_guard(
+         ["stdio"], stdio_exceptions=["uvx"]),
+     "mcp.connect", {"transport": "http", "url": "https://evil.example/x"},
+     "transport", Verdict.BLOCK),
     ("mcp_trust_registry",
      lambda: dmod("mcp_trust_registry").mcp_trust_registry(["corp.agent"]),
      "mcp.call", {"__origin__": "shadow"}, "__origin__", Verdict.BLOCK),

@@ -177,6 +177,44 @@ test("parseRequest: phase defaults to call and ts defaults to now", () => {
   assert.ok(Math.abs(parsed.event.ts - Date.now() / 1000) < 5);
 });
 
+test("a signed scope overlay round-trips and an absent one is null", () => {
+  const envelope = {
+    version: 1,
+    written_at: 1_700_000_000,
+    policy: '{"version":1,"bindings":{}}',
+    mac: "ab".repeat(32),
+  };
+  const carried = parseRequest(requestFrame("op-1", sensorEvent({ action: "ping" }), envelope));
+  assert.deepEqual(carried.scope, envelope);
+  const none = parseRequest(requestFrame("op-1", sensorEvent({ action: "ping" })));
+  assert.equal(none.scope, null);
+});
+
+test("parseRequest refuses an unsigned or malformed scope overlay", () => {
+  const bad = (scope: unknown): void => {
+    assert.throws(
+      () => parseRequest({ v: 1, id: "x", event: { action: "ping", args: {} }, scope }),
+      isWireError("unauthenticated_scope"),
+    );
+  };
+  bad({ version: 1, written_at: 1, policy: "{}" }); // no mac
+  bad({ version: 1, written_at: 1, policy: "{}", mac: "" }); // blank mac
+  bad({ version: 2, written_at: 1, policy: "{}", mac: "ab" }); // wrong version
+  bad({ version: 1, written_at: 1, policy: "not json", mac: "ab" }); // bad policy
+  bad("a string"); // not an object
+  // An unknown scope key is a plain malformed frame (like `_check_keys` in
+  // Python), not a signature problem.
+  assert.throws(
+    () => parseRequest({
+      v: 1,
+      id: "x",
+      event: { action: "ping", args: {} },
+      scope: { version: 1, written_at: 1, policy: "{}", mac: "ab", extra: 1 },
+    }),
+    isWireError("bad_request"),
+  );
+});
+
 const OK_RESPONSE: Record<string, unknown> = {
   v: 1,
   id: "op-1",

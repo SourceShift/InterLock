@@ -105,7 +105,8 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
         "MCP servers and tools",
         "Which servers an agent may connect to, and whether their tools changed since review.",
         [
-            "mcp_server_allowlist", "mcp_tool_pinning", "mcp_tool_description_scan",
+            "mcp_server_allowlist", "mcp_transport_guard", "mcp_tool_pinning",
+            "mcp_tool_description_scan",
             "mcp_trust_registry", "mcp_resource_uri_guard", "mcp_sampling_model_guard",
             "mcp_consent_budget", "mcp_capability_lease", "mcp_server_attestation",
             "mcp_elicitation_guard",

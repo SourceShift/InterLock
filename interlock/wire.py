@@ -5,7 +5,8 @@ its own rules. It gets a socket to this process, which owns the one engine. Two
 frames cross it, both newline-delimited canonical JSON:
 
     request   {"v":1,"id":...,"event":{action,args,principal,span_id,
-                                       parent_principal,phase,ts,call_id}}
+                                       parent_principal,phase,ts,call_id},
+               "scope":{... signed scope document, optional ...}}
     response  {"v":1,"id":...,"verdict":0|1|2|3,"reason":...,"policy_id":...,
                "attributed_to":...,"modified_args":...,"modified_result":...}
 
@@ -26,13 +27,28 @@ Two decisions here are fail-closed choices, not style:
   A value the codec cannot represent raises :class:`Unrepresentable` rather than
   being coerced or dropped, because a sanitizer that silently declines to
   sanitize is worse than one that refuses.
+
+A request may also carry a **signed scope document** under the optional
+``scope`` key. It is the same signed envelope the offline fallback policy uses
+(``interlock.sidecar.fallback``): ``version``/``written_at``/``policy``/``mac``,
+with ``policy`` the document as a canonical-JSON string and ``mac`` an
+HMAC-SHA256 over ``"<written_at>\\n<policy>"``. Carrying it as a string means the
+Python and Node.js peers verify the same bytes without agreeing on a JSON
+canonicalization. An overlay the far end cannot verify is refused rather than
+ignored: a scope document that silently fails to verify would let a client
+believe it is governed by a scope set the daemon never applied. The MAC is
+verified by the daemon (which holds the key); :func:`parse_request` refuses an
+overlay that is unsigned or malformed before it reaches the engine.
 """
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import math
-from typing import Any, Dict, Tuple
+import time
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .enforce import Decision, Verdict
 from .event import SensorEvent
@@ -50,7 +66,7 @@ MAX_LINE = 8 * 1024 * 1024
 _TAG = "__interlock__"
 _BYTES = "bytes"
 
-_REQUEST_KEYS = frozenset({"v", "id", "event"})
+_REQUEST_KEYS = frozenset({"v", "id", "event", "scope"})
 _EVENT_KEYS = frozenset(
     {"action", "args", "principal", "span_id", "parent_principal", "phase", "ts",
      "call_id"}
@@ -68,6 +84,12 @@ _RESPONSE_KEYS = frozenset(
     }
 )
 _PHASES = ("call", "result")
+
+# The signed scope-document envelope. Same key set and MAC formula as the
+# offline fallback policy (``interlock.sidecar.fallback``); a scope document is
+# signed and verified exactly like one.
+SCOPE_VERSION = 1
+SCOPE_KEYS = frozenset({"version", "written_at", "policy", "mac"})
 
 
 class WireError(Exception):
@@ -89,6 +111,20 @@ class Unrepresentable(WireError):
         super().__init__("unrepresentable", message)
 
 
+class UnauthenticatedScope(WireError):
+    """A scope-document overlay that is unsigned, malformed, or does not verify.
+
+    Its own code (``unauthenticated_scope``) so a client can tell "your scope
+    document is not the one this daemon trusts" apart from a generic bad frame.
+    Every rung of the ladder - absent, wrong version, non-str ``mac``, MAC
+    mismatch - is this same refusal: the client has no verified scope, so it must
+    block.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__("unauthenticated_scope", message)
+
+
 def canonical(obj: Any) -> str:
     """The one serialization used on the wire: sorted keys, tight separators.
 
@@ -102,6 +138,73 @@ def canonical(obj: Any) -> str:
         )
     except ValueError as exc:
         raise Unrepresentable("value is not JSON-representable: {}".format(exc))
+
+
+# --- the signed scope document ----------------------------------------------
+
+def scope_mac(key: bytes, written_at: int, policy: str) -> str:
+    """The MAC over a scope document: ``HMAC-SHA256(key, "<written_at>\\n<policy>")``.
+
+    Identical to the fallback policy's MAC (``interlock.sidecar.fallback._mac``),
+    and deliberately so: one formula means one place to reason about, and the
+    Node.js peer can verify a scope document with the code it already uses for
+    the fallback policy.
+    """
+    message = "{}\n{}".format(written_at, policy).encode("utf-8")
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+def scope_envelope(
+    document: Mapping[str, Any], key: bytes, *, written_at: Optional[int] = None
+) -> Dict[str, Any]:
+    """Sign ``document`` into the envelope that travels on the wire and to disk.
+
+    The document is serialized to a canonical JSON *string* and the MAC covers
+    those exact bytes, so a verifier never has to re-serialize the document (and
+    never has to agree on a canonicalization) to check the signature.
+    """
+    policy = canonical(document)
+    stamp = int(time.time()) if written_at is None else int(written_at)
+    return {
+        "version": SCOPE_VERSION,
+        "written_at": stamp,
+        "policy": policy,
+        "mac": scope_mac(key, stamp, policy),
+    }
+
+
+def verify_scope_envelope(envelope: Any, key: bytes) -> str:
+    """Verify a signed scope envelope under ``key``; return its ``policy`` string.
+
+    The refusal ladder mirrors ``read_fallback``'s: a non-object, a wrong or
+    missing version, a non-str/absent ``mac``, an absent/non-str ``policy``, and
+    a MAC mismatch all raise :class:`UnauthenticatedScope`. Fail-closed at every
+    rung - a scope document that cannot be proven is refused, never assumed.
+    """
+    if not isinstance(envelope, dict):
+        raise UnauthenticatedScope("scope document must be an object")
+    if envelope.get("version") != SCOPE_VERSION:
+        raise UnauthenticatedScope("not a scope document (bad or missing version)")
+    written_at = envelope.get("written_at")
+    policy = envelope.get("policy")
+    mac = envelope.get("mac")
+    if not isinstance(written_at, int) or isinstance(written_at, bool):
+        raise UnauthenticatedScope("scope document is missing a written_at int")
+    if not isinstance(policy, str) or not isinstance(mac, str) or not mac:
+        raise UnauthenticatedScope("scope document is unsigned or malformed")
+    if not hmac.compare_digest(scope_mac(key, written_at, policy), mac):
+        raise UnauthenticatedScope("scope document signature does not verify")
+    return policy
+
+
+def scope_identity(envelope: Mapping[str, Any]) -> str:
+    """A signed scope document's identity: ``"<written_at>:<mac>"``.
+
+    Identifies *which* document decided without carrying any of its content -
+    the same name-not-value rule ``attributed_to`` and the receipt's args digest
+    follow. Two documents with the same identity are the same signed bytes.
+    """
+    return "{}:{}".format(envelope.get("written_at"), envelope.get("mac"))
 
 
 # --- the value codec ---------------------------------------------------------
@@ -216,8 +319,19 @@ def _opt_str(frame: Dict[str, Any], key: str) -> Any:
     return value
 
 
-def request_frame(op_id: str, event: SensorEvent) -> Dict[str, Any]:
-    """Build the frame that asks the engine to decide one event."""
+def request_frame(
+    op_id: str,
+    event: SensorEvent,
+    *,
+    scope: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the frame that asks the engine to decide one event.
+
+    ``scope``, when given, is the signed scope-document envelope
+    (:func:`scope_envelope`) the client presents for this call; it is omitted
+    entirely when absent, so a client with no scope document sends exactly the
+    frame earlier clients sent.
+    """
     payload: Dict[str, Any] = {
         "action": event.action,
         "args": encode_value(event.args),
@@ -229,7 +343,48 @@ def request_frame(op_id: str, event: SensorEvent) -> Dict[str, Any]:
             payload[key] = value
     if event.ts:
         payload["ts"] = event.ts
-    return {"v": PROTOCOL_VERSION, "id": op_id, "event": payload}
+    frame: Dict[str, Any] = {"v": PROTOCOL_VERSION, "id": op_id, "event": payload}
+    if scope is not None:
+        frame["scope"] = scope
+    return frame
+
+
+def parse_scope(frame: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Read the optional signed scope overlay out of a request frame.
+
+    Returns None when the frame carries no scope. When it does, the envelope's
+    *shape* is checked here - exact keys, the right version, an int
+    ``written_at``, a str ``policy`` that is valid JSON, and a non-empty ``mac``
+    - and any shortfall raises :class:`UnauthenticatedScope`. The MAC itself is
+    not checked here because this module holds no key; the daemon verifies it
+    with :func:`verify_scope_envelope` before the overlay is trusted. Shape
+    first, then signature: an overlay with no ``mac`` is refused as unsigned
+    without ever reaching the key check.
+    """
+    scope = frame.get("scope")
+    if scope is None:
+        return None
+    if not isinstance(scope, dict):
+        raise UnauthenticatedScope("scope must be a JSON object")
+    _check_keys(scope, SCOPE_KEYS, "scope")
+    if scope.get("version") != SCOPE_VERSION:
+        raise UnauthenticatedScope(
+            "scope.version must be {}".format(SCOPE_VERSION)
+        )
+    written_at = scope.get("written_at")
+    if not isinstance(written_at, int) or isinstance(written_at, bool):
+        raise UnauthenticatedScope("scope.written_at must be an integer")
+    policy = scope.get("policy")
+    if not isinstance(policy, str):
+        raise UnauthenticatedScope("scope.policy must be a string")
+    try:
+        json.loads(policy)
+    except ValueError as exc:
+        raise UnauthenticatedScope("scope.policy is not valid JSON: {}".format(exc))
+    mac = scope.get("mac")
+    if not isinstance(mac, str) or not mac:
+        raise UnauthenticatedScope("scope document is unsigned (no mac)")
+    return scope
 
 
 def parse_request(frame: Dict[str, Any]) -> Tuple[str, SensorEvent]:
@@ -241,6 +396,7 @@ def parse_request(frame: Dict[str, Any]) -> Tuple[str, SensorEvent]:
     into a bypass.
     """
     _check_keys(frame, _REQUEST_KEYS, "request")
+    parse_scope(frame)
     op_id = frame.get("id")
     if not isinstance(op_id, str) or not op_id:
         raise WireError("bad_request", "id must be a non-empty string")

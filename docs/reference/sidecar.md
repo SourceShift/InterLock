@@ -40,7 +40,7 @@ or set `PYTHONPATH`.
 
 ```
 interlock-sidecar --rules MODULE:ATTR [--socket SOCKET] [--receipts PATH] [--key-file PATH]
-                  [--fallback-policy FILE] [--admin HOST:PORT] [--check]
+                  [--fallback-policy FILE] [--scope-document PATH] [--admin HOST:PORT] [--check]
 ```
 
 | Flag | Meaning |
@@ -50,6 +50,7 @@ interlock-sidecar --rules MODULE:ATTR [--socket SOCKET] [--receipts PATH] [--key
 | `--receipts PATH` | Append a signed receipt for every decision to `PATH`. Default: no receipts. |
 | `--key-file PATH` | The receipt signing key: a file holding 64 hex characters, or raw bytes. A trailing newline is stripped. Without it, a random per-process key is used, which only this daemon run can verify (it prints a warning). |
 | `--fallback-policy FILE` | Publish this offline policy, signed with `--key-file`, as `<socket>.fallback.json` for clients running with `unreachable="degraded"` (below). Needs `--key-file`. The file must use the offline subset of the [policy language](../guides/policies.md). |
+| `--scope-document PATH` | Serve a per-principal [scoped engine](../guides/scopes.md) from the signed scope document at `PATH`. An existing `PATH` is read and verified (its MAC must check under `--key-file`); a missing `PATH` is published there from the rules module's `scope_document`, signed the same way, like `--fallback-policy`. The rules module must export the `templates` the document binds (see [Scoped engines](#scoped-engines) below). |
 | `--admin HOST:PORT` | Serve `/healthz`, `/stats`, `/metrics` (Prometheus) and `/config` (rule ids, epoch) on a loopback address. Non-loopback addresses are refused. See the [production checklist](../guides/production.md#watch-it-in-production). |
 | `--check` | Load and validate the rules, print how many there are, and exit without touching the socket or reading the key file. Use it in CI or before a deploy. |
 
@@ -58,8 +59,38 @@ serving one would look healthy while guarding nothing. The daemon refuses to
 start instead.
 
 **Only a `PolicyEngine` or a list of rules is accepted.** A `ScopedEngine` is
-refused with `expected a PolicyEngine or a list of rules`, so per-tenant
-[scopes](../guides/scopes.md) can't be served through the sidecar today.
+refused with `expected a PolicyEngine or a list of rules`; to serve per-tenant
+[scopes](../guides/scopes.md), describe them in a scope document and pass it
+with `--scope-document` (below) rather than exporting a `ScopedEngine`.
+
+### Scoped engines
+
+`--scope-document` serves the per-principal decisions of a `ScopedEngine` over
+the same socket. The document is pure data - which scope binds which template,
+with which params:
+
+```json
+{"version": 1, "default_scope": [], "allow_unscoped": false,
+ "bindings": {"acme": [{"template": "shell_allowlist", "params": {"allow": ["ls", "pwd"]}}],
+              "acme/agent1": [{"template": "shell_allowlist", "params": {"allow": ["ls"]}}]}}
+```
+
+The templates it names are code, and stay in the rules module, which must export
+a `templates` mapping (`{template_id: interlock.policy.scopes.Template}`). A
+binding that names a template the module does not declare is a refusal at
+startup, not a silently dropped rule. To publish the document, the module also
+declares it under a `scope_document` attribute (a mapping, or a callable
+returning one), so a daemon pointed at a not-yet-written `PATH` writes the
+signed document there - the same publish step `--fallback-policy` performs.
+
+The document is signed like the fallback policy: an envelope of
+`version`/`written_at`/`policy`/`mac`, where `policy` is the document as a
+canonical-JSON string and `mac` is an HMAC-SHA256 over `"<written_at>\n<policy>"`.
+An existing `PATH` whose MAC does not verify under the key is refused (exit `2`).
+The scope document the daemon serves is recorded in every
+[receipt](python-api.md#receipts-interlocksink-and-interlockreceipt)'s
+`scope_document` provenance field as its `"<written_at>:<mac>"` identity - a name,
+never the policy content.
 
 Startup messages and errors go to stderr. Stop the daemon with `SIGINT` or
 `SIGTERM`. It removes its socket file on the way out.
@@ -242,6 +273,7 @@ The reference implementation is [`interlock/wire.py`](https://github.com/SourceS
 | `event.phase` | no | `"call"` (default) or `"result"`. |
 | `event.principal`, `event.span_id`, `event.parent_principal`, `event.call_id` | no | String or `null`. `call_id` links a call's and its result's events. |
 | `event.ts` | no | A finite number. |
+| `scope` | no | A signed scope-document overlay (below). When present it must verify under the daemon's key and be the document the daemon serves, or the daemon answers with an error frame. |
 
 **Response**
 
@@ -269,6 +301,8 @@ An error frame carries no verdict, so **a client must treat it as a block.**
 | `bad_version` | `v` is not `1`. |
 | `too_large` | The line exceeded 8 MiB or wasn't terminated. The connection closes. |
 | `unrepresentable` | A value (often a rule's rewrite) can't be encoded. |
+| `unauthenticated_scope` | A request's `scope` overlay is unsigned, tampered, or otherwise doesn't verify under the daemon's key. |
+| `scope_mismatch` | A request's `scope` overlay verifies, but is not the scope document the daemon serves. |
 | `internal` | The daemon produced something it couldn't send. |
 
 ### Values
