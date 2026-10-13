@@ -16,9 +16,9 @@ export function UnlockDialog({ v }: { v: Vals }) {
           <pre style={{ margin: "0", padding: "12px 14px", borderRadius: "8px", background: "var(--il-sunken)", border: "1px solid var(--il-rule)", fontFamily: "'Martian Mono',monospace", fontSize: "10.5px", lineHeight: "1.7", color: "var(--il-fg2)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
             {"$ "}
             <span className="sc-interp">{v.unlockCmd}</span>
-            {"\ninterlock console on "}
+            {"\ninterlock console listening on "}
             <span className="sc-interp">{v.baseUrl}</span>
-            {" (read-only)\nunlock writes: "}
+            {"\nunlock writes: "}
             <span className="sc-interp">{v.baseUrl}</span>
             {"/#/unlock/"}
             <span style={{ color: "var(--il-acc)" }}>

@@ -50,7 +50,7 @@ PATCHES = [
     ("font-size:11px\">~/.interlock/policy.json</code>. Hooks read", "font-size:11px\">{{ pol.path }}</code>. Hooks read"),
     # Unlock: this console's own address; never a code (only the terminal has it).
     ("$ python3 -m interlock.console --receipts ~/.interlock/receipts.jsonl\ninterlock console on http://127.0.0.1:8787 (read-only)\nunlock writes: http://127.0.0.1:8787/#/unlock/<span style=\"color:var(--il-acc)\">k7Qm-2fXa-9RtL</span>",
-     "$ {{ unlockCmd }}\ninterlock console on {{ baseUrl }} (read-only)\nunlock writes: {{ baseUrl }}/#/unlock/<span style=\"color:var(--il-acc)\">xxxx-xxxx-xxxx</span>"),
+     "$ {{ unlockCmd }}\ninterlock console listening on {{ baseUrl }}\nunlock writes: {{ baseUrl }}/#/unlock/<span style=\"color:var(--il-acc)\">xxxx-xxxx-xxxx</span>"),
     # Reviews: four-eyes is a console setting, not a per-rule one.
     ("Four-eyes is on for this rule,", "Four-eyes is on for this console,"),
     # Activity: the bucketed report API this note asked for now exists.

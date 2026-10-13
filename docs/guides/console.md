@@ -2,108 +2,151 @@
 
 interlock has no network surface of its own: every check runs in-process,
 inside your agent. The console is the one piece that opens a socket — a local
-web UI over the policy engine running in this process, for an operator sitting
-at the same machine. It serves a small JSON API under `/api/` and a React
-single-page app, both bound to loopback only.
+web app for the person running the agent, on the same machine. It shows what
+the guard decided, lets you settle the calls waiting on a human, and lets you
+write and test the policy behind those decisions. It binds to loopback only,
+and the page loads nothing from any other origin.
 
-You'll need: interlock installed, and Node.js to build the web bundle (only
-needed once, or whenever the bundle changes — the console server itself has no
-dependencies beyond the Python standard library).
+You'll need: interlock installed, and Node.js to build the web bundle (once,
+or whenever the bundle changes — the console server itself uses only the
+Python standard library).
 
 ## Build the web bundle
-
-The console serves a static build of the web app; it does not build it for
-you.
 
 ```bash
 npm --prefix web ci
 npm --prefix web run build
 ```
 
-This produces `web/dist/`. Rebuild it whenever `web/src` changes.
+This produces `web/dist/`, fonts included. Rebuild it whenever `web/src`
+changes.
 
 ## Launch the console
 
-```bash
-python -m interlock.console
-```
-
-or, once interlock is installed, the equivalent console script:
+Point it at the same files your guard uses. For the coding-agent hooks those
+are in `~/.interlock/`:
 
 ```bash
-interlock-console
+python -m interlock.console \
+  --receipts ~/.interlock/receipts.jsonl --key-file ~/.interlock/receipts.key
 ```
 
-Either prints one line once it's listening:
+or, once interlock is installed, `interlock-console` with the same flags. It
+prints one line on stdout once it's listening, and the unlock link on stderr:
 
 ```
 interlock console listening on http://127.0.0.1:7878
+unlock writes: http://127.0.0.1:7878/#/unlock/k7Qm-2fXa-9RtL
 ```
 
-Open that URL in a browser. The overview page shows whether the API is
-reachable; the navigation bar links to the catalog, playground, audit log and
-inspector pages as each one's spec lands.
+Open the first URL. The console starts **read-only**.
+
+## Unlocking writes
+
+Deciding a review and saving the policy are writes, and the console refuses
+them until you unlock the tab. The reason is the agent on the same machine: it
+can't run `interlock reviews approve` or write under `~/.interlock` (the
+coding-agent pack blocks both), but without a gate it could `curl` the
+console's API and do the same thing.
+
+So each launch makes a one-off code and prints it, as the `unlock writes`
+link, to the console's own terminal — nowhere else. Open the link, or paste it
+into the unlock dialog. That tab gets a token held only in its own session
+storage; other tabs stay read-only, and restarting the console re-locks every
+tab. **Re-lock** in the banner drops the token. After ten wrong codes the gate
+refuses every further attempt until the console restarts.
+
+As a second line, the coding-agent pack's `self-protect-commands` rule treats
+an HTTP client calling the console's unlock or write routes as tampering, so an
+agent's `curl` to them is blocked before it runs.
+
+## The screens
+
+| Screen | What it's for |
+|---|---|
+| **Activity** | Is protection on, is the receipt chain intact, is anything waiting on you. Decisions over the last 30 minutes, 24 hours or 7 days: the verdict mix, a timeline you can focus on one slot, the newest decisions as they arrive, the rules that stopped the most, what monitor-mode rules *would* have done, how escalations were settled, evaluation latency. |
+| **Reviews** | The [review queue](reviews.md): every held call with its countdown, the rule and the argument preview. Approve, reject with a reason, or revoke an approval the agent hasn't used yet. Keyboard: `j`/`k` to move, `a` to approve, `r` to reject, `?` for the list. |
+| **Audit log** | Every [receipt](audit-log.md), newest first, with the chain status. Filter by verdict (including escalated and observed), rule, or text. A receipt's detail shows how an escalation was settled, its epoch, and a link to its review. Follows the log live. |
+| **Policy** | The [declarative policy](policies.md) file: its rules (own, inherited, locked, quarantined, disabled), a JSON editor that checks the draft as you type, the epoch the draft would have, project overlays and their trust status, and the built-in pack you extend. Saving changes the epoch, which voids outstanding approvals; the console says how many before you confirm. |
+| **Playground** | Run catalog detectors against sample calls. Pick a detector, fill its parameters, edit the events, and see one verdict per event, with rewrites shown as a diff. |
+| **Detectors** | The detector catalog: search, filter by category, read a detector's parameters and documentation, and open it in the playground. |
+| **Scopes & sandbox** | Resolve a [scope](scopes.md) document for a principal: the parameters it gets, the [sandbox](sandbox.md) profile, and which parts of that profile this host can actually enforce. It computes the plan; nothing runs. |
+| **Ops** | `interlock doctor`'s checks, whether Claude Code, Codex and Cursor have the hook installed, every configured MCP server with its risk tags, the sidecar's health and stats, and the receipt log's state. Installing a hook or trusting an overlay stays a command you run yourself — the console shows it with a copy button. |
 
 ## Flags
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--host` | `127.0.0.1` | The address to bind. Must be a loopback address — `127.0.0.1`, `localhost`, or `::1`. Anything else is refused before a socket opens, since the console is a local tool and never a service you expose on a network. |
-| `--port` | `7878` | The port to bind. |
-| `--static` | `web/dist` next to the installed `interlock` package | Where the built web app lives. Point this elsewhere to serve a different build, for example during development. |
+| `--host` | `127.0.0.1` | The address to bind. Must be loopback — `127.0.0.1`, `localhost` or `::1`. Anything else is refused before a socket opens. |
+| `--port` | `7878` | The port to bind. A port already in use exits 1 with one line naming it. |
+| `--static` | `web/dist` next to the installed package | Where the built web app lives. A missing directory still serves the API, and the page names the build command. |
+| `--receipts` | none | The receipt log to read. Without it, Activity and the audit log explain how to point the console at one. |
+| `--key-file` | none | The receipt log's MAC key (64 hex characters, or raw bytes), to verify the chain. Without it the chain reads "unverified". The key never leaves the console process. |
+| `--policy` | `~/.interlock/policy.json` | The declarative policy the Policy screen reads and saves. |
+| `--reviews-db` | `~/.interlock/reviews.db` | The review queue. The console never creates it just by looking. |
+| `--four-eyes` | off | Refuse an approval by the account that filed the review. |
+| `--sidecar` | its usual socket, if present | The guard daemon's socket, to probe for Ops. |
+| `--sidecar-admin` | none | The daemon's loopback admin address (`interlock-sidecar --admin HOST:PORT`), for its stats and config. |
 
-If `--static` points at a directory that doesn't have the web app built into
-it yet, the console still starts and still answers `/api/`; only the UI is
-missing. Run the build command above and reload.
+## Trying it on real traffic
 
-## Development
-
-For UI development, run the Python server and the Vite dev server side by
-side; Vite proxies `/api` requests to `127.0.0.1:7878` so the same frontend
-code talks to the real backend without a build step on every change:
+`scripts/console_traffic.py` pipes genuine Claude Code and Codex hook payloads
+through `interlock hook` into a scratch directory — allowed calls, blocks,
+escalations filed as reviews, monitor-mode calls, a failed call — then settles
+a few reviews through `interlock reviews`. Nothing in it is written by hand:
 
 ```bash
-python -m interlock.console &
-npm --prefix web run dev
+python3 scripts/console_traffic.py /tmp/il-demo
+python3 -m interlock.console --receipts /tmp/il-demo/receipts.jsonl \
+  --key-file /tmp/il-demo/receipts.key --policy /tmp/il-demo/policy.json \
+  --reviews-db /tmp/il-demo/reviews.db
 ```
-
-Other `web` scripts: `npm --prefix web run typecheck` (`tsc --noEmit`) and
-`npm --prefix web test` (component tests with Vitest).
 
 ## Watching a sidecar's receipt log
 
-The audit page at `#/audit` opens one receipt log and keeps watching it: point
-the console at the same `--receipts` file a running
-[sidecar](../reference/sidecar.md) is writing, and decisions appear in the
-table as the sidecar makes them, with no reload.
+Point the console at the same `--receipts` file a running
+[sidecar](../reference/sidecar.md) is writing, and decisions appear as the
+sidecar makes them:
 
 ```bash
-# the sidecar writes receipts as it serves decisions
 interlock-sidecar --rules my_service.policies:RULES \
-  --receipts audit.jsonl --key-file receipt.key
+  --receipts audit.jsonl --key-file receipt.key --admin 127.0.0.1:19000
 
-# the console reads the same log and key, and only ever reads it
-python -m interlock.console --receipts audit.jsonl --key-file receipt.key
+python -m interlock.console --receipts audit.jsonl --key-file receipt.key \
+  --sidecar-admin 127.0.0.1:19000
 ```
 
-Open `#/audit`: the table lists every receipt in the log, newest first, with
-the chain status from verifying it against `receipt.key`. Leave the page open
-while the sidecar keeps writing — the live tail is on by default, so each new
-receipt lands at the top of the table within a second, and the live indicator
-reads `live` for as long as the stream stays connected. The verdict filter
-narrows the table to `ALLOW`, `BLOCK` or `MODIFY` without a reload.
+## Development
 
-Started without `--receipts`, the page explains the two flags instead of
-showing a table — there is nothing to watch yet.
+Run the Python server and the Vite dev server side by side; Vite proxies
+`/api` to `127.0.0.1:7878`:
+
+```bash
+python -m interlock.console --receipts /tmp/il-demo/receipts.jsonl &
+npm --prefix web run dev
+```
+
+The screens' markup in `web/src/design/` is generated from the designer's file,
+`design/console/Interlock Console.dc.html`, by
+`scripts/console_design/convert.py`; don't edit it by hand. What the screens
+show comes from `web/src/vals.ts`, fed by the API through `web/src/store.ts`.
+`npm --prefix web run typecheck` checks every binding in the markup against
+the view-model; `npm --prefix web test` runs the unit tests.
 
 ## Security model
 
-The console binds to loopback only and refuses to start otherwise. Every
-`/api/` response carries `Cache-Control: no-store` and `X-Content-Type-Options:
-nosniff`, and none carries a CORS header — the API only ever answers the page
-that's already open, on the same origin. A request whose `Host` header doesn't
-name this server (`127.0.0.1:<port>`, `localhost:<port>`, or `[::1]:<port>`) is
-refused with a 403, which stops a malicious page elsewhere from reaching the
-console through your browser (DNS rebinding). The web app itself loads nothing
-from any other origin — no CDN scripts, fonts, or images — so there's nothing
-in the page that could leak to, or be tampered with by, a third party.
+- **Loopback only.** The console refuses to bind anything else, and refuses a
+  request whose `Host` header doesn't name this server, which stops a page
+  elsewhere reaching it through your browser (DNS rebinding).
+- **No cross-origin access.** No CORS headers; every POST must be
+  `application/json`; every HTML response carries `X-Frame-Options: DENY` and a
+  `Content-Security-Policy` of `default-src 'self'`. The page loads no script,
+  font or image from any other origin.
+- **Writes need an unlocked tab** (above), so a process on this machine can't
+  approve its own reviews or rewrite its own policy through the console.
+- **Secrets stay put.** The receipt key never leaves the console process.
+  Receipts carry argument digests, not arguments; the only argument values the
+  console shows are review previews, which the review queue stores for the
+  human deciding.
+- **It only reads, except for the writes above.** Hooks, trust and the sidecar
+  are changed by commands you run yourself, outside any agent.
