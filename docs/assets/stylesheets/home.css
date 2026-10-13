@@ -404,6 +404,12 @@ body.il-motion [data-il-reveal]:not(.il-in) {
   letter-spacing: -0.04em;
   font-weight: 600;
   text-wrap: balance;
+  /* Explicit, and it has to be. The hero is emitted by {% block hero %}, which
+     renders OUTSIDE .il-home -- so the .il-home type rules never reach it and
+     the theme's light-scheme h1 colour (rgba(0,0,0,.87)) applies instead. That
+     is near-black on this background, which made the first line of the
+     headline invisible while the dim span beside it stayed readable. */
+  color: var(--il-fg);
 }
 
 .il-hero__title span {
