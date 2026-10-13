@@ -18,47 +18,16 @@ caller that requires true isolation can detect the downgrade and refuse.
 from __future__ import annotations
 
 import sys
-from typing import Callable, List, Optional
+from typing import List
 
+from ..limits import rlimit_preexec
 from ..profile import SandboxProfile
 from .base import Backend, WrapPlan
 
 
-def _rlimit_preexec(
-    cpu_seconds: Optional[int], memory_mb: Optional[int]
-) -> Optional[Callable[[], None]]:
-    """Build a ``preexec_fn`` that clamps CPU and address space in the child.
-
-    Returns None when no limit is requested, and on platforms without the POSIX
-    ``resource`` limits (Windows), so the caller simply gets no preexec hook.
-    """
-    if cpu_seconds is None and memory_mb is None:
-        return None
-    try:
-        import resource
-    except ImportError:  # non-POSIX
-        return None
-
-    def _apply() -> None:  # runs in the forked child, before exec
-        # The soft limit is the promise (SIGXCPU at ``cpu_seconds``); the hard
-        # limit is the backstop for a child that catches or ignores SIGXCPU.
-        #
-        # They must DIFFER. Linux evaluates the hard limit first and with ``>=``
-        # (kernel/time/posix-cpu-timers.c), so with soft == hard the hard branch
-        # matches in the same pass and SIGKILL pre-empts the SIGXCPU the token
-        # table advertises -- a runaway died by signal 9, not 24. macOS happens
-        # to report SIGXCPU for soft == hard, which is why this only showed up
-        # under CI. ``hard = soft + 1`` gives the documented SIGXCPU on both,
-        # and still ends the child one second later if it swallows the signal.
-        if cpu_seconds is not None:
-            resource.setrlimit(
-                resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1)
-            )
-        if memory_mb is not None:
-            nbytes = memory_mb * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (nbytes, nbytes))
-
-    return _apply
+# Kept as an alias: the rlimit hook now lives in ``interlock.brace.limits`` and
+# is shared by every backend, not only this one.
+_rlimit_preexec = rlimit_preexec
 
 
 class SoftBackend(Backend):
@@ -75,7 +44,7 @@ class SoftBackend(Backend):
         if profile.workdir is not None:
             popen_kwargs["cwd"] = profile.workdir
 
-        preexec = _rlimit_preexec(profile.cpu_seconds, profile.memory_mb)
+        preexec = rlimit_preexec(profile.cpu_seconds, profile.memory_mb)
         # preexec_fn only runs on POSIX; skip it on Windows to avoid a raise.
         if preexec is not None and sys.platform != "win32":
             popen_kwargs["preexec_fn"] = preexec

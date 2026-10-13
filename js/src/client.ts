@@ -39,6 +39,13 @@ import {
 /** The limit `readLine` reads up to: one byte past the accepted frame size. */
 const READ_LIMIT = MAX_LINE + 1;
 
+/**
+ * Seconds `RemoteEngine` waits for a connect or a reply when no `timeout` is
+ * given. A hung daemon then blocks the call after this long instead of hanging
+ * it forever. Pass `timeout: null` to wait without limit.
+ */
+export const DEFAULT_TIMEOUT_SECONDS = 5;
+
 /** An error that names its own cause, so `reasonFor` reports a real type name. */
 class SocketTimeout extends Error {
   constructor(message: string) {
@@ -66,9 +73,17 @@ class LineReader {
   private failure: Error | null = null;
   private pending: PendingRead | null = null;
 
+  private timer: NodeJS.Timeout | null = null;
+
+  /**
+   * `timeoutSeconds` bounds how long one `readLine` waits for its reply. It is
+   * armed only while a read is pending, never while the connection sits idle
+   * between calls: an idle gap is not a hung daemon, and a socket-level idle
+   * timeout would turn the first call after a pause into a spurious block.
+   */
   constructor(
     private readonly socket: net.Socket,
-    timeoutSeconds: number | null,
+    private readonly timeoutSeconds: number | null,
   ) {
     socket.on("data", (chunk: Buffer) => {
       this.buffer =
@@ -84,13 +99,6 @@ class LineReader {
       this.flush();
     });
     socket.on("error", (err: Error) => this.fail(err));
-    if (timeoutSeconds !== null) {
-      socket.setTimeout(timeoutSeconds * 1000);
-      socket.on("timeout", () => {
-        this.fail(new SocketTimeout(`no reply within ${timeoutSeconds}s`));
-        socket.destroy();
-      });
-    }
   }
 
   fail(err: Error): void {
@@ -105,17 +113,43 @@ class LineReader {
       );
     }
     return new Promise<Buffer | null>((resolve, reject) => {
-      this.pending = { limit, resolve, reject };
+      this.pending = {
+        limit,
+        resolve: (line) => {
+          this.clearTimer();
+          resolve(line);
+        },
+        reject: (err) => {
+          this.clearTimer();
+          reject(err);
+        },
+      };
+      const seconds = this.timeoutSeconds;
+      if (seconds !== null) {
+        this.timer = setTimeout(() => {
+          this.timer = null;
+          this.fail(new SocketTimeout(`no reply within ${seconds}s`));
+          this.socket.destroy();
+        }, seconds * 1000);
+      }
       this.flush();
     });
   }
 
   dispose(): void {
+    this.clearTimer();
     this.socket.removeAllListeners();
     // A close can race an 'error' (ECONNRESET) the kernel already queued. Keep a
     // no-op listener so tearing down a dead connection never becomes an
     // uncaught exception in the caller's process.
     this.socket.on("error", () => undefined);
+  }
+
+  private clearTimer(): void {
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
   }
 
   private flush(): void {
@@ -160,7 +194,11 @@ class LineReader {
 }
 
 export interface RemoteEngineOptions {
-  /** Seconds to wait for connect and for each reply. `null` disables it. */
+  /**
+   * Seconds to wait for the connect and for each reply. Defaults to
+   * `DEFAULT_TIMEOUT_SECONDS` (5). `null` disables it. A timeout rejects with
+   * `BlockedError`, like any other transport failure.
+   */
   timeout?: number | null;
 }
 
@@ -175,7 +213,8 @@ export class RemoteEngine {
 
   constructor(path: string, options: RemoteEngineOptions = {}) {
     this.path = String(path);
-    this.timeout = options.timeout ?? null;
+    this.timeout =
+      options.timeout === undefined ? DEFAULT_TIMEOUT_SECONDS : options.timeout;
   }
 
   /** Ask the daemon for the verdict, or reject with `BlockedError`. */
@@ -257,9 +296,12 @@ export class RemoteEngine {
           return;
         }
         settled = true;
-        // The reader takes over error and timeout handling from here.
+        // The reader takes over error and timeout handling from here. The
+        // connect timeout is a socket idle timer; disarm it so an idle
+        // connection between calls never fires it.
         socket.removeAllListeners("error");
         socket.removeAllListeners("timeout");
+        socket.setTimeout(0);
         this.socket = socket;
         this.reader = new LineReader(socket, this.timeout);
         resolve(socket);

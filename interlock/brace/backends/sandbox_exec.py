@@ -31,6 +31,7 @@ import os
 import shutil
 from typing import List, Tuple
 
+from ..limits import rlimit_preexec
 from ..profile import SandboxProfile
 from .base import Backend, WrapPlan
 
@@ -104,8 +105,19 @@ class SandboxExecBackend(Backend):
         )
         exec_argv, enforced = build_argv(canon, argv)
         # Seatbelt does not filter env; scrub it ourselves.
+        popen_kwargs: dict = {"env": dict(profile.env)}
+        # Seatbelt has no chdir of its own: start sandbox-exec in the workdir,
+        # and the program it execs inherits it.
+        if profile.workdir is not None:
+            popen_kwargs["cwd"] = profile.workdir
+        # CPU / memory ceilings are set on sandbox-exec before it execs and are
+        # inherited by the program it launches. Enforced, but not yet reported
+        # as the "rlimit" token (the guarantee table pins that to soft).
+        preexec = rlimit_preexec(profile.cpu_seconds, profile.memory_mb)
+        if preexec is not None:
+            popen_kwargs["preexec_fn"] = preexec
         return WrapPlan(
             exec_argv=exec_argv,
-            popen_kwargs={"env": dict(profile.env)},
+            popen_kwargs=popen_kwargs,
             enforced=enforced,
         )

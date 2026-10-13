@@ -36,6 +36,11 @@ POLICY_ID = "mcp_trust_registry"
 # The action-name separator that introduces a dotted origin prefix.
 _ORIGIN_SEPARATOR = "."
 
+# MCP protocol methods. Their dotted names ("mcp.connect") are not a server
+# called "mcp" publishing a tool, and they have their own detectors, so the
+# registry judges one only when an adapter labelled it with its server.
+PROTOCOL_ACTIONS = frozenset({"mcp.connect", "mcp.read_resource", "mcp.sampling", "tools/list"})
+
 # The args key an adapter uses to label a call with its server origin.
 _ORIGIN_KEY = "__origin__"
 
@@ -103,12 +108,15 @@ def mcp_trust_registry(trusted: Iterable[str]) -> Rule:
 
     Fail-closed by construction: the permit branch is a strict membership test,
     so an unresolvable or non-str origin can never match and is denied like any
-    other untrusted server. Returns None (no opinion) only for a call whose
-    origin resolves *and* appears in the registry.
+    other untrusted server. Returns None (no opinion) for a call whose origin
+    resolves *and* appears in the registry, and for an MCP protocol event
+    (:data:`PROTOCOL_ACTIONS`) that carries no ``__origin__`` label.
     """
     registry = _as_origin_frozenset(trusted)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
+        if event.action in PROTOCOL_ACTIONS and _origin_from_args(event.args) is None:
+            return None
         origin = _resolve_origin(event)
         if origin is not None and origin in registry:
             return None

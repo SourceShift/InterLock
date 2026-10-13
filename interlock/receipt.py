@@ -6,9 +6,8 @@ into a Receipt: a small record with the time, action, verdict, reason, policy
 id, ``attributed_to``, principal, span id, phase, and a digest of the
 arguments. Receipts are written by the enforcement sites (the decorator's
 ``_emit`` and both MCP enforce functions) to an installed sink, never by a
-policy rule: a MODIFY is terminal in the engine's rule loop, so a receipt
-implemented as a rule would be short-circuited by an earlier stamp or would
-short-circuit everything after it.
+policy rule: the enforcement site is the only place that knows the final,
+combined decision and whether it was enforced or only observed.
 
 Design note - the stamps' fate. The four stamp detectors
 (``event_hmac_stamp`` & co.) KEEP their current behaviour: their MODIFY
@@ -38,7 +37,16 @@ as Ed25519 (anyone can verify, only the key holder can produce). The seam is
 the ``Signer`` callable (``key, message -> bytes``): a caller who has
 ``cryptography`` installed can inject an Ed25519 signer without interlock
 depending on it - ``interlock`` must stay dependency-free
-(``pyproject.toml`` ``dependencies = []``).
+(``pyproject.toml`` ``dependencies = []``). Verifying normally recomputes each
+tag, which needs the signing key; a public-key scheme passes a ``Verifier``
+(``message, tag -> bool``) instead, so an auditor can check the chain holding
+only the public key.
+
+Design note - observed decisions. Under ``enforcement="monitor"`` a decision
+that would have blocked or rewritten the call is recorded with
+``observed=True``: the call went through, and the receipt must not read as
+enforcement. The field is serialized (and covered by the mac) only when true,
+so receipts written before it existed verify unchanged.
 """
 from __future__ import annotations
 
@@ -56,6 +64,11 @@ from .event import SensorEvent
 # A signer maps (key, message) -> tag. hmac_sha256 below is the default; an
 # Ed25519 signer from `cryptography` can be injected through the same seam.
 Signer = Callable[[bytes, bytes], bytes]
+
+# A verifier maps (message, tag) -> bool: True when the tag is valid for the
+# message. With one, verification never needs the signing key - the shape a
+# public-key scheme needs (sign with the private key, verify with the public).
+Verifier = Callable[[bytes, bytes], bool]
 
 
 def hmac_sha256(key: bytes, message: bytes) -> bytes:
@@ -129,29 +142,49 @@ class Receipt:
     args_digest: str = ""
     prev: str = GENESIS
     mac: str = ""
+    # True when monitor mode recorded a decision it did not enforce. Kept out of
+    # the serialized form (and the mac) while False, so older receipts and
+    # older readers are unaffected.
+    observed: bool = False
+
+    def fields(self, *, include_mac: bool = True) -> dict:
+        """The receipt as a dict, in its canonical (serialized) shape."""
+        body = dataclasses.asdict(self)
+        if not body["observed"]:
+            del body["observed"]
+        if not include_mac:
+            del body["mac"]
+        return body
 
     def to_json(self) -> str:
         """Canonical one-line serialization (sorted keys, tight separators)."""
-        return json.dumps(
-            dataclasses.asdict(self), sort_keys=True, separators=(",", ":")
-        )
+        return json.dumps(self.fields(), sort_keys=True, separators=(",", ":"))
 
     @classmethod
     def from_json(cls, line: str) -> "Receipt":
         return cls(**json.loads(line))
 
 
+def signing_payload(receipt: Receipt) -> bytes:
+    """The exact bytes a receipt's mac is computed over (every field but mac)."""
+    canonical = json.dumps(
+        receipt.fields(include_mac=False), sort_keys=True, separators=(",", ":")
+    )
+    return canonical.encode("utf-8")
+
+
 def compute_mac(receipt: Receipt, signer: Signer, key: bytes) -> str:
     """The signer's tag over the receipt's canonical bytes (mac excluded)."""
-    body = {
-        k: v for k, v in dataclasses.asdict(receipt).items() if k != "mac"
-    }
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
-    return signer(key, canonical.encode("utf-8")).hex()
+    return signer(key, signing_payload(receipt)).hex()
 
 
 def verify_chain(
-    receipts: list, signer: Signer, key: bytes
+    receipts: list,
+    signer: Signer,
+    key: bytes,
+    *,
+    verifier: Optional[Verifier] = None,
+    head: Optional[str] = None,
 ) -> Optional[str]:
     """Walk a receipt chain and report the first break, or None if intact.
 
@@ -159,6 +192,11 @@ def verify_chain(
     or splice breaks it) and the mac (an edit to any field, or verifying with
     the wrong key, breaks it). The message names the first bad index, because
     "the chain is broken" without an index leaves the auditor hunting.
+
+    ``verifier`` replaces recomputing each tag with ``signer`` and ``key``: pass
+    one to check a public-key chain without the signing key. ``head`` is the
+    last mac you recorded elsewhere; a chain ending anywhere else had receipts
+    cut off its end, which the linkage alone cannot show.
     """
     previous_mac = GENESIS
     for index, receipt in enumerate(receipts):
@@ -166,11 +204,24 @@ def verify_chain(
             return "receipt {}: chain break (prev does not match the preceding receipt's mac)".format(
                 index
             )
-        if receipt.mac != compute_mac(receipt, signer, key):
+        if verifier is not None:
+            try:
+                valid = bool(verifier(signing_payload(receipt), bytes.fromhex(receipt.mac)))
+            except Exception:
+                valid = False
+            if not valid:
+                return "receipt {}: signature rejected by the verifier (edited, or signed with a different key)".format(
+                    index
+                )
+        elif receipt.mac != compute_mac(receipt, signer, key):
             return "receipt {}: MAC mismatch (edited, or verified with a different key)".format(
                 index
             )
         previous_mac = receipt.mac
+    if head is not None and previous_mac != head:
+        return "chain ends at receipt {} but the expected head is {}...: receipts were cut from the end, or this is not the log that head came from".format(
+            len(receipts) - 1, head[:16]
+        )
     return None
 
 
@@ -193,11 +244,14 @@ def get_sink() -> Optional[Any]:
     return _sink
 
 
-def emit_receipt(event: SensorEvent, decision: Decision) -> None:
+def emit_receipt(
+    event: SensorEvent, decision: Decision, *, observed: bool = False
+) -> None:
     """Build one Receipt from the enforced decision and write it to the sink.
 
     No sink installed: a no-op. Called from the enforcement sites only - the
     decorator's ``_emit`` and both MCP enforce functions - never from a rule.
+    ``observed`` marks a monitor-mode decision that was recorded, not enforced.
     """
     sink = get_sink()
     if sink is None:
@@ -214,5 +268,6 @@ def emit_receipt(event: SensorEvent, decision: Decision) -> None:
             span_id=event.span_id,
             phase=getattr(event, "phase", "call"),
             args_digest=digest_args(event.args),
+            observed=observed,
         )
     )

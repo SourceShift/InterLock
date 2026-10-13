@@ -21,7 +21,8 @@ import os
 import socket
 import socketserver
 import struct
-from typing import Any, Optional
+import threading
+from typing import Any, Optional, Set
 
 from ..enforce import Decision
 from ..policy.engine import PolicyEngine
@@ -69,6 +70,16 @@ def peer_uid(connection: Any) -> Optional[int]:
 class _Handler(socketserver.StreamRequestHandler):
     """One connection: read frames, decide, answer. Never reads argument values
     into a log line."""
+
+    def setup(self) -> None:
+        super().setup()
+        self.server._track(self.connection)  # type: ignore[attr-defined]
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            self.server._untrack(self.connection)  # type: ignore[attr-defined]
 
     def handle(self) -> None:  # noqa: C901 - a protocol loop reads as a loop
         uid = peer_uid(self.connection)
@@ -179,6 +190,11 @@ class SidecarServer(socketserver.ThreadingUnixStreamServer):
         sink: Optional[Any] = None,
     ) -> None:
         self.engine = engine
+        # Connections whose handler thread is still running. ``server_close``
+        # shuts them down: a daemon thread would otherwise keep answering on an
+        # open connection long after the server stopped accepting new ones.
+        self._live: Set[socket.socket] = set()
+        self._live_lock = threading.Lock()
         if sink is not None:
             set_sink(sink)
         _assert_private_dir(address)
@@ -192,3 +208,31 @@ class SidecarServer(socketserver.ThreadingUnixStreamServer):
             except OSError:
                 pass
             raise
+
+    def _track(self, connection: socket.socket) -> None:
+        with self._live_lock:
+            self._live.add(connection)
+
+    def _untrack(self, connection: socket.socket) -> None:
+        with self._live_lock:
+            self._live.discard(connection)
+
+    def server_close(self) -> None:
+        """Stop listening and end every open connection.
+
+        ``shutdown(SHUT_RDWR)`` wakes a handler blocked in ``readline`` with an
+        EOF, so it returns and its thread ends; the handler's own ``finish``
+        closes the file descriptor. Closing it here instead could hand a reused
+        descriptor number to a thread still using the old one. A request caught
+        mid-flight sees a closed connection, which the client turns into a
+        block.
+        """
+        super().server_close()
+        with self._live_lock:
+            live = list(self._live)
+            self._live.clear()
+        for connection in live:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass

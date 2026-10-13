@@ -8,6 +8,7 @@ enforces it before the wrapped function runs.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import functools
 import inspect
 import logging
@@ -18,7 +19,7 @@ from ..context import current_parent_principal, current_principal, current_span
 from ..enforce import Blocked, Decision, Verdict
 from ..event import SensorEvent
 from ..receipt import emit_receipt
-from .mcp import enforce_tool_result
+from .mcp import _enforce_result
 
 _log = logging.getLogger("interlock")
 
@@ -55,11 +56,61 @@ def _emit(event: SensorEvent, decision: Decision, observed: bool = False) -> Non
         decision.attributed_to,
     )
     # M4: the decision also becomes a chained receipt in the audit sink, when
-    # one is installed; with no sink this writes nothing.
-    emit_receipt(event, decision)
+    # one is installed; with no sink this writes nothing. A monitor-mode
+    # decision that would have intervened is marked observed, so the record
+    # does not read as enforcement.
+    emit_receipt(event, decision, observed=observed)
+
+
+def _labelled(decision: Decision, policy_id: Optional[str]) -> Decision:
+    """Give a decision that names no policy the guard's own ``policy_id``."""
+    if policy_id and decision.verdict != Verdict.ALLOW and not decision.policy_id:
+        return dataclasses.replace(decision, policy_id=policy_id)
+    return decision
+
+
+def _apply_modified_args(
+    func: Callable,
+    args: tuple,
+    kwargs: Dict[str, Any],
+    modified: Dict[str, Any],
+) -> Tuple[tuple, Dict[str, Any]]:
+    """Merge a MODIFY rewrite into the call, in the slot each argument came from.
+
+    A rewrite names arguments, but the caller may have passed them positionally:
+    merging into kwargs alone would hand the function the same argument twice
+    (and cannot reach a positional-only parameter at all). Binding against the
+    signature puts each rewritten value back where it belongs. A name the
+    signature does not declare goes into ``**kwargs`` when the function takes
+    one, and is otherwise passed as a keyword, exactly as before.
+    """
+    try:
+        sig = inspect.signature(func)
+        bound = sig.bind_partial(*args, **kwargs)
+    except (TypeError, ValueError):
+        # No signature, or a call that does not bind: keep the keyword merge.
+        merged = dict(kwargs)
+        merged.update(modified)
+        return args, merged
+
+    var_keyword = next(
+        (p.name for p in sig.parameters.values() if p.kind is p.VAR_KEYWORD), None
+    )
+    undeclared: Dict[str, Any] = {}
+    for name, value in modified.items():
+        if name in sig.parameters:
+            bound.arguments[name] = value
+        elif var_keyword is not None:
+            bound.arguments[var_keyword] = {
+                **bound.arguments.get(var_keyword, {}), name: value,
+            }
+        else:
+            undeclared[name] = value
+    return bound.args, {**bound.kwargs, **undeclared}
 
 
 def _enforce(
+    func: Callable,
     decision: Decision,
     args: tuple,
     kwargs: Dict[str, Any],
@@ -78,9 +129,9 @@ def _enforce(
         raise Blocked(decision, event.action)
     if decision.verdict == Verdict.MODIFY:
         if decision.modified_args:
-            # M0 applies modifications to keyword arguments only.
-            kwargs = dict(kwargs)
-            kwargs.update(decision.modified_args)
+            args, kwargs = _apply_modified_args(
+                func, args, kwargs, decision.modified_args
+            )
         _emit(event, decision)
         return args, kwargs
     return args, kwargs
@@ -95,6 +146,9 @@ def guard(
 
     enforcement="blocking" (default) raises Blocked on a deny and applies
     modifications. enforcement="monitor" only records the would-be decision.
+
+    policy_id labels every decision on this tool that names no policy of its
+    own, in logs, ``Blocked`` and receipts. A rule's own policy_id always wins.
     Works on both sync and async callables.
 
     The return value is also checked on the way back: result-phase rules see
@@ -107,23 +161,21 @@ def guard(
         @functools.wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             event = _event_for(func, args, kwargs, principal)
-            decision = get_engine().evaluate(event)
-            args, kwargs = _enforce(decision, args, kwargs, enforcement, event)
+            decision = _labelled(get_engine().evaluate(event), policy_id)
+            args, kwargs = _enforce(func, decision, args, kwargs, enforcement, event)
             result = func(*args, **kwargs)
-            return enforce_tool_result(
-                event.action, result,
-                enforcement=enforcement, principal=principal,
+            return _enforce_result(
+                event.action, result, None, enforcement, principal, policy_id,
             )
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             event = _event_for(func, args, kwargs, principal)
-            decision = get_engine().evaluate(event)
-            args, kwargs = _enforce(decision, args, kwargs, enforcement, event)
+            decision = _labelled(get_engine().evaluate(event), policy_id)
+            args, kwargs = _enforce(func, decision, args, kwargs, enforcement, event)
             result = await func(*args, **kwargs)
-            return enforce_tool_result(
-                event.action, result,
-                enforcement=enforcement, principal=principal,
+            return _enforce_result(
+                event.action, result, None, enforcement, principal, policy_id,
             )
 
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper

@@ -87,6 +87,14 @@ class DelegationOverGrant(DelegationError):
     """A delegated binding grants more than its delegator resolves to."""
 
 
+class UnknownTemplate(LookupError):
+    """A scope binds a template id the registry has no template for.
+
+    Raised rather than skipped: a silently dropped binding is a rule that never
+    exists, and the call it was meant to stop goes through.
+    """
+
+
 class DelegationDepthExceeded(DelegationError):
     """Delegation chain exceeded the configured ``max_delegation_depth``."""
 
@@ -205,12 +213,26 @@ class ScopeRegistry:
         self.hits = 0
         self.misses = 0
 
+    def add_template(self, template: Template) -> None:
+        """Register (or replace) a template after the registry was built.
+
+        The registry copies the ``templates`` mapping it was given, so adding to
+        that mapping later has no effect; use this instead. Every compiled
+        engine is dropped, because a replaced template changes what a cached
+        scope would compile to.
+        """
+        self.templates[template.template_id] = template
+        self._cache.clear()
+
     def _union_lookup(self, template_id: str) -> FrozenSet[str]:
         tmpl = self.templates.get(template_id)
         return tmpl.union_params if tmpl is not None else frozenset()
 
     def resolve(self, leaf: Scope) -> Dict[str, Dict[str, Any]]:
-        """Effective params per template for a leaf, ignoring unknown templates.
+        """Effective params per template for a leaf.
+
+        A binding whose template id is not registered raises
+        :class:`UnknownTemplate` instead of being dropped.
 
         Walks the leaf's parent chain and verifies that every delegated binding
         along the path (i.e. whose ``Binding.delegated_from`` is not None)
@@ -252,7 +274,30 @@ class ScopeRegistry:
                         f"({d_eff!r})"
                     )
         resolved = self.tree.resolve(leaf, self._union_lookup)
-        return {t: p for t, p in resolved.items() if t in self.templates}
+        unknown = sorted(t for t in resolved if t not in self.templates)
+        if unknown:
+            raise UnknownTemplate(
+                f"scope {leaf!r} binds unregistered template(s) {unknown}; the "
+                "registry copies its templates when built, so register late "
+                "ones with ScopeRegistry.add_template()"
+            )
+        return {t: self._normalize_unions(t, p) for t, p in resolved.items()}
+
+    def _normalize_unions(self, template_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Give union params one type whichever tree resolved them.
+
+        The pure-Python tree accumulates union params into a ``set``; the native
+        tree hands back a ``list``. A template (or a caller of ``resolve``) that
+        works on one backend must not break on the other, so both become a set.
+        """
+        unions = self._union_lookup(template_id)
+        if not unions:
+            return dict(params)
+        out = dict(params)
+        for key in unions & out.keys():
+            if isinstance(out[key], (list, tuple, frozenset)):
+                out[key] = set(out[key])
+        return out
 
     def compile(self, leaf: Scope) -> PolicyEngine:
         """Build a fresh engine for a leaf (cache miss path, also public)."""
@@ -349,6 +394,10 @@ def _delegation_subset(
     return True
 
 
+UNSCOPED_POLICY_ID = "scoped_engine.unscoped"
+RESOLUTION_POLICY_ID = "scoped_engine.resolution"
+
+
 class ScopedEngine:
     """Resolve per-subject policy at call time, then delegate to that engine.
 
@@ -364,8 +413,12 @@ class ScopedEngine:
     wires the whole hierarchy in with no change to ``@guard``.
 
     ``scope_of`` maps an event to a scope path. ``default_scope`` is used when
-    ``scope_of`` returns an empty path (an unknown subject); leave it empty to
-    allow such calls, or point it at a baseline node to apply a floor policy.
+    ``scope_of`` returns an empty path (an unknown subject, typically an event
+    with no principal); point it at a baseline node to apply a floor policy.
+    With no default scope such an event is **blocked**: no scope means no rules,
+    and allowing it would let any call made outside ``span(principal=...)``
+    skip policy entirely. Pass ``allow_unscoped=True`` to opt back into
+    allowing it.
     """
 
     def __init__(
@@ -374,13 +427,32 @@ class ScopedEngine:
         scope_of: Optional[Callable[[SensorEvent], Scope]] = None,
         *,
         default_scope: Scope = (),
+        allow_unscoped: bool = False,
     ) -> None:
         self.registry = registry
         self.scope_of = scope_of or principal_scope
         self.default_scope = tuple(default_scope)
+        self.allow_unscoped = allow_unscoped
 
     def evaluate(self, event: SensorEvent) -> Decision:
         scope = self.scope_of(event) or self.default_scope
         if not scope:
-            return Decision.allow()  # no scope, no policy: allow, like an empty engine
-        return self.registry.for_scope(scope).evaluate(event)
+            if self.allow_unscoped:
+                return Decision.allow()
+            return Decision.block(
+                "no scope for this event (no principal and no default_scope); "
+                "denied fail-closed",
+                policy_id=UNSCOPED_POLICY_ID,
+            )
+        try:
+            engine = self.registry.for_scope(scope)
+        except (DelegationError, UnknownTemplate) as exc:
+            # The registry raises so a bad grant never reaches its cache. On the
+            # call path the same failure is a refusal like any other: the
+            # caller gets Blocked with the reason, not a raw policy exception.
+            return Decision.block(
+                "scope policy for {!r} could not be resolved, denied "
+                "fail-closed: {}".format(scope, exc),
+                policy_id=RESOLUTION_POLICY_ID,
+            )
+        return engine.evaluate(event)

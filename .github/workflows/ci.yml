@@ -75,6 +75,12 @@ jobs:
         # skip by row, so skips here are expected and not a failure.
         run: python -m pytest -q
 
+      - name: Detector catalog is current
+        # docs/reference/detectors.md is generated from the detector modules.
+        # A detector added, renamed, or rescoped without regenerating the page
+        # fails here instead of shipping a stale catalog.
+        run: python scripts/gen_detector_catalog.py --check
+
   rust:
     name: rust accelerator
     runs-on: ubuntu-latest

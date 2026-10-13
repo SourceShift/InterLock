@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any, List, Optional
 
 from ..policy.engine import PolicyEngine
-from .mcp import enforce_tool_call
+from .mcp import enforce_tool_call, enforce_tool_result
 
 
 def guard_langchain_tools(
@@ -64,8 +64,14 @@ def _guard_one(
         )
         # Delegate to the untouched original with the vetted arguments. Its own
         # sync/async paths and error handling stay exactly as the author wrote
-        # them; interlock only gates the entry.
-        return tool.invoke(safe)
+        # them. The output then goes through the result rules like every other
+        # interceptor's, so injected text in what the tool returns is caught
+        # before the agent reads it.
+        out = tool.invoke(safe)
+        return enforce_tool_result(
+            name, out, engine=engine,
+            enforcement=enforcement, principal=principal,
+        )
 
     return structured_tool_cls.from_function(
         func=_run,

@@ -31,3 +31,58 @@ class SensorEvent:
     # meant - including call-shaped events whose action name says
     # "tool_result".
     phase: str = "call"
+
+
+def result_payload(result: Any) -> Dict[str, Any]:
+    """Shape a tool's return value as the ``args`` of a result-phase event.
+
+    A dict result is carried as itself, any other value under ``"result"``. An
+    MCP tool result (the official SDK's ``CallToolResult``, or the same shape as
+    plain JSON) is a wrapper whose text sits in a ``content`` list, out of reach
+    of rules that read top-level strings - which is every built-in result rule.
+    For that shape the text items are joined into ``"result"``, so a rule sees
+    what the agent will read. The top-level fields of the structured content
+    (``structured_content`` or ``structuredContent``) ride alongside, never
+    replacing ``"result"``, and ``is_error`` is carried when the result reports
+    it.
+    """
+    if isinstance(result, dict):
+        payload = dict(result)
+        text = _mcp_text(result.get("content"))
+        if text is not None and "result" not in payload:
+            payload["result"] = text
+        return payload
+    text = _mcp_text(getattr(result, "content", None))
+    if text is None:
+        return {"result": result}
+    payload: Dict[str, Any] = {"result": text}
+    # The SDK has spelled these both ways (camelCase on the wire, snake_case
+    # attributes in newer releases); read whichever the object has.
+    structured = _first_attr(result, "structured_content", "structuredContent")
+    if isinstance(structured, dict):
+        for key, value in structured.items():
+            payload.setdefault(str(key), value)
+    is_error = _first_attr(result, "is_error", "isError")
+    if isinstance(is_error, bool):
+        payload["is_error"] = is_error
+    return payload
+
+
+def _first_attr(obj: Any, *names: str) -> Any:
+    for name in names:
+        value = getattr(obj, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _mcp_text(content: Any) -> Optional[str]:
+    """Join the text items of an MCP ``content`` list, or None if it isn't one."""
+    if not isinstance(content, (list, tuple)) or not content:
+        return None
+    texts = []
+    for item in content:
+        text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+        if isinstance(text, str):
+            texts.append(text)
+    return "\n".join(texts) if texts else None

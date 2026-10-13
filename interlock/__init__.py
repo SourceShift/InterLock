@@ -79,6 +79,12 @@ def install(
     if engine is None:
         engine = PolicyEngine(rules=rules)
     elif rules:
+        if not hasattr(engine, "add_rule"):
+            raise TypeError(
+                "{} takes no extra rules: pass rules=[...] only with a "
+                "PolicyEngine. For a ScopedEngine, bind them at the root scope "
+                "through a template instead.".format(type(engine).__name__)
+            )
         for rule in rules:
             engine.add_rule(rule)
     if sink is not None:

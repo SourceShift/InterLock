@@ -9,9 +9,18 @@ OS does not stop anyone rewriting a line in place.
 
 Concurrency: the read-prev / sign / append / remember step runs under a lock,
 so concurrent threads share one unbroken chain. Writers in *other* processes
-are not serialized - two processes writing one file each start their own
-chain at GENESIS, and verify() reports the junction as a break. One sink
-instance, one process, one chain.
+are not serialized - two processes appending to one file at the same time
+fork the chain, and verify() reports the junction as a break. One file, one
+writer at a time.
+
+Restarts: a ``FileSink`` opened on an existing log continues its chain from
+the last receipt in the file, so one log can span process restarts. A file
+whose last line is not a readable receipt is refused rather than silently
+restarted at GENESIS.
+
+Truncation: deleting receipts from the *end* leaves a valid, shorter chain.
+``head`` is the latest mac; record it somewhere the log's writer can't reach
+and pass it back as ``verify(head=...)`` to detect a cut tail.
 """
 from __future__ import annotations
 
@@ -23,6 +32,7 @@ from .receipt import (
     GENESIS,
     Receipt,
     Signer,
+    Verifier,
     compute_mac,
     hmac_sha256,
     process_secret,
@@ -57,15 +67,32 @@ class ChainedSink:
             self._append(receipt)
             self._last_mac = receipt.mac
 
-    def verify(self, key: Optional[bytes] = None) -> Optional[str]:
+    @property
+    def head(self) -> str:
+        """The mac of the latest receipt (GENESIS before the first). Record it
+        outside the log and pass it to ``verify(head=...)`` to catch a cut tail."""
+        with self._lock:
+            return self._last_mac
+
+    def verify(
+        self,
+        key: Optional[bytes] = None,
+        *,
+        head: Optional[str] = None,
+        verifier: Optional[Verifier] = None,
+    ) -> Optional[str]:
         """Walk the chain; None if intact, else a message naming the first
         bad index. Pass ``key`` to verify under a different key (every mac
-        then mismatches - the wrong-key failure mode)."""
+        then mismatches - the wrong-key failure mode), ``head`` to also check
+        the chain ends where you recorded, or ``verifier`` to check signatures
+        without the signing key (a public-key scheme)."""
         with self._lock:
             return verify_chain(
                 self._read_back(),
                 self._signer,
                 self._key if key is None else key,
+                verifier=verifier,
+                head=head,
             )
 
     def _append(self, receipt: Receipt) -> None:
@@ -111,6 +138,9 @@ class FileSink(ChainedSink):
     ) -> None:
         super().__init__(signer=signer, key=key)
         self.path = str(path)
+        last = _last_receipt(self.path)
+        if last is not None:
+            self._last_mac = last.mac
 
     def _append(self, receipt: Receipt) -> None:
         with open(self.path, "a", encoding="utf-8") as fh:
@@ -126,3 +156,86 @@ class FileSink(ChainedSink):
                 if stripped:
                     receipts.append(Receipt.from_json(stripped))
         return receipts
+
+
+def _last_receipt(path: str) -> Optional[Receipt]:
+    """The last receipt in an existing log, None for a missing or empty file.
+
+    Reads backwards from the end, so reopening a large log stays cheap. A last
+    line that is not a receipt (a crash mid-write, or a foreign file) raises
+    ValueError: continuing would chain new receipts onto damage nobody saw.
+    """
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        end = fh.tell()
+        chunk = b""
+        position = end
+        while position > 0:
+            step = min(65536, position)
+            position -= step
+            fh.seek(position)
+            chunk = fh.read(step) + chunk
+            stripped = chunk.rstrip(b"\r\n \t")
+            if b"\n" in stripped or position == 0:
+                break
+    line = chunk.rstrip(b"\r\n \t").rsplit(b"\n", 1)[-1].strip()
+    if not line:
+        return None
+    try:
+        receipt = Receipt.from_json(line.decode("utf-8"))
+    except Exception as exc:
+        raise ValueError(
+            "{}: the last line is not a readable receipt ({}); move the file "
+            "aside or repair it before appending".format(path, exc)
+        ) from None
+    if not _is_hex_tag(receipt.mac):
+        raise ValueError(
+            "{}: the last receipt has no usable mac; move the file aside or "
+            "repair it before appending".format(path)
+        )
+    return receipt
+
+
+def _is_hex_tag(value: object) -> bool:
+    """A usable mac: non-empty, even-length hex. The length depends on the
+    signer (64 hex chars for HMAC-SHA256, 128 for an Ed25519 signature)."""
+    if not isinstance(value, str) or not value or len(value) % 2:
+        return False
+    try:
+        bytes.fromhex(value)
+    except ValueError:
+        return False
+    return True
+
+
+def verify_file(
+    path: str,
+    *,
+    key: Optional[bytes] = None,
+    signer: Signer = hmac_sha256,
+    verifier: Optional[Verifier] = None,
+    head: Optional[str] = None,
+) -> Optional[str]:
+    """Verify a receipt log on disk without opening a sink for writing.
+
+    The auditor's entry point: pass the shared ``key`` for the default HMAC
+    signer, or a ``verifier`` to check a public-key chain with no signing key
+    at all. ``head`` additionally checks the chain ends at the mac you
+    recorded. Returns None if intact, else a message naming the first problem.
+    """
+    if key is None and verifier is None:
+        raise ValueError("verify_file needs the key the log was signed with, or a verifier")
+    receipts: List[Receipt] = []
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    receipts.append(Receipt.from_json(stripped))
+                except Exception:
+                    return "receipt {}: not a readable receipt".format(len(receipts))
+    return verify_chain(receipts, signer, key or b"", verifier=verifier, head=head)

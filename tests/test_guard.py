@@ -50,6 +50,65 @@ def test_modify_rewrites_kwargs():
     assert pay(amount=1000) == 100
 
 
+def _cap_amount(event):
+    if event.args.get("amount", 0) > 100:
+        return Decision.modify({"amount": 100}, reason="capped")
+    return None
+
+
+def test_modify_rewrites_positional_arg():
+    # A rewrite names the argument; the caller passed it positionally. Merging
+    # into kwargs alone handed the function `amount` twice (TypeError).
+    @guard()
+    def transfer(amount, to):
+        return (amount, to)
+
+    interlock.install(rules=[_cap_amount])
+    assert transfer(5000, "bob") == (100, "bob")
+    assert transfer(5000, to="bob") == (100, "bob")
+
+
+def test_modify_rewrites_positional_only_arg():
+    # A positional-only parameter cannot be passed by keyword at all, so the
+    # rewrite has to land back in its positional slot.
+    @guard()
+    def transfer(amount, /, to):
+        return (amount, to)
+
+    interlock.install(rules=[_cap_amount])
+    assert transfer(5000, "bob") == (100, "bob")
+
+
+def test_modify_fills_an_argument_the_caller_left_to_its_default():
+    @guard()
+    def transfer(to, amount=5000):
+        return (amount, to)
+
+    interlock.install(rules=[_cap_amount])
+    assert transfer("bob") == (100, "bob")
+
+
+def test_modify_routes_undeclared_names_into_var_keyword():
+    @guard()
+    def send(to, **options):
+        return (to, options)
+
+    def tag(_event):
+        return Decision.modify({"priority": "low"}, reason="tagged")
+
+    interlock.install(rules=[tag])
+    assert send("bob", retries=2) == ("bob", {"retries": 2, "priority": "low"})
+
+
+def test_async_modify_rewrites_positional_arg():
+    @guard()
+    async def transfer(amount, to):
+        return (amount, to)
+
+    interlock.install(rules=[_cap_amount])
+    assert asyncio.run(transfer(5000, "bob")) == (100, "bob")
+
+
 def test_monitor_never_blocks():
     from interlock import monitor
 

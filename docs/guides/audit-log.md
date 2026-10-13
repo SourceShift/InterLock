@@ -1,0 +1,324 @@
+# Keep an audit log
+
+When something goes wrong, someone will ask what the agent was allowed to do and
+what it was stopped from doing. Debug logs are a poor answer: anyone with write
+access can edit them, and they often contain the very customer data you were
+protecting. interlock's audit log writes one *receipt* per decision. Receipts are
+chained and signed, so editing or deleting one is detectable. Arguments are
+stored as a hash, never as values.
+
+Receipts are off by default. Turn them on when you need a record you can hand to
+someone else: a security review, an incident, a customer asking what happened.
+
+## Turn it on
+
+Pass a sink to `install`. Every enforced decision from then on appends a receipt
+to `audit.jsonl`:
+
+```python
+import interlock
+from interlock import Blocked, deny_tool, enforce_tool_call, span
+from interlock.sink import FileSink
+
+KEY = load_your_secret_key()          # 32 random bytes, kept outside the log's reach
+sink = FileSink("audit.jsonl", key=KEY)
+interlock.install(rules=[deny_tool("drop_table", policy_id="db.v1")], sink=sink)
+
+with span(principal="acme/agent42"):
+    enforce_tool_call("read_rows", {"table": "orders"})
+    try:
+        enforce_tool_call("drop_table", {"table": "orders"})
+    except Blocked:
+        pass
+```
+
+The blocked call's receipt, one JSON object per line:
+
+```json
+{"action":"drop_table","args_digest":"98795f398f6036966300c90bc9db03591f1902e5aaafde2fef2c101488bff642","attributed_to":null,"mac":"9acd7b608f4de6fa3ac932035a042b0fb89fe191cea728cb44f24512d9e14fc9","phase":"call","policy_id":"db.v1","prev":"9ce4f86348191b29bb9c6ffbd6098ce38f7f484720ba37d70f6535909d044a3e","principal":"acme/agent42","reason":"tool not permitted","span_id":"1ee1d2cbfd2342cdaf00f0ecaf7bbe49","ts":1790876799.192898,"verdict":"BLOCK"}
+```
+
+`interlock.receipt.set_sink(sink)` does the same as `install(sink=...)`.
+`install()` never removes a sink. Only `set_sink(None)` turns receipts off again.
+
+Receipts come from the places that enforce decisions: `@guard`,
+`enforce_tool_call` and `enforce_tool_result` (and so the MCP and LangChain
+adapters), and sandbox launches. Rules never write receipts, so a rule can't
+forge one or quietly skip one. Allowed calls get receipts too.
+
+## What a receipt records
+
+| Field | What it holds |
+|---|---|
+| `ts` | when the call was captured (Unix time) |
+| `action` | the tool or function name |
+| `verdict` | `ALLOW`, `BLOCK`, or `MODIFY` |
+| `reason` | the rule's reason, copied as written |
+| `policy_id` | the rule's policy id, if it set one |
+| `attributed_to` | the *name* of the argument that triggered the decision |
+| `principal` | who was acting |
+| `span_id` | the agent run this call belonged to |
+| `phase` | `call` or `result` |
+| `args_digest` | SHA-256 over the arguments the caller passed |
+| `prev` | the previous receipt's `mac` (64 zeros for the first) |
+| `mac` | the signature over every other field |
+| `observed` | `true` when monitor mode recorded a decision without enforcing it; absent otherwise |
+
+The digest proves *which* payload was seen without storing it. If you have the
+arguments in hand, you can check them against a receipt:
+
+```python
+from interlock.receipt import digest_args
+digest_args({"table": "orders"}) == receipt.args_digest    # True for the matching call
+```
+
+The digest covers the arguments as passed. If a rule rewrote them, the receipt
+still digests the originals.
+
+> **Warning**
+> The `reason` field is copied verbatim. interlock's own rules use fixed
+> reasons, but if your rule writes an argument value into its reason (an email
+> address, a file path), that value ends up in the log. Keep values out of the
+> reasons you write.
+
+### Monitor mode
+
+Under `enforcement="monitor"` (or `@monitor()`), a call that a rule would have
+blocked goes through anyway. Its receipt still says `BLOCK`, because that was the
+decision, and adds `"observed": true` so nobody reads it as enforcement:
+
+```python
+from interlock import monitor
+
+@monitor()
+def drop_table(table: str) -> str:
+    return "dropped " + table
+
+with span(principal="acme/agent42"):
+    drop_table(table="orders")          # runs: monitor mode never blocks
+```
+
+```json
+{"action":"drop_table","args_digest":"98795f398f6036966300c90bc9db03591f1902e5aaafde2fef2c101488bff642","attributed_to":null,"mac":"ee3a23178f3f5fab8bbe0e42a78b81c7eaef94b6722aa83e40165bc51793504b","observed":true,"phase":"call","policy_id":"db.v1","prev":"0000000000000000000000000000000000000000000000000000000000000000","principal":"acme/agent42","reason":"tool not permitted","span_id":"310e33610784493d9893a4403ed795d1","ts":1790944627.908606,"verdict":"BLOCK"}
+```
+
+`observed` is covered by the signature like every other field. Receipts for
+enforced decisions leave it out, so logs written before it existed verify
+unchanged.
+
+## Verify the log
+
+`verify()` walks the chain. It returns `None` when the log is intact, or a
+message naming the first bad receipt:
+
+```python
+FileSink("audit.jsonl", key=KEY).verify()
+# -> None
+FileSink("audit.jsonl", key=b"some other key").verify()
+# -> 'receipt 0: MAC mismatch (edited, or verified with a different key)'
+```
+
+Here is what tampering looks like. Someone flips the blocked call to `ALLOW`:
+
+```
+receipt 1: MAC mismatch (edited, or verified with a different key)
+```
+
+Someone deletes that line instead:
+
+```
+receipt 1: chain break (prev does not match the preceding receipt's mac)
+```
+
+Each receipt carries the previous receipt's signature, and its own signature
+covers that link. An edit breaks the edited receipt. A deletion or reordering
+breaks the link to the next one.
+
+### Catch receipts cut from the end
+
+Deleting the *last* receipts leaves a shorter chain that still links up, so the
+chain alone can't show it. Record the latest signature, `sink.head`, somewhere
+the agent's host can't rewrite (another system, a ticket, a log shipper), and
+pass it back when you verify:
+
+```python
+head = sink.head                       # after the last write you care about
+# ... later, someone deletes the final line of audit.jsonl ...
+sink.verify()
+# -> None                              the chain itself still links up
+sink.verify(head=head)
+# -> 'chain ends at receipt 1 but the expected head is 173e14001ec82ded...: receipts were cut from the end, or this is not the log that head came from'
+```
+
+An auditor without a sink object uses `verify_file`, which reads the file
+without opening it for writing:
+
+```python
+from interlock.sink import verify_file
+
+verify_file("audit.jsonl", key=KEY, head=head)
+```
+
+## Choose and keep a key
+
+The default key is random and generated fresh for each process. Without your
+own key, only the process that wrote a log can verify it, and once it exits
+nobody can.
+
+For a log you need to check later, pass a long-lived key:
+
+```python
+import os
+KEY = bytes.fromhex(os.environ["INTERLOCK_RECEIPT_KEY"])   # 64 hex characters
+sink = FileSink(path, key=KEY)
+```
+
+Keep the key where the agent's tools can't read it: a secret manager, or an
+environment variable the agent's tools never see. Anyone who holds the key can
+write receipts that verify, so a key the agent can read protects nothing.
+
+## Restarts
+
+A `FileSink` opened on an existing log continues its chain from the last receipt
+in the file, so one `audit.jsonl` can span restarts:
+
+```python
+interlock.install(rules=rules, sink=FileSink("audit.jsonl", key=KEY))
+enforce_tool_call("read_rows", {"table": "orders"})
+
+# the service restarts and opens the same file
+sink = FileSink("audit.jsonl", key=KEY)
+interlock.install(rules=rules, sink=sink)
+enforce_tool_call("read_rows", {"table": "customers"})
+sink.verify()
+# -> None
+```
+
+Keep the same key across restarts, or the receipts written under the old key
+won't verify under the new one.
+
+If the file ends in something that isn't a receipt, for example a line cut short
+by a crash mid-write, the sink refuses to open it rather than chaining new
+receipts onto damage nobody looked at:
+
+```
+ValueError: broken.jsonl: the last line is not a readable receipt (Unterminated string starting at: line 1 column 21 (char 20)); move the file aside or repair it before appending
+```
+
+> **Warning**
+> One file, one writer at a time. Two sinks open on the same file at once (two
+> processes, or two instances in one process) both continue from the same last
+> receipt, so their writes fork the chain and `verify()` reports a break. Give
+> concurrent processes their own files, for example with the process id in the
+> name.
+
+## Test with an in-memory sink
+
+`InMemorySink` keeps receipts in a list, which makes assertions easy:
+
+```python
+from interlock.sink import InMemorySink
+from interlock.receipt import set_sink
+
+mem = InMemorySink()
+interlock.install(rules=[deny_tool("drop_table")], sink=mem)
+try:
+    enforce_tool_call("drop_table", {"table": "t"})
+except Blocked:
+    pass
+
+receipt = mem.receipts[0]
+receipt.action, receipt.verdict, receipt.reason, mem.verify()
+# -> ('drop_table', 'BLOCK', 'tool not permitted', None)
+
+set_sink(None)        # don't leak the sink into other tests
+```
+
+Anything with a `write(receipt)` method can be installed as a sink. Subclass
+`ChainedSink` (implement `_append` and `_read_back`) to keep the chaining and
+signing while storing receipts somewhere else.
+
+## Let others verify without your key
+
+The default signer is HMAC-SHA256: a shared-secret signature. It proves the log
+hasn't changed since it was written, by someone who held the key. It doesn't
+prove *which* key holder wrote it, and anyone who verifies it needs the key,
+which also lets them write receipts that verify.
+
+For a log an outside auditor can check without being able to forge it, sign
+with a private key and give the auditor a verifier that holds only the public
+key. A signer is any function `(key, message) -> bytes`; a verifier is any
+function `(message, signature) -> bool`. Here is Ed25519 with the
+`cryptography` package (interlock itself stays dependency-free):
+
+```python
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+private_key = Ed25519PrivateKey.generate()
+public_key = private_key.public_key()          # give the auditor only this
+
+
+def ed25519_signer(_key, message):
+    return private_key.sign(message)            # the key argument is unused; the closure holds it
+
+
+def ed25519_verifier(message, signature):
+    try:
+        public_key.verify(signature, message)
+        return True
+    except InvalidSignature:
+        return False
+
+
+sink = FileSink("signed.jsonl", signer=ed25519_signer, key=b"unused")
+interlock.install(rules=rules, sink=sink)
+# ... the agent runs ...
+
+# the auditor's side: no private key anywhere
+verify_file("signed.jsonl", verifier=ed25519_verifier)
+# -> None
+verify_file("signed.jsonl", verifier=some_other_public_keys_verifier)
+# -> 'receipt 0: signature rejected by the verifier (edited, or signed with a different key)'
+```
+
+`sink.verify(verifier=...)` and `verify_file(..., verifier=..., head=...)` take
+the same verifier. The exact bytes each receipt is signed over come from
+`interlock.receipt.signing_payload(receipt)`, if you need to check one by hand.
+
+## Receipts from the sidecar
+
+When a Node.js agent uses the [sidecar](../reference/sidecar.md), the daemon
+writes the receipts, because it is the process making the decisions:
+
+```bash
+interlock-sidecar --rules my_service.policies:RULES \
+  --socket "$HOME/.interlock/guard.sock" \
+  --receipts audit.jsonl --key-file receipt.key
+```
+
+`--key-file` holds 64 hex characters or raw bytes (a trailing newline is
+ignored). Without it the daemon signs with a per-process key and prints a
+warning, because the log is then verifiable only by that process. The JS client
+doesn't write receipts of its own, so each decision is recorded once.
+
+## Limits
+
+- **A cut tail needs a recorded head.** Deleting the last receipts leaves a
+  valid, shorter chain. `verify(head=...)` catches it only if you kept the head
+  somewhere the agent's host can't change. Shipping receipts off the host as
+  they're written does the same job.
+- **One writer per file.** Restarts continue the chain; two writers open at the
+  same time fork it, and `verify()` reports the fork.
+- **HMAC proves integrity, not authorship.** Anyone with the key can write
+  receipts that verify. Use a public-key signer and `verifier=` when that
+  matters.
+- **Rewrites aren't recorded in detail.** A `MODIFY` receipt shows that the call
+  was rewritten and by which policy, not what the new arguments were.
+
+## Next
+
+- [Production checklist](production.md): where receipts fit in a rollout
+- [Python API reference](../reference/python-api.md): `FileSink`, `InMemorySink`, `Receipt`
+- [Sidecar reference](../reference/sidecar.md): `--receipts` and `--key-file`
+- [Security model](../security-model.md)

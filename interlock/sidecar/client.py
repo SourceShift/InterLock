@@ -35,15 +35,28 @@ from ..wire import (
 )
 
 
+#: Seconds :class:`RemoteEngine` waits for a connect, a send, or a reply when
+#: no ``timeout`` is given. A hung daemon then blocks the call after this long
+#: instead of hanging it forever.
+DEFAULT_TIMEOUT = 5.0
+
+
 class RemoteEngine:
     """An engine that decides by asking the daemon over a unix socket.
 
     One connection is reused across calls, and a lock serializes them: a
     request/response exchange on a stream socket cannot be interleaved, so
     concurrent callers share the connection in turn rather than racing on it.
+
+    ``timeout`` bounds each socket operation (connect, send, and waiting for a
+    reply), in seconds. It defaults to :data:`DEFAULT_TIMEOUT`; pass ``None`` to
+    wait forever. A timeout raises ``Blocked``, like any other transport
+    failure.
     """
 
-    def __init__(self, path: str, *, timeout: Optional[float] = None) -> None:
+    def __init__(
+        self, path: str, *, timeout: Optional[float] = DEFAULT_TIMEOUT
+    ) -> None:
         self.path = str(path)
         self.timeout = timeout
         self._lock = threading.Lock()
@@ -137,4 +150,4 @@ def probe(path: str, *, timeout: float = 0.25) -> bool:
         sock.close()
 
 
-__all__ = ["RemoteEngine", "probe", "error_frame"]
+__all__ = ["DEFAULT_TIMEOUT", "RemoteEngine", "probe", "error_frame"]
