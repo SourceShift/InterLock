@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# worktree-guard: a new branch is only ever created by scripts/codex-worktree.sh.
+#
+# Branching inside the primary checkout (git switch -c / checkout -b / branch)
+# is how one session's work ends up under another session's feet: the primary
+# is shared by every session, so a branch switched there moves everyone. The
+# script creates the branch inside a fresh worktree and sets the allow flag.
+#
+# Exempt: main/master (fast-forward refreshes) and mini-ork/* (mini-ork's
+# workspace mode mints refs/heads/mini-ork/<run_id> for its own isolated
+# worktrees, mini_ork/workspaces.py).
+set -euo pipefail
+
+[ "${1:-}" = "prepared" ] || exit 0
+zero="0000000000000000000000000000000000000000"
+
+while read -r old new ref; do
+  case "$ref" in
+    refs/heads/main|refs/heads/master|refs/heads/mini-ork/*)
+      continue
+      ;;
+    refs/heads/*)
+      if [ "$old" = "$zero" ] && [ "$new" != "$zero" ] && [ "${ALLOW_WORKTREE_BRANCH_CREATE:-}" != "1" ]; then
+        cat >&2 <<'MSG'
+[worktree-guard] ERROR: creating a branch directly is disabled in this repo.
+
+Create task branches through a worktree instead:
+
+  bash scripts/codex-worktree.sh create <task-slug>
+
+Do not use git switch -c, git checkout -b, or git branch <name>.
+This keeps work out of the shared primary checkout.
+MSG
+        exit 1
+      fi
+      ;;
+  esac
+done
+exit 0

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# G10: no merge commit in the primary checkout.
+#
+# pre-commit (G1) does not fire for `git merge`, so a non-fast-forward merge is
+# the other way the primary acquires a commit of its own. pre-merge-commit only
+# fires when a merge CREATES a commit, so the refresh path,
+# `git merge --ff-only origin/main`, never trips it.
+#
+# ESCAPE (reviewed only): ALLOW_MAIN_MERGE=1 git merge ...
+set -uo pipefail
+
+[ "${ALLOW_MAIN_MERGE:-0}" = "1" ] && exit 0
+. "$(dirname "$0")/_primary.sh"
+in_primary_checkout || exit 0
+
+cat >&2 <<MSG
+
+[G10] BLOCKED: a merge commit in the primary checkout is forbidden.
+      The primary only fast-forwards from origin/main. To land work, ship it
+      from its worktree:
+        bash scripts/codex-worktree.sh ship <task-slug>
+      ESCAPE (reviewed only): ALLOW_MAIN_MERGE=1 git merge ...
+
+MSG
+exit 1

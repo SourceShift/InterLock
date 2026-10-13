@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# G1: the primary checkout never receives a commit.
+#
+# It only ever fast-forwards main from origin/main. A commit made there (on main
+# or on a feature branch) diverges the checkout every session shares; work
+# lands from a worktree via `bash scripts/codex-worktree.sh ship <slug>`.
+#
+# ESCAPE (deliberate, reviewed only):
+#   ALLOW_MAIN_COMMIT=1 git commit ...                  a commit on primary main
+#   WORKTREE_PRIMARY_COMMIT_GUARD=skip git commit ...   any primary commit
+set -uo pipefail
+
+[ "${WORKTREE_PRIMARY_COMMIT_GUARD:-}" = "skip" ] && exit 0
+. "$(dirname "$0")/_primary.sh"
+in_primary_checkout || exit 0
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo "(detached HEAD)")"
+if { [ "$branch" = "main" ] || [ "$branch" = "master" ]; } && [ "${ALLOW_MAIN_COMMIT:-}" = "1" ]; then
+  exit 0
+fi
+
+cat >&2 <<MSG
+
+[pre-commit] G1 GUARD: refusing a commit in the primary checkout.
+             Branch: ${branch}   (${PRIMARY_CHECKOUT}, shared by every session)
+
+             Work in a worktree and ship from there:
+               bash scripts/codex-worktree.sh create <task-slug>
+               ... commit in the worktree ...
+               bash scripts/codex-worktree.sh ship <task-slug>
+
+             ESCAPE (reviewed only): ALLOW_MAIN_COMMIT=1 git commit ...   (main only)
+                                     WORKTREE_PRIMARY_COMMIT_GUARD=skip git commit ...
+
+MSG
+exit 1

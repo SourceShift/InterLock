@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# G3/G4: a push to main must be a clean fast-forward of the current remote main.
+#
+# Covers both ways a push diverges main: the pusher is BEHIND (someone else
+# landed first, so rebase), or the push is a force/non-fast-forward that would
+# drop upstream commits. Deleting main is refused too. Other branches are not
+# checked.
+#
+# ESCAPE (reviewed only): PUSH_MAIN_GUARD=skip git push ...
+set -uo pipefail
+
+[ "${PUSH_MAIN_GUARD:-}" = "skip" ] && exit 0
+zero="0000000000000000000000000000000000000000"
+status=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main|refs/heads/master) ;;
+    *) continue ;;
+  esac
+  if [ "$local_sha" = "$zero" ]; then
+    echo "[pre-push] G3 BLOCKED: refusing to delete ${remote_ref#refs/heads/} on the remote." >&2
+    status=1
+    continue
+  fi
+  [ "$remote_sha" = "$zero" ] && continue   # first push of main
+  if ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    echo "[pre-push] G4 BLOCKED: the remote main (${remote_sha:0:12}) is not in this clone." >&2
+    echo "           Someone pushed since you fetched: git fetch origin main && git rebase origin/main" >&2
+    status=1
+    continue
+  fi
+  if ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+    echo "[pre-push] G4 BLOCKED: ${local_ref} is not a fast-forward of the remote main (${remote_sha:0:12})." >&2
+    echo "           Rebase onto origin/main first; never force-push main." >&2
+    status=1
+  fi
+done
+exit $status
