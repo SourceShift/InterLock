@@ -177,6 +177,59 @@ an upgrade is a deliberate change:
 pip install "git+https://github.com/SourceShift/InterLock.git@<commit-or-tag>"
 ```
 
+## Detect upstream drift
+
+A tool surface is not static: an MCP server you trust today can add, remove or
+reshape a tool tomorrow, and nothing about a call changes to tell you. Record
+what each covered surface looks like, then diff the live surface against the
+record.
+
+- [ ] **Covered surfaces are recorded as a corpus.** Each surface's tool listing,
+  and any schema shape you care about, goes in a corpus file:
+
+  ```json
+  {"corpus_version": 1,
+   "surfaces": [{"name": "demo", "tools": ["read", "write"]}]}
+  ```
+
+  A tool entry is a bare name, or an object carrying the name plus the shape you
+  recorded (`{"name": "read", "input_schema": {...}}`). `corpus_version` is
+  optional.
+
+- [ ] **Drift is diffed against a live surface.** `--live` runs a command and
+  reads its standard output as the live tool listing, one tool name per line (or
+  one JSON object per line when you record schema shapes):
+
+  ```bash
+  interlock drift --corpus corpus.json --live "my-mcp-server --list-tools"
+  ```
+
+  Every added tool, removed tool and changed schema shape is reported with a
+  severity, and the command exits non-zero on any drift; an unchanged surface
+  exits zero. `--surface NAME` picks which recorded surface the live command
+  describes when the corpus holds more than one.
+
+- [ ] **Nothing is filed and nothing is rewritten.** `drift` only ever reads the
+  corpus - there is no `--fix` and no write-back - so the diff is a report you
+  act on, not an action it takes. Record the surface deliberately, when you
+  mean to.
+
+- [ ] **The fingerprint is the runtime guard's.** The corpus fingerprint is
+  `mcp_server_attestation.listing_digest`, the canonicalization the
+  `mcp_server_baseline` rule uses at admission time, so `drift` reporting
+  "unchanged" and the guard blocking cannot disagree about the same surface
+  ([detectors](../reference/detectors.md)).
+
+- [ ] **A CI job diffs pinned upstreams on a schedule.** Pin the upstream version
+  so a diff means *your* surface moved, not someone else's release train;
+  `.github/workflows/drift.yml` re-checks each recorded surface weekly and on
+  every pull request, and a finding fails the build
+  ([workflow](https://github.com/SourceShift/InterLock/blob/main/.github/workflows/drift.yml)).
+
+  ```bash
+  interlock drift --corpus corpus.json --live "python -m my_upstream --list-tools"
+  ```
+
 ## Next
 
 - [Security model](../security-model.md): what's protected and what isn't.

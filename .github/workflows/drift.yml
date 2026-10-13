@@ -1,0 +1,98 @@
+name: Drift
+
+# Upstream-drift detector (R30). A tool surface is not static: an MCP server you
+# trust today can add, remove or reshape a tool tomorrow, and nothing about a
+# call changes to tell you. This job records what each covered surface looked
+# like, then diffs the live surface against that record and goes red on any
+# difference, so re-recording it is a deliberate act rather than a silent one.
+#
+# Its own workflow, not a step in ci.yml, on purpose: ci.yml must stay
+# network-free and dependency-free (the package ships `dependencies = []`),
+# while this job reaches out to the pinned upstreams. Keeping them apart is what
+# lets the main suite run offline.
+
+on:
+  pull_request:
+  schedule:
+    # Weekly, off the hour, so this lands outside the queue everyone else's cron
+    # lands in (codeql.yml schedules on the same rationale).
+    - cron: "42 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drift-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    name: diff recorded surfaces against pinned upstreams
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install interlock
+        run: python -m pip install -e .
+
+      - name: Diff each recorded surface against its pinned upstream
+        # Upstreams are pinned by version, never by "latest": an unpinned
+        # upstream turns this job red on someone else's release schedule, which
+        # is noise, not signal (the same reason ci.yml pins ruff==0.16.9). Bump
+        # the pin and re-record the corpus together, on purpose.
+        #
+        # In a deployment the probe below launches YOUR MCP server at a pinned
+        # version and prints its tool listing, one name per line, e.g.
+        #   interlock drift --corpus corpus.json \
+        #     --live "npx -y @modelcontextprotocol/server-github@2025.1.0 --list-tools"
+        # This repo has no such server to reach, so the worked example diffs the
+        # one surface that ships here -- the CLI's own command table -- which is
+        # pinned by the checked-out ref. Either way the contract is the same: a
+        # recorded listing, a live listing, and a non-zero exit on any drift.
+        run: |
+          set -euo pipefail
+
+          WORK="$(mktemp -d)"
+          trap 'rm -rf "$WORK"' EXIT
+
+          # The live surface: one tool name per line on stdout.
+          cat > "$WORK/list_tools.py" <<'PYEOF'
+          from interlock.cli import COMMANDS
+
+          for name, _help, _module in COMMANDS:
+              print(name)
+          PYEOF
+
+          # The recorded surface, written out verbatim as it was last reviewed.
+          cat > "$WORK/corpus.json" <<'JSON'
+          {
+            "corpus_version": 1,
+            "surfaces": [
+              {
+                "name": "interlock-cli",
+                "tools": [
+                  "doctor",
+                  "report",
+                  "hook",
+                  "install-hook",
+                  "policy",
+                  "trust",
+                  "mcp",
+                  "reviews",
+                  "drift"
+                ]
+              }
+            ]
+          }
+          JSON
+
+          # Any finding exits non-zero and fails the job. An unchanged surface
+          # exits zero - the corpus is only ever read, never rewritten.
+          python -m interlock drift \
+            --corpus "$WORK/corpus.json" \
+            --live "python $WORK/list_tools.py"
