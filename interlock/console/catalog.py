@@ -18,7 +18,7 @@ from functools import lru_cache
 from typing import Any, Dict, List, Tuple
 
 from .. import detectors as detectors_pkg
-from .server import PREFIX_ROUTES, ROUTES
+from .server import HEALTH_CONTRIBUTORS, PREFIX_ROUTES, ROUTES
 
 #: (title, one-line description, modules). Order is the order the docs page
 #: and the console both list categories in.
@@ -378,5 +378,10 @@ def _detector_detail_route(handler: Any) -> Tuple[int, dict]:
         return _unknown_detector()
 
 
+def _health_contributor(_handler: Any) -> Dict[str, Any]:
+    return {"detectors": build_catalog()["count"]}
+
+
 ROUTES["/api/detectors"] = {"GET": _list_detectors}
 PREFIX_ROUTES["/api/detectors/"] = {"GET": _detector_detail_route}
+HEALTH_CONTRIBUTORS.append(_health_contributor)

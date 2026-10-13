@@ -24,14 +24,13 @@ from __future__ import annotations
 
 import getpass
 import hmac
-import json
 import os
 import re
 import secrets
 import threading
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Optional, Set, Tuple
 
-from .server import ROUTES
+from .server import ROUTES, ApiError, read_json_body  # noqa: F401 - re-exported for the feature modules
 
 #: The header a write request carries its unlock token in.
 TOKEN_HEADER = "X-Interlock-Unlock"
@@ -42,47 +41,13 @@ _CODE_ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _CODE_IN_TEXT = re.compile(r"(?:^|/unlock/)([A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4})\s*$")
 
 
-class ApiError(Exception):
-    """A request the console refuses, with the shared error envelope."""
-
-    def __init__(self, status: int, code: str, message: str) -> None:
-        super().__init__(message)
-        self.status = status
-        self.code = code
-        self.message = message
-
-    def response(self) -> Tuple[int, dict]:
-        return self.status, {"error": {"code": self.code, "message": self.message}}
-
-
-def read_json_body(handler: Any) -> Dict[str, Any]:
-    """The request body as a JSON object; ``ApiError`` for anything else."""
-    content_type = handler.headers.get("Content-Type", "")
-    if content_type.split(";")[0].strip().lower() != "application/json":
-        raise ApiError(415, "unsupported_media_type", "Content-Type must be application/json")
-    try:
-        length = int(handler.headers.get("Content-Length", 0) or 0)
-    except ValueError:
-        length = 0
-    if length > 1024 * 1024:
-        raise ApiError(413, "too_large", "the body is larger than 1 MiB")
-    raw = handler.rfile.read(length) if length > 0 else b""
-    try:
-        body = json.loads(raw.decode("utf-8")) if raw else {}
-    except (ValueError, UnicodeDecodeError):
-        raise ApiError(400, "bad_json", "body is not valid JSON")
-    if not isinstance(body, dict):
-        raise ApiError(400, "bad_json", "body must be a JSON object")
-    return body
-
-
 def handles_errors(fn):
     """Turn an ``ApiError`` raised by a route into its error response."""
     def route(handler: Any):
         try:
             return fn(handler)
         except ApiError as exc:
-            return exc.response()
+            return exc.status, exc.body()
     route.__name__ = fn.__name__
     route.__doc__ = fn.__doc__
     return route

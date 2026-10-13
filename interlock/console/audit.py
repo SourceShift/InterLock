@@ -13,14 +13,17 @@ import dataclasses
 import json
 import os
 import re
+import select
+import socket
+import tempfile
+import threading
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlsplit
 
 from ..receipt import GENESIS, Receipt
 from ..sink import verify_file
-from .server import ROUTES
-from .server import _health as _base_health
+from .server import HEALTH_CONTRIBUTORS, ROUTES
 
 VALID_VERDICTS = ("ALLOW", "BLOCK", "MODIFY", "ESCALATE", "OBSERVED")
 VALID_ORDERS = ("asc", "desc")
@@ -39,31 +42,6 @@ POLL_SECONDS = 0.9
 
 #: How often the stream sends a ``: keepalive`` comment while idle, in seconds.
 KEEPALIVE_SECONDS = 15.0
-
-
-def read_key_file(path: str) -> bytes:
-    """Read a receipt MAC key: 64 hex characters, or raw bytes.
-
-    Trailing newlines are stripped before that test, because the difference
-    between a key and the same key with a newline is a different key. Raises
-    ``ValueError`` for a path that is missing, unreadable or empty - the CLI
-    turns that into a one-line refusal before the server binds.
-    """
-    try:
-        with open(path, "rb") as fh:
-            raw = fh.read().rstrip(b"\r\n")
-    except OSError as exc:
-        raise ValueError(
-            "cannot read key file {}: {}".format(path, exc.strerror or exc)
-        )
-    if len(raw) == 64:
-        try:
-            return bytes.fromhex(raw.decode("ascii"))
-        except ValueError:
-            pass
-    if not raw:
-        raise ValueError("key file {} is empty".format(path))
-    return raw
 
 
 def _not_configured() -> Dict[str, Any]:
@@ -98,33 +76,50 @@ def _int_param(qs: Dict[str, List[str]], name: str, default: int) -> int:
         return default
 
 
-def _parse_receipt_line(stripped: str, index: int) -> Dict[str, Any]:
-    """One line turned into a receipt dict, or an ``unreadable`` placeholder.
+def _parse_receipt_line(raw_line: bytes, index: int) -> Dict[str, Any]:
+    """One complete line turned into a receipt dict, or an ``unreadable``
+    placeholder.
 
-    A line that is not valid JSON or is missing a required field must not
-    raise: it still occupies a line position, so it is reported rather than
-    aborting whichever endpoint is reading the log (the page, verify or the
-    stream).
+    A line that is not valid UTF-8 (F18), is not valid JSON, or is missing a
+    required field must not raise: it still occupies a line position, so it
+    is reported rather than aborting whichever endpoint is reading the log
+    (the page, verify or the stream).
     """
     try:
-        fields = dataclasses.asdict(Receipt.from_json(stripped))
+        text = raw_line.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"index": index, "unreadable": True}
+    try:
+        fields = dataclasses.asdict(Receipt.from_json(text.strip()))
     except Exception:
         return {"index": index, "unreadable": True}
     fields["index"] = index
     return fields
 
 
+def _complete_lines(raw: bytes) -> List[bytes]:
+    """Every newline-terminated line in ``raw``, in file order.
+
+    A trailing chunk with no newline yet is not a line (F19): it is
+    invisible until a later write terminates it. ``bytes.split`` always
+    leaves exactly one such element at the end - the empty string after a
+    final ``\\n``, or the partial tail of an unterminated write - and that
+    is the element dropped here.
+    """
+    return raw.split(b"\n")[:-1]
+
+
 def _read_receipts(path: str) -> List[Dict[str, Any]]:
-    """Every receipt in ``path``, each carrying its 0-based file line position."""
+    """Every complete receipt in ``path``, each carrying its 0-based file
+    line position."""
     if not os.path.exists(path):
         return []
+    with open(path, "rb") as fh:
+        raw = fh.read()
     out: List[Dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as fh:
-        for index, line in enumerate(fh):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            out.append(_parse_receipt_line(stripped, index))
+    for index, raw_line in enumerate(_complete_lines(raw)):
+        if raw_line.strip():
+            out.append(_parse_receipt_line(raw_line, index))
     return out
 
 
@@ -208,7 +203,7 @@ def _handle_verify(handler: Any) -> Any:
             "head": head,
         }
 
-    problem = verify_file(path, key=key)
+    problem = _verify_without_partial_tail(path, key)
     status = "intact" if problem is None else "broken"
     broken_index = None
     if problem:
@@ -221,6 +216,39 @@ def _handle_verify(handler: Any) -> Any:
             broken_index = ordered[min(position, len(ordered) - 1)].get("index")
     return 200, {"status": status, "problem": problem, "count": count, "head": head,
                  "broken_index": broken_index}
+
+
+def _verify_without_partial_tail(path: str, key: bytes) -> Optional[str]:
+    """``verify_file``, but never fed a trailing line with no newline yet.
+
+    ``verify_file`` lives in ``interlock/sink.py``, which this deliverable
+    may not edit, and reads the whole file itself. A trailing unterminated
+    line must stay invisible to it too (F19), so when the log currently ends
+    in one, verify runs against a temp copy with that tail cut off instead of
+    the real path. A complete non-UTF-8 line (F18) is still handed to
+    ``verify_file``, whose own text-mode read raises decoding it; that is
+    reported the same way as any other verification failure: ``broken``.
+    """
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    if not raw or raw.endswith(b"\n"):
+        target, cleanup = path, None
+    else:
+        truncated = raw[: raw.rfind(b"\n") + 1]
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        try:
+            tmp.write(truncated)
+        finally:
+            tmp.close()
+        target, cleanup = tmp.name, tmp.name
+    try:
+        try:
+            return verify_file(target, key=key)
+        except UnicodeDecodeError:
+            return "a receipt line is not valid UTF-8"
+    finally:
+        if cleanup is not None:
+            os.unlink(cleanup)
 
 
 def _file_size(path: str) -> int:
@@ -236,6 +264,30 @@ def _write_sse(wfile: Any, event: str, data: Dict[str, Any]) -> None:
     wfile.flush()
 
 
+def _tail_from(path: str, offset: int, line_index: int) -> "tuple[List[Dict[str, Any]], int, int]":
+    """Complete lines appended to ``path`` at or after byte ``offset``.
+
+    Reads only the bytes from ``offset`` onward, not the whole file, so a
+    tick's cost stays proportional to what was appended rather than to the
+    log's full size - otherwise the per-tick work keeps growing as the log
+    grows, and the 1-second live-tail bound in the spec would eventually
+    slip. A trailing line with no newline yet is left unread (F19):
+    ``offset`` stops right before it, so the next call starts from the same
+    place and picks it up once it is whole.
+    """
+    with open(path, "rb") as fh:
+        fh.seek(offset)
+        raw = fh.read()
+    receipts: List[Dict[str, Any]] = []
+    index = line_index
+    for raw_line in _complete_lines(raw):
+        if raw_line.strip():
+            receipts.append(_parse_receipt_line(raw_line, index))
+        index += 1
+        offset += len(raw_line) + 1
+    return receipts, offset, index
+
+
 def _initial_tail_state(path: str) -> "tuple[List[Dict[str, Any]], int, int]":
     """The log's current receipts, plus the byte offset and line count a
     stream should start polling from.
@@ -245,46 +297,86 @@ def _initial_tail_state(path: str) -> "tuple[List[Dict[str, Any]], int, int]":
     risks a write landing between two of those calls and leaving the stream's
     starting point inconsistent with what it just reported in ``hello``.
     """
-    receipts: List[Dict[str, Any]] = []
-    line_index = 0
-    offset = 0
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as fh:
-            while True:
-                line = fh.readline()
-                if not line:
-                    break
-                stripped = line.strip()
-                if stripped:
-                    receipts.append(_parse_receipt_line(stripped, line_index))
-                line_index += 1
-                offset = fh.tell()
-    return receipts, offset, line_index
+    if not os.path.exists(path):
+        return [], 0, 0
+    return _tail_from(path, 0, 0)
 
 
 def _read_new_receipts(path: str, offset: int, line_index: int) -> "tuple[List[Dict[str, Any]], int, int]":
-    """Receipts appended to ``path`` after byte ``offset``.
+    """Receipts appended to ``path`` after byte ``offset``."""
+    return _tail_from(path, offset, line_index)
 
-    Reads only the bytes written since the last poll tick, not the whole
-    file, so a tick's cost stays proportional to what was appended rather
-    than to the log's full size - otherwise the per-tick work keeps growing
-    as the log grows, and the 1-second live-tail bound in the spec would
-    eventually slip. A trailing line with no newline yet is left unread: the
-    next tick starts from the same offset and picks it up once it is whole.
+
+#: The most receipt streams the console answers at once (F16). Chosen as a
+#: small, fixed cap rather than left unbounded: each stream holds a request
+#: thread open indefinitely, and a reloaded audit page that opens several
+#: before its old ones are noticed gone must still be refused loudly rather
+#: than exhaust the server's threads one reload at a time.
+MAX_STREAMS = 8
+
+
+#: How long a new stream waits for a slot when all are taken. A client that
+#: just hung up frees its slot within milliseconds; waiting this long first
+#: means a reloaded page never meets a 503 from its own dying streams, while
+#: a genuinely full console still refuses promptly.
+SLOT_GRACE_SECONDS = 0.5
+
+
+def _slots(server: Any) -> threading.Condition:
+    with server._stream_lock:
+        cond = getattr(server, "_stream_slots", None)
+        if cond is None:
+            cond = server._stream_slots = threading.Condition()
+        return cond
+
+
+def _acquire_stream_slot(server: Any) -> bool:
+    cond = _slots(server)
+    deadline = time.monotonic() + SLOT_GRACE_SECONDS
+    with cond:
+        while server._open_streams >= MAX_STREAMS:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            cond.wait(remaining)
+        server._open_streams += 1
+        return True
+
+
+def _release_stream_slot(server: Any) -> None:
+    cond = _slots(server)
+    with cond:
+        server._open_streams -= 1
+        cond.notify()
+
+
+def _too_many_streams() -> Dict[str, Any]:
+    return {
+        "error": {
+            "code": "too_many_streams",
+            "message": "the console already has {} receipt streams open".format(MAX_STREAMS),
+        }
+    }
+
+
+def _client_gone(sock: socket.socket) -> bool:
+    """True once the client's end of ``sock`` has closed.
+
+    A stream that only ever writes never learns its client is gone until
+    its next write attempt, which the 15-second keepalive cadence (spec 04)
+    can leave far later than the 2-second slot release Q2 requires.
+    ``select`` on the read side catches this without waiting for a write: a
+    client that closed its end makes the socket readable, and a
+    non-blocking peek then returns ``b""`` (EOF) rather than data, since a
+    stream's GET client never sends any.
     """
-    out: List[Dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as fh:
-        fh.seek(offset)
-        while True:
-            line = fh.readline()
-            if not line or not line.endswith("\n"):
-                break
-            stripped = line.strip()
-            if stripped:
-                out.append(_parse_receipt_line(stripped, line_index))
-            line_index += 1
-            offset = fh.tell()
-    return out, offset, line_index
+    readable, _, _ = select.select([sock], [], [], 0)
+    if not readable:
+        return False
+    try:
+        return sock.recv(1, socket.MSG_PEEK) == b""
+    except OSError:
+        return True
 
 
 def _handle_stream(handler: Any) -> Any:
@@ -293,55 +385,69 @@ def _handle_stream(handler: Any) -> Any:
         handler._send_json(404, _not_configured())
         return None
 
-    handler.send_response(200)
-    handler.send_header("Content-Type", "text/event-stream")
-    handler.send_header("Cache-Control", "no-store")
-    handler.send_header("X-Content-Type-Options", "nosniff")
-    handler.end_headers()
-    wfile = handler.wfile
-
-    receipts, offset, line_index = _initial_tail_state(path)
+    if not _acquire_stream_slot(handler.server):
+        handler._send_json(503, _too_many_streams())
+        return None
 
     try:
-        _write_sse(wfile, "hello", {"count": len(receipts)})
-        last_keepalive = time.monotonic()
-        next_poll = time.monotonic() + POLL_SECONDS
-        while True:
-            delay = next_poll - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            next_poll += POLL_SECONDS
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("X-Content-Type-Options", "nosniff")
+        handler.end_headers()
+        wfile = handler.wfile
+        sock = handler.connection
 
-            size = _file_size(path)
-            if size < offset:
-                _write_sse(wfile, "reset", {})
-                _, offset, line_index = _initial_tail_state(path)
-                last_keepalive = time.monotonic()
-                continue
-            if size > offset:
-                new_receipts, offset, line_index = _read_new_receipts(path, offset, line_index)
-                for fields in new_receipts:
-                    _write_sse(wfile, "receipt", fields)
+        receipts, offset, line_index = _initial_tail_state(path)
+
+        try:
+            _write_sse(wfile, "hello", {"count": len(receipts)})
+            last_keepalive = time.monotonic()
+            next_poll = time.monotonic() + POLL_SECONDS
+            while True:
+                delay = next_poll - time.monotonic()
+                if delay > 0:
+                    # Wait on the socket, not the clock: a client that hangs
+                    # up makes it readable at once, so its slot is free again
+                    # within milliseconds rather than at the next poll.
+                    select.select([sock], [], [], delay)
+                if _client_gone(sock):
+                    break
+                if time.monotonic() < next_poll:
+                    continue
+                next_poll += POLL_SECONDS
+
+                size = _file_size(path)
+                if size < offset:
+                    _write_sse(wfile, "reset", {})
+                    _, offset, line_index = _initial_tail_state(path)
                     last_keepalive = time.monotonic()
-            now = time.monotonic()
-            if now - last_keepalive >= KEEPALIVE_SECONDS:
-                wfile.write(b": keepalive\n\n")
-                wfile.flush()
-                last_keepalive = now
-    except (BrokenPipeError, ConnectionResetError, OSError):
-        pass
+                    continue
+                if size > offset:
+                    new_receipts, offset, line_index = _read_new_receipts(path, offset, line_index)
+                    for fields in new_receipts:
+                        _write_sse(wfile, "receipt", fields)
+                        last_keepalive = time.monotonic()
+                now = time.monotonic()
+                if now - last_keepalive >= KEEPALIVE_SECONDS:
+                    wfile.write(b": keepalive\n\n")
+                    wfile.flush()
+                    last_keepalive = now
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+    finally:
+        _release_stream_slot(handler.server)
     return None
 
 
-def _health_with_receipts(handler: Any) -> Any:
-    status, body = _base_health(handler)
-    body = dict(body)
-    body["receipts"] = handler.server.receipts_path is not None
-    body["verify"] = handler.server.receipts_key is not None
-    return status, body
+def _health_contributor(handler: Any) -> Dict[str, Any]:
+    return {
+        "receipts": handler.server.receipts_path is not None,
+        "verify": handler.server.receipts_key is not None,
+    }
 
 
 ROUTES["/api/receipts"] = {"GET": _handle_receipts}
 ROUTES["/api/receipts/verify"] = {"GET": _handle_verify}
 ROUTES["/api/receipts/stream"] = {"GET": _handle_stream}
-ROUTES["/api/health"]["GET"] = _health_with_receipts
+HEALTH_CONTRIBUTORS.append(_health_contributor)

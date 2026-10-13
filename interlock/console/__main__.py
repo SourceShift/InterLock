@@ -9,20 +9,44 @@ process never binds at all when the host is wrong.
 from __future__ import annotations
 
 import argparse
+import signal
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
 import interlock
 
-from .audit import read_key_file
+from interlock.sidecar.__main__ import _read_key
+from ..sidecar.rules import RulesError
 from .server import ConsoleServer, LOOPBACK_HOSTS
 from .session import configure
 
 EXIT_BAD_HOST = 2
 EXIT_BAD_KEY_FILE = 2
+EXIT_PORT_IN_USE = 1
 
 DEFAULT_PORT = 7878
+
+
+class _Stop(SystemExit):
+    """Raised by the SIGINT/SIGTERM handler to unwind out of
+    ``serve_forever()`` without the deadlock calling ``server.shutdown()``
+    from inside its own thread would cause (F17)."""
+
+
+def _install_signal_handlers() -> None:
+    # Installed unconditionally, overriding whatever disposition this
+    # process inherited (SIGINT ignored, for one, when started in the
+    # background), so SIGINT and SIGTERM stop the server either way.
+    def _stop(_signum: int, _frame: object) -> None:
+        raise _Stop(0)
+
+    signal.signal(signal.SIGINT, _stop)
+    signal.signal(signal.SIGTERM, _stop)
+
+
+def _url_host(host: str) -> str:
+    return "[{}]".format(host) if ":" in host else host
 
 
 def _default_static_dir() -> Path:
@@ -109,18 +133,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     key = None
     if args.key_file is not None:
         try:
-            key = read_key_file(args.key_file)
-        except ValueError as exc:
+            key = _read_key(args.key_file)
+        except RulesError as exc:
             sys.stderr.write("interlock-console: {}\n".format(exc))
             return EXIT_BAD_KEY_FILE
 
     static_dir = args.static if args.static is not None else _default_static_dir()
-    server = ConsoleServer(
-        (args.host, args.port),
-        static_dir,
-        receipts_path=args.receipts,
-        receipts_key=key,
+    try:
+        server = ConsoleServer(
+            (args.host, args.port),
+            static_dir,
+            receipts_path=args.receipts,
+            receipts_key=key,
+        )
+    except OSError:
+        sys.stderr.write(
+            "interlock-console: port {} is already in use\n".format(args.port)
+        )
+        return EXIT_PORT_IN_USE
+
+    sys.stdout.write(
+        "interlock console listening on http://{}:{}\n".format(
+            _url_host(args.host), server.server_port
+        )
     )
+    sys.stdout.flush()
     gate = configure(
         server,
         policy_path=args.policy,
@@ -130,14 +167,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sidecar_admin=args.sidecar_admin,
         key_file=args.key_file,
     )
-    host = "[::1]" if args.host == "::1" else args.host
-    base = "http://{}:{}".format(host, server.server_port)
     # The unlock link goes to this terminal and nowhere else (see session.py).
-    sys.stderr.write("interlock console on {} (read-only)\n".format(base))
-    sys.stderr.write("unlock writes: {}/#/unlock/{}\n".format(base, gate.code))
+    sys.stderr.write("unlock writes: http://{}:{}/#/unlock/{}\n".format(
+        _url_host(args.host), server.server_port, gate.code))
     sys.stderr.flush()
+
+    _install_signal_handlers()
     try:
         server.serve_forever()
+    except _Stop:
+        pass
     finally:
         server.server_close()
     return 0

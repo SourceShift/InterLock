@@ -19,6 +19,16 @@ Each test is named for the claim it proves:
   afterwards (AC6),
 - the key's hex text never appears in any response body or in the console's
   own output, and a missing ``--key-file`` path exits with status 2 (AC8).
+- the console loads ``--key-file`` through the sidecar's own ``_read_key``,
+  which also accepts a raw (non-hex) key, and a log signed with one verifies
+  intact (AC9).
+- a non-UTF-8 receipt line is reported ``unreadable`` by its index, verify
+  answers ``broken`` instead of crashing, and a stream still opens (AC10).
+- a trailing line with no newline yet is invisible to both ``/api/receipts``
+  and verify until it is terminated (AC11).
+- a ninth concurrent stream is refused 503 ``too_many_streams`` (AC12), and
+  once 8 streams' clients go away their slots are free again well inside the
+  2-second bound, with the cap still enforced against a new ninth (AC13).
 
 The server is hosted in-process, in a daemon thread, the same way
 :mod:`tests.test_console_server` hosts it for the health-endpoint tests.
@@ -35,9 +45,11 @@ import time
 from pathlib import Path
 from typing import Iterator, Optional
 
+from interlock.console import __main__ as console_main
 from interlock.console.__main__ import main
 from interlock.console.server import ConsoleServer
 from interlock.receipt import Receipt
+from interlock.sidecar.__main__ import _read_key as sidecar_read_key
 from interlock.sink import FileSink
 
 KEYHEX = "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff"
@@ -352,3 +364,126 @@ def test_missing_key_file_path_exits_with_status_2(tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.err.strip()
     assert KEYHEX[:16] not in captured.err
+
+
+def test_console_delegates_key_reading_to_sidecars_read_key_and_accepts_raw_keys(
+    tmp_path,
+):
+    assert console_main._read_key is sidecar_read_key
+
+    raw_key = b"not-hex-raw-key-material"
+    key_path = tmp_path / "raw.key"
+    key_path.write_bytes(raw_key)
+    assert sidecar_read_key(str(key_path)) == raw_key
+
+    receipts_path = tmp_path / "raw.jsonl"
+    FileSink(str(receipts_path), key=raw_key).write(
+        Receipt(ts=time.time(), action="raw_key", verdict="ALLOW")
+    )
+
+    with _serve(tmp_path, receipts_path=str(receipts_path), receipts_key=raw_key) as server:
+        response, body = _request(server, "/api/receipts/verify")
+
+    assert response.status == 200
+    payload = json.loads(body)
+    assert payload["status"] == "intact"
+    assert payload["count"] == 1
+
+
+def test_non_utf8_line_is_unreadable_by_index_and_endpoints_keep_answering(tmp_path):
+    key = bytes.fromhex(KEYHEX)
+    receipts_path = tmp_path / "receipts.jsonl"
+    _write_fixture(receipts_path, key)
+    with receipts_path.open("ab") as fh:
+        fh.write(b"\xff\xfe not utf-8\n")
+
+    with _serve(tmp_path, receipts_path=str(receipts_path), receipts_key=key) as server:
+        response, body = _request(server, "/api/receipts?order=asc")
+        assert response.status == 200
+        payload = json.loads(body)
+        assert {"index": 3, "unreadable": True} in payload["receipts"]
+
+        verify_response, verify_body = _request(server, "/api/receipts/verify")
+        assert verify_response.status == 200
+        assert json.loads(verify_body)["status"] == "broken"
+
+        sock = _open_stream(server, "/api/receipts/stream")
+        try:
+            buf = _read_until(sock, b"event: hello", time.monotonic() + 5.0)
+        finally:
+            sock.close()
+    assert b"event: hello" in buf
+
+
+def test_trailing_line_without_newline_is_invisible_until_terminated(tmp_path):
+    key = bytes.fromhex(KEYHEX)
+    receipts_path = tmp_path / "receipts.jsonl"
+    _write_fixture(receipts_path, key)
+    with receipts_path.open("ab") as fh:
+        fh.write(b'{"ts": 1.0, "action": "half_writ')
+
+    with _serve(tmp_path, receipts_path=str(receipts_path), receipts_key=key) as server:
+        response, body = _request(server, "/api/receipts")
+        assert response.status == 200
+        payload = json.loads(body)
+        assert payload["count_all"] == 3
+        assert not any(r.get("unreadable") for r in payload["receipts"])
+
+        verify_response, verify_body = _request(server, "/api/receipts/verify")
+
+    assert verify_response.status == 200
+    verify_payload = json.loads(verify_body)
+    assert verify_payload["status"] == "intact"
+    assert verify_payload["count"] == 3
+
+
+def test_ninth_concurrent_stream_is_503_too_many_streams(tmp_path):
+    key = bytes.fromhex(KEYHEX)
+    receipts_path = tmp_path / "receipts.jsonl"
+    _write_fixture(receipts_path, key)
+
+    with _serve(tmp_path, receipts_path=str(receipts_path), receipts_key=key) as server:
+        sockets = [_open_stream(server, "/api/receipts/stream") for _ in range(8)]
+        try:
+            for sock in sockets:
+                _read_until(sock, b"event: hello", time.monotonic() + 5.0)
+
+            response, body = _request(server, "/api/receipts/stream")
+            assert response.status == 503
+            assert json.loads(body)["error"]["code"] == "too_many_streams"
+        finally:
+            for sock in sockets:
+                sock.close()
+
+
+def test_stream_slot_frees_within_two_seconds_and_cap_still_holds_after_refill(
+    tmp_path,
+):
+    key = bytes.fromhex(KEYHEX)
+    receipts_path = tmp_path / "receipts.jsonl"
+    _write_fixture(receipts_path, key)
+
+    with _serve(tmp_path, receipts_path=str(receipts_path), receipts_key=key) as server:
+        first_batch = [_open_stream(server, "/api/receipts/stream") for _ in range(8)]
+        for sock in first_batch:
+            _read_until(sock, b"event: hello", time.monotonic() + 5.0)
+        for sock in first_batch:
+            sock.close()
+
+        # Q2: every slot from the closed batch is free again well inside
+        # the 2-second bound (a small margin keeps this from flaking).
+        time.sleep(2.5)
+
+        refill = [_open_stream(server, "/api/receipts/stream") for _ in range(8)]
+        try:
+            for sock in refill:
+                buf = _read_until(sock, b"event: hello", time.monotonic() + 5.0)
+                assert b" 200 " in buf.split(b"\r\n", 1)[0]
+
+            # The cap still refuses a ninth with those 8 live.
+            response, body = _request(server, "/api/receipts/stream")
+            assert response.status == 503
+            assert json.loads(body)["error"]["code"] == "too_many_streams"
+        finally:
+            for sock in refill:
+                sock.close()

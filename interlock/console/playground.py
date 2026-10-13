@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..enforce import Decision
@@ -28,7 +27,7 @@ from ..event import SensorEvent
 from ..policy.engine import PolicyEngine, Rule
 from ..wire import Unrepresentable, encode_value
 from . import catalog
-from .server import ROUTES
+from .server import ApiError, ROUTES, read_json_body
 
 #: More rules than this cannot describe a call worth looking at; it also
 #: bounds how many detector factories one request can make this process run.
@@ -105,10 +104,9 @@ def _build_rule(spec: Any, index: int) -> Rule:
         )
 
     kwargs = spec.get("kwargs", {})
-    if kwargs is None:
-        kwargs = {}
     if not isinstance(kwargs, dict):
-        raise PlaygroundError("bad_kwargs", "kwargs must be an object", index=index)
+        # null is not an object either: omit the key to mean "no arguments".
+        raise PlaygroundError("bad_kwargs", "kwargs must be an object (omit it for none)", index=index)
 
     # module_name/factory_name are only ever compared against the catalog's
     # own list above - never imported before that check passes.
@@ -194,7 +192,8 @@ def _result_for(engine: PolicyEngine, event: SensorEvent, index: int) -> Dict[st
     try:
         modified_args = encode_value(decision.modified_args)
         modified_result = encode_value(decision.modified_result)
-    except Unrepresentable:
+    except (Unrepresentable, RecursionError):
+        # Too deep or cyclic for the wire codec is unrepresentable too.
         decision = Decision.block(
             "rewrite is not representable on the wire",
             policy_id=UNREPRESENTABLE_POLICY_ID,
@@ -349,27 +348,10 @@ PRESETS: Tuple[Dict[str, Any], ...] = (
 
 
 def _handle_evaluate(handler: Any) -> Tuple[int, dict]:
-    content_type = handler.headers.get("Content-Type", "")
-    if content_type.split(";")[0].strip().lower() != "application/json":
-        return 415, {
-            "error": {
-                "code": "unsupported_media_type",
-                "message": "Content-Type must be application/json",
-            }
-        }
-
     try:
-        length = int(handler.headers.get("Content-Length", 0) or 0)
-    except ValueError:
-        length = 0
-    raw = handler.rfile.read(length) if length > 0 else b""
-
-    try:
-        body = json.loads(raw.decode("utf-8")) if raw else {}
-    except (ValueError, UnicodeDecodeError):
-        return 400, {"error": {"code": "bad_request", "message": "body is not valid JSON"}}
-    if not isinstance(body, dict):
-        return 400, {"error": {"code": "bad_request", "message": "body must be a JSON object"}}
+        body = read_json_body(handler)
+    except ApiError as exc:
+        return exc.status, exc.body()
 
     try:
         results = evaluate(body.get("rules"), body.get("events"))

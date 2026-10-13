@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import copy
 import importlib
-import inspect
-import json
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
@@ -40,8 +38,15 @@ from ..policy.scopes import (
     Template,
     UnknownTemplate,
 )
-from .playground import PlaygroundError, _detector_by_module, _factory_by_name, _parse_event, _result_for
-from .server import ROUTES
+from .playground import (
+    PlaygroundError,
+    _build_rule,
+    _detector_by_module,
+    _factory_by_name,
+    _parse_event,
+    _result_for,
+)
+from .server import ApiError, ROUTES, read_json_body
 
 #: More scope paths or templates than this cannot come from a person pasting
 #: a document into the inspector; refused outright rather than accepted and
@@ -71,10 +76,72 @@ class _TemplateDef:
     kind: str  # "rule" or "containment"
     union_params: FrozenSet[str]
     fn: Optional[Callable[..., Rule]] = None
+    detector: str = ""
+    factory: str = ""
 
 
-def _split_scope_path(raw: str) -> Tuple[str, ...]:
-    return tuple(part for part in raw.split("/") if part)
+def _split_scope_path(raw: Any, what: str) -> Tuple[str, ...]:
+    """A scope path: one or more non-empty segments joined by ``/``.
+
+    An empty path, or one with a leading, trailing or doubled ``/``, is
+    refused rather than normalised - normalising let ``/root`` silently
+    replace the ``root`` bindings.
+    """
+    segments = tuple(raw.split("/")) if isinstance(raw, str) else ()
+    if not segments or any(seg == "" for seg in segments):
+        raise PlaygroundError(
+            "bad_document",
+            "{} {!r} must be one or more non-empty segments joined by '/'".format(what, raw),
+        )
+    return segments
+
+
+#: Containment params a sandbox profile reads, and the shape each must have.
+_INT_LIMIT = 2 ** 31 - 1
+_CONTAINMENT_SHAPES: Dict[str, str] = {
+    "cpu_seconds": "int", "memory_mb": "int", "allow_network": "bool", "unshare_pid": "bool",
+    "workdir": "str", "read_paths": "strs", "write_paths": "strs", "allowed_hosts": "strs",
+    "env_keys": "strs",
+}
+
+
+def _check_containment_params(template_id: str, params: Dict[str, Any]) -> None:
+    for key, value in params.items():
+        shape = _CONTAINMENT_SHAPES.get(key)
+        bad = False
+        if shape == "int":
+            bad = isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= _INT_LIMIT
+        elif shape == "bool":
+            bad = not isinstance(value, bool)
+        elif shape == "str":
+            bad = value is not None and not isinstance(value, str)
+        elif shape == "strs":
+            bad = not isinstance(value, list) or not all(isinstance(v, str) for v in value)
+        if bad:
+            expected = {"int": "a positive integer up to {}".format(_INT_LIMIT), "bool": "true or false",
+                        "str": "a string", "strs": "a list of strings"}[shape]
+            raise PlaygroundError(
+                "bad_document", "{}: {} must be {}".format(template_id, key, expected))
+
+
+def _check_union_params(template_id: str, meta: "_TemplateDef", params: Dict[str, Any]) -> None:
+    """Union params are merged as sets across scopes, so each must be a list
+    of scalars of one type - a list or object can't go into a set, and mixed
+    types can't be ordered."""
+    for key in meta.union_params:
+        if key not in params:
+            continue
+        value = params[key]
+        if not isinstance(value, list):
+            continue  # a scalar reaches the factory, which reports factory_failed
+        ok = all(isinstance(v, (str, int, float)) and not isinstance(v, bool) for v in value)
+        if ok and len({type(v) for v in value}) > 1:
+            ok = False
+        if not ok:
+            raise PlaygroundError(
+                "bad_document",
+                "{}: union param {!r} must be a list of strings (or of numbers), one type only".format(
+                    template_id, key))
 
 
 def _parse_principal(raw: Any) -> Tuple[str, ...]:
@@ -134,7 +201,8 @@ def _parse_template(template_id: Any, spec: Any) -> _TemplateDef:
     # playground.py's _build_rule follows).
     module = importlib.import_module("interlock.detectors." + detector["module"])
     fn = getattr(module, factory_name)
-    return _TemplateDef(kind="rule", union_params=_parse_union_params(spec, template_id), fn=fn)
+    return _TemplateDef(kind="rule", union_params=_parse_union_params(spec, template_id), fn=fn,
+                        detector=detector["module"], factory=factory_name)
 
 
 def _parse_binding(scope_path: str, index: int, spec: Any) -> Binding:
@@ -172,7 +240,8 @@ def _parse_binding(scope_path: str, index: int, spec: Any) -> Binding:
     if delegated_from_raw is None:
         delegated_from: Optional[Tuple[str, ...]] = None
     elif isinstance(delegated_from_raw, str):
-        delegated_from = _split_scope_path(delegated_from_raw)
+        delegated_from = _split_scope_path(
+            delegated_from_raw, "binding {} at {!r}: delegated_from".format(index, scope_path))
     else:
         raise PlaygroundError(
             "bad_document",
@@ -183,13 +252,13 @@ def _parse_binding(scope_path: str, index: int, spec: Any) -> Binding:
 
 
 def _parse_document(document: Any) -> Tuple[Dict[str, _TemplateDef], Dict[Tuple[str, ...], List[Binding]]]:
-    if not isinstance(document, dict) or (set(document) - _DOCUMENT_KEYS):
+    if not isinstance(document, dict) or set(document) != set(_DOCUMENT_KEYS):
         raise PlaygroundError(
-            "bad_document", "document must be an object with only 'templates' and 'bindings'"
+            "bad_document", "document must be an object with exactly 'templates' and 'bindings'"
         )
 
-    templates_raw = document.get("templates", {})
-    bindings_raw = document.get("bindings", {})
+    templates_raw = document["templates"]
+    bindings_raw = document["bindings"]
     if not isinstance(templates_raw, dict):
         raise PlaygroundError("bad_document", "templates must be an object")
     if not isinstance(bindings_raw, dict):
@@ -209,9 +278,15 @@ def _parse_document(document: Any) -> Tuple[Dict[str, _TemplateDef], Dict[Tuple[
     for scope_path, specs in bindings_raw.items():
         if not isinstance(specs, list):
             raise PlaygroundError("bad_document", "bindings for {!r} must be a list".format(scope_path))
-        bindings[_split_scope_path(scope_path)] = [
-            _parse_binding(scope_path, index, spec) for index, spec in enumerate(specs)
-        ]
+        path = _split_scope_path(scope_path, "bindings key")
+        bindings[path] = [_parse_binding(scope_path, index, spec) for index, spec in enumerate(specs)]
+        for binding in bindings[path]:
+            meta = templates.get(binding.template_id)
+            if meta is None:
+                continue  # unknown_template is reported by the resolver
+            if meta.kind == "containment":
+                _check_containment_params(binding.template_id, binding.params)
+            _check_union_params(binding.template_id, meta, binding.params)
 
     return templates, bindings
 
@@ -257,17 +332,6 @@ def _compute_sandbox(resolved_raw: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _build_rule(template_id: str, meta: _TemplateDef, params: Dict[str, Any]) -> Rule:
-    try:
-        inspect.signature(meta.fn).bind(**params)
-    except TypeError as exc:
-        raise PlaygroundError("bad_kwargs", str(exc))
-    try:
-        return meta.fn(**params)
-    except Exception as exc:
-        raise PlaygroundError("factory_failed", type(exc).__name__)
-
-
 def resolve_scope(document: Any, principal: Any, event: Any) -> Dict[str, Any]:
     """The full ``POST /api/scopes/resolve`` body for this document/principal/event.
 
@@ -294,6 +358,10 @@ def resolve_scope(document: Any, principal: Any, event: Any) -> Dict[str, Any]:
 
     try:
         resolved_raw = registry.resolve(scope)
+    except (TypeError, ValueError, OverflowError) as exc:
+        # A param shape the checks above did not anticipate: still the
+        # document's fault, never a dropped connection.
+        raise PlaygroundError("bad_document", "the scope library refused a param: {}".format(exc))
     except UnknownTemplate as exc:
         raise PlaygroundError("unknown_template", str(exc))
     except DelegationDepthExceeded as exc:
@@ -301,13 +369,19 @@ def resolve_scope(document: Any, principal: Any, event: Any) -> Dict[str, Any]:
     except DelegationOverGrant as exc:
         raise PlaygroundError("delegation_over_grant", str(exc))
 
-    sandbox = _compute_sandbox(resolved_raw)
+    try:
+        sandbox = _compute_sandbox(resolved_raw)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise PlaygroundError("bad_document", "the sandbox profile refused a param: {}".format(exc))
 
     # Built unconditionally: bad_kwargs/factory_failed are refused the same
     # way whether or not an event was given, the same as unknown_template or
     # a delegation error above - only the verdict itself waits for an event.
+    # The playground's own builder: the same catalog lookup, argument check
+    # and error codes, so the two can't drift apart.
     rules = [
-        _build_rule(template_id, templates[template_id], params)
+        _build_rule({"detector": templates[template_id].detector, "factory": templates[template_id].factory,
+                     "kwargs": dict(params)}, 0)
         for template_id, params in resolved_raw.items()
         if templates[template_id].kind == "rule"
     ]
@@ -354,30 +428,11 @@ EXAMPLE_EVENT: Dict[str, Any] = {
 }
 
 
-def _read_json_body(handler: Any) -> Any:
-    content_type = handler.headers.get("Content-Type", "")
-    if content_type.split(";")[0].strip().lower() != "application/json":
-        raise PlaygroundError("unsupported_media_type", "Content-Type must be application/json")
-    try:
-        length = int(handler.headers.get("Content-Length", 0) or 0)
-    except ValueError:
-        length = 0
-    raw = handler.rfile.read(length) if length > 0 else b""
-    try:
-        body = json.loads(raw.decode("utf-8")) if raw else {}
-    except (ValueError, UnicodeDecodeError):
-        raise PlaygroundError("bad_request", "body is not valid JSON")
-    if not isinstance(body, dict):
-        raise PlaygroundError("bad_request", "body must be a JSON object")
-    return body
-
-
 def _handle_scopes_resolve(handler: Any) -> Tuple[int, dict]:
     try:
-        body = _read_json_body(handler)
-    except PlaygroundError as exc:
-        status = 415 if exc.code == "unsupported_media_type" else 400
-        return status, exc.body()
+        body = read_json_body(handler)
+    except ApiError as exc:
+        return exc.status, exc.body()
 
     try:
         result = resolve_scope(body.get("document"), body.get("principal"), body.get("event"))
