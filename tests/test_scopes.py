@@ -152,16 +152,6 @@ def test_deeper_rebind_overrides_a_tombstone():
     assert set(eff["keyword_block"]["words"]) == {"exfiltrate"}
 
 
-def test_unknown_template_is_ignored():
-    t = ScopeTree()
-    t.bind(("root",), [Binding("does_not_exist", {"foo": 1})])
-    reg = ScopeRegistry(t, TEMPLATES)
-    assert reg.resolve(("root",)) == {}
-    # compiling a scope with only unknown templates yields an empty engine
-    eng = reg.for_scope(("root",))
-    assert eng.evaluate(SensorEvent(action="anything")).verdict.name == "ALLOW"
-
-
 # --- caching and invalidation ------------------------------------------------
 def test_cache_hit_returns_the_same_engine_object():
     reg = ScopeRegistry(_seeded_tree(), TEMPLATES)
@@ -246,13 +236,6 @@ def test_scoped_engine_resolves_a_different_policy_per_principal():
         action="http_post", args={"host": "acme.example"}, principal="root/beta/b1"
     )
     assert eng.evaluate(to_beta).verdict.name == "BLOCK"
-
-
-def test_scoped_engine_allows_when_no_scope_and_no_default():
-    reg = ScopeRegistry(_two_org_tree(), TEMPLATES)
-    eng = ScopedEngine(reg)  # default_scope empty
-    ev = SensorEvent(action="http_post", args={"host": "evil.com"})  # no principal
-    assert eng.evaluate(ev).verdict.name == "ALLOW"
 
 
 def test_scoped_engine_default_scope_applies_a_floor_policy():

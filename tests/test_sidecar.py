@@ -363,15 +363,20 @@ def test_receipts_verify_under_the_injected_key(socket_dir, sock_path):
     assert "MAC mismatch" in FileSink(receipts).verify(key=other)
 
 
-def test_a_second_writer_starts_a_new_chain(socket_dir):
+def test_two_live_writers_break_the_chain(socket_dir):
     """The limitation the daemon design is built around, asserted rather than
-    assumed: one sink instance, one process, one chain. A second writer begins
-    at GENESIS, so verify() names the junction - which is why the daemon must
-    stay a single process rather than fork per connection."""
+    assumed: one sink instance, one process, one chain. A sink reopened after
+    another has finished continues the chain (test_receipt_hardening pins that),
+    but two sinks open on one file at once each hold their own idea of the last
+    mac, so the second write links to the wrong predecessor and verify() names
+    the junction - which is why the daemon must stay a single process rather
+    than fork per connection."""
     receipts = os.path.join(socket_dir, "receipts.ndjson")
     key = b"k" * 32
-    FileSink(receipts, key=key).write(_receipt("first"))
-    FileSink(receipts, key=key).write(_receipt("second"))
+    first = FileSink(receipts, key=key)
+    second = FileSink(receipts, key=key)
+    first.write(_receipt("first"))
+    second.write(_receipt("second"))
     report = FileSink(receipts).verify(key=key)
     assert report is not None
     assert "chain break" in report
