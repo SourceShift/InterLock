@@ -4,7 +4,8 @@ Each subcommand lives in its own module and registers itself through
 :data:`COMMANDS`: ``doctor`` (is protection on?), ``report`` (what did the
 guard do?), ``hook`` and ``install-hook`` (coding-agent adapters), ``mcp``
 (MCP inventory), ``policy`` (declarative policy files), ``trust``
-(project-overlay trust) and ``drift`` (diff a live surface against a corpus).
+(project-overlay trust), ``drift`` (diff a live surface against a corpus)
+and ``learn`` (draft a policy from observed receipts).
 
 Exit codes are per command and documented in each one's ``--help``; 64 means
 the command line itself was wrong.
@@ -25,6 +26,7 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("hook", "decide one coding-agent tool call (run by the agent)", "hook"),
     ("install-hook", "put interlock in front of Claude Code, Codex or Cursor", "install_hook"),
     ("policy", "check a declarative policy file, or show a built-in pack", "policy"),
+    ("learn", "draft a reviewable policy from observed receipts", "learn"),
     ("trust", "trust a project's policy overlay", "trust"),
     ("mcp", "inventory the MCP servers configured on this machine", "mcp"),
     ("reviews", "decide pending reviews; serve their status to agents", "reviews"),
