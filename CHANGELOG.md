@@ -11,6 +11,15 @@ breaking changes land.
 
 ### Added
 
+- The console (`python -m interlock.console`, `interlock-console`): a local
+  web app on loopback for the person running the agent - activity, the review
+  queue, the audit log with a live tail, the policy editor with overlays and
+  trust, the playground, the detector catalog, the scopes and sandbox
+  inspector, and ops (doctor, hooks, MCP servers, sidecar). Writes need a tab
+  unlocked with a one-off code the console prints to its own terminal, so an
+  agent on the same machine can't approve itself through it.
+- `interlock.tamper` also flags an HTTP client calling the console's unlock or
+  write routes; `metrics.snapshot()` reports histogram p50/p99 latency.
 - `Verdict.ESCALATE`: hold a call for a human approver, bound to the exact
   call (one-use by default; session and TTL scopes; a block always wins; no
   approver means blocked). `NotApproved` is raised when it isn't approved.
