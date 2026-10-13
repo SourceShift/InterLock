@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
 
 from ..enforce import Decision
