@@ -5,10 +5,10 @@ Eight epics covering the operational-requirements review recorded as R23–R30 i
 interlock repo, and is proved by a **live smoke test** — a real process started on
 loopback and exercised over a real socket, never a mock.
 
-**Build status.** As of the first handover, R23, R25, R27, R28 and R29 are
-**shipped** — each landed on `main` with its live smoke test passing. R26 is
-**blocked** (the run stopped at the implementer with no change produced; see the
-R26 section). R24 and R30 remain **open**, no longer blocked once R23 landed.
+**Build status.** Six of the eight are **shipped** — R23, R25, R27, R28 and R29
+landed on `main` via mini-ork, each with its live smoke test passing; R26 is
+shipped too, delivered by the console's review-queue surface rather than a
+separate run. R24 and R30 remain **open** (no longer blocked once R23 landed).
 
 Dependency edges are hard (`depends on:`) unless marked `should follow:` (soft,
 ordering only). Every epic carries `recipe: framework-edit`.

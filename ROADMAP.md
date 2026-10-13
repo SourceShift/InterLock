@@ -78,7 +78,7 @@ worse at both jobs.
 | R23 | OTLP event export | `shipped` | M | operational review |
 | R24 | Behavioural baseline → policy generator | `not started` | L | operational review |
 | R25 | Token accounting in the budget guard | `shipped` | S | operational review |
-| R26 | Console approval workflow | `blocked` | M | operational review |
+| R26 | Console approval workflow | `shipped` | M | operational review |
 | R27 | Framework sensor adapters | `shipped` | M | operational review |
 | R28 | A2A policy dimension | `shipped` | M | operational review |
 | R29 | MCP transport controls and scoped engine over the sidecar | `shipped` | M | operational review |
@@ -1067,16 +1067,16 @@ These came from mapping what operators who deploy agents in an enterprise
 actually ask for — the questions asked when someone has to run an agent fleet
 and answer to a security team — against what interlock ships today. Each is a
 capability *gap*, recorded with the capability named and no reference to any
-particular vendor. Five of the eight are now shipped — R23, R25 and R27–R29 landed with live
-smoke tests — while R26 is blocked (see its section) and R24/R30 are open but no
-longer blocked. Each one is what makes the detectors usable in a deployment.
+particular vendor. Six of the eight are now shipped — R23 and R25–R29 landed with live smoke
+tests — while R24 and R30 remain open (no longer blocked). Each one is what
+makes the detectors usable in a deployment.
 
 | # | Item | Status | Size | Pull |
 |---|---|---|---|---|
 | R23 | OTLP event export — receipts to a standard collector | `shipped` | M | operational review |
 | R24 | Behavioural baseline → policy generator (`interlock learn`) | `not started` | L | operational review |
 | R25 | Token accounting in the budget guard | `shipped` | S | operational review |
-| R26 | Console approval workflow | `blocked` | M | operational review |
+| R26 | Console approval workflow | `shipped` | M | operational review |
 | R27 | Framework sensor adapters (SDK loops, LiteLLM, CrewAI, ADK) | `shipped` | M | operational review |
 | R28 | A2A policy dimension | `shipped` | M | operational review |
 | R29 | MCP transport controls + scoped engine over the sidecar | `shipped` | M | operational review |
@@ -1189,11 +1189,15 @@ presented as metering. Standalone.
 
 ## R26 · Console approval workflow
 
-**Status:** `blocked` — the framework-edit run was interrupted at the
-implementer (`files_changed=0`). To unblock: merge the console frontend onto
-`main`, widen the epic's `scope_allow` to include `interlock/console/__main__.py`,
-`web/src/App.tsx` and `web/src/NavBar.tsx`, and fix the plan's assumption that
-`binding_hash` lives in `interlock/approval.py` — it is `interlock/reviews.py:319`.
+**Status:** `shipped` — the console's review-queue surface closes it:
+`GET /api/reviews` and `POST /api/reviews/{id}/{approve|reject|revoke}`
+(`interlock/console/reviews_api.py`), reachable at `#/reviews`
+(`web/src/design/ReviewsScreen.tsx`). Decisions go through `ReviewQueue` exactly
+as the CLI does; writes are unlock-gated (a locked approve is refused) and
+four-eyes is enforced. Live smoke: a seeded pending review is listed over HTTP,
+a locked approve is refused, an unlocked approve releases the identical retry.
+(The epic proposed `/api/approvals`; the shipped route is `/api/reviews` — the
+same capability under the console's own name.)
 **Size:** M
 
 ### Problem
