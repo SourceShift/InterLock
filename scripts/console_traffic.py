@@ -79,7 +79,10 @@ def reviews(base: Path, *args: str, as_json: bool = False) -> str:
 
 
 def main() -> int:
-    base = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/il-demo").resolve()
+    # absolute(), not resolve(): the policy epoch hashes the policy's path, so
+    # the console must be given the same spelling the hooks used (/tmp, not
+    # macOS's /private/tmp).
+    base = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/il-demo").absolute()
     base.mkdir(parents=True, exist_ok=True)
     key = base / "receipts.key"
     if not key.exists():

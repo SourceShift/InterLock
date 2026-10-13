@@ -149,6 +149,72 @@ The [getting started tutorial](docs/getting-started.md) walks through all of thi
 with real output, plus detectors, result checks, and the tool-name pitfall that
 catches most people.
 
+## The console
+
+A local web app for the person running the agent: what the guard decided, the
+calls waiting on a human, the policy behind it all, and whether protection is
+actually on. It binds to `127.0.0.1` only and loads nothing from any other
+origin.
+
+![The console's Activity page: protection enforced, the chain verified, decisions over 24 hours](docs/assets/images/console-activity.png)
+
+**You'll need** Python 3.9+, and Node.js 20.19+ or 22.12+ to build the web app
+once.
+
+**1. Get the code and build the web app.** The app isn't in the pip package, so
+work from a checkout:
+
+```bash
+git clone https://github.com/SourceShift/InterLock.git
+cd InterLock
+pip install -e .
+npm --prefix web ci
+npm --prefix web run build      # writes web/dist/, fonts included
+```
+
+**2. Have something to look at.** The console reads the files your guard
+writes. If your agent is a coding agent, install the hook and use it for a
+while:
+
+```bash
+interlock install-hook --for claude-code   # or codex, cursor, all
+```
+
+That creates `~/.interlock/` with the policy, the receipt log and its key, and
+the review queue. To try the console without an agent, generate real traffic
+instead — genuine hook payloads piped through `interlock hook` into a scratch
+directory:
+
+```bash
+python3 scripts/console_traffic.py /tmp/il-demo
+```
+
+**3. Start it.**
+
+```bash
+python -m interlock.console \
+  --receipts ~/.interlock/receipts.jsonl --key-file ~/.interlock/receipts.key
+# for the demo data:
+#   --receipts /tmp/il-demo/receipts.jsonl --key-file /tmp/il-demo/receipts.key \
+#   --policy /tmp/il-demo/policy.json --reviews-db /tmp/il-demo/reviews.db
+```
+
+It prints where it's listening, and an unlock link:
+
+```
+interlock console listening on http://127.0.0.1:7878
+unlock writes: http://127.0.0.1:7878/#/unlock/k7Qm-2fXa-9RtL
+```
+
+Open the first URL. The console starts **read-only**; approving a review or
+saving the policy needs the tab unlocked with the second link. That link only
+ever appears in this terminal, so an agent on the same machine can't unlock
+writes for itself. Restarting the console re-locks every tab.
+
+Flags, the eight screens, development with the Vite dev server, and the
+security model are in the [console guide](docs/guides/console.md). Installed
+somewhere other than a checkout? Pass `--static /path/to/web/dist`.
+
 ## What's in the box
 
 | Feature | What it does | Guide |
@@ -160,13 +226,14 @@ catches most people.
 | Credentials | The agent writes `{{secret:id}}`; the value is filled in after the decision, only where allowed | [Credentials](docs/guides/credentials.md) |
 | Databases and APIs | SQL judged by its effects and tables (`WITH … DELETE` is a delete), checksum-validated data masking on results, runbooks, HTTP path and method rules | [Databases](docs/guides/databases.md) |
 | Review queue | Refuse now with a review id; the identical retry runs once after a human approves; quorum and expiry | [Reviews](docs/guides/reviews.md) |
-| Detectors | 115 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
+| Detectors | 118 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
 | MCP trust | Allowlist servers, pin tool schemas, catch changed tool listings, time-limited grants | [MCP](docs/guides/mcp.md) |
 | Scopes | Per-tenant and per-agent policies; sub-agents can't exceed their parent | [Scopes](docs/guides/scopes.md) |
 | Audit log | Chained, signed receipts of every decision; arguments hashed, not stored; `interlock report` summarizes them | [Audit log](docs/guides/audit-log.md) |
 | Doctor and metrics | `attest()` / `require()` in-process, `interlock doctor` from a shell, Prometheus metrics and a loopback admin endpoint | [Production checklist](docs/guides/production.md) |
 | BRACE sandbox | Runs subprocesses under bubblewrap (Linux) or Seatbelt (macOS), built from your policy | [Sandbox](docs/guides/sandbox.md) |
 | Node.js client | Guards JS agents with the same Python policy through a local daemon | [js/README.md](js/README.md) |
+| Console | A local web app: activity, the review queue, the audit log, the policy editor, a detector playground, and ops; writes need a terminal-only unlock | [Console](docs/guides/console.md) |
 
 ## Works with
 
