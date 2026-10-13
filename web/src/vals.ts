@@ -67,6 +67,7 @@ const CATS: Record<string, [string, string]> = {
   "Budgets, rate limits, and loops": ["Budgets, rate limits and loops", "Budgets"],
   "Provenance stamps": ["Provenance stamps", "Provenance"],
   "Tool allow and deny lists": ["Tool allow/deny lists", "Lists"],
+  "Agent-to-agent (A2A)": ["Agent-to-agent (A2A)", "A2A"],
 };
 const PROFILE_TOKENS: Record<string, string | null> = {
   read_paths: "fs-ro",

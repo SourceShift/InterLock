@@ -28,6 +28,8 @@ test("docstrings become paragraphs, headings and code", () => {
   expect(blocks.map((b) => (b.isP ? "p" : b.isH ? "h" : "code"))).toEqual(["p", "h", "p", "code", "p"]);
   expect(blocks[2].t).toBe("Use it like this:");
   expect(blocks[3].t).toBe('guard(allowed_hosts=["a"])');
+  expect(docBlocks("Parses with :mod:`interlock.shell` (see :class:`~interlock.Verdict`).")[0].t)
+    .toBe("Parses with interlock.shell (see interlock.Verdict).");
 });
 
 test("parameter text becomes the keyword argument its annotation asks for", () => {

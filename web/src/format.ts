@@ -144,7 +144,8 @@ export function docBlocks(doc: string): DocBlock[] {
     let text = para.map((l) => l.trim()).join(" ");
     expectCode = text.endsWith("::");
     if (expectCode) text = text.replace(/::$/, text.endsWith(" ::") ? "" : ":");
-    block("p", text.replace(/``/g, "").replace(/\s+/g, " ").trim());
+    // Sphinx roles (:mod:`x`, :class:`x`) read as their target.
+    block("p", text.replace(/:[a-z]+:`~?([^`]+)`/g, "$1").replace(/``/g, "").replace(/\s+/g, " ").trim());
     para = [];
   };
   const flushCode = () => {
