@@ -20,10 +20,28 @@ repo_url = "https://github.com/SourceShift/InterLock"
 repo_name = "SourceShift/InterLock"
 edit_uri = "edit/main/docs/"
 
-# A stylesheet of our own, on every page. It carries the system font stack (see
-# `font = false` below) and the landing page's styles. There is exactly one, and
-# it must stay free of third-party requests.
-extra_css = ["assets/stylesheets/landing.css"]
+# Stylesheets are injected per page from overrides/main.html rather than listed
+# here, and that is deliberate. There are two of them and they must never load
+# together:
+#
+#   * docs/assets/stylesheets/landing.css -- the system font stack (see
+#     `font = false` below) and the docs pages' green accent. Every page except
+#     the landing page.
+#
+#   * docs/assets/stylesheets/home.css -- the landing page's design port. The
+#     landing page only.
+#
+# The reason is that both sheets define the same `--il-*` token names, and
+# landing.css declares its copy under `[data-md-color-scheme="default"]`, which
+# Zensical sets on <body>. A declaration on the element itself beats anything
+# inherited from :root, so with both loaded landing.css would quietly win every
+# `var(--il-*)` on the page -- --il-dim, --il-allow, --il-rewrite and --il-block
+# would all resolve to the old light palette while the amber --acc (which only
+# home.css defines) stayed correct, which is a confusing half-broken look.
+#
+# Keep this list empty. Adding a sheet here makes it global and reintroduces
+# exactly that collision.
+extra_css = []
 
 nav = [
   # The landing page. Its hero and proof block live in overrides/main.html,

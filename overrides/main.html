@@ -11,110 +11,400 @@
   "undefined value" during the build. `page.url` is what the theme itself uses,
   so it is the one to trust.
 
-  Why HTML and not Markdown: the hero and the proof block are a *layout*, not
-  prose. They need full-bleed placement above the docs content column, which no
-  Markdown construct can express. The prose sections that follow them live in
-  docs/index.md as ordinary Markdown, so the words stay easy to edit.
+  The page is a port of the "Interlock Home v2" design. Three blocks are
+  overridden -- header, hero, footer -- because the design's header and footer
+  replace the theme's shared chrome, and the hero is full-bleed above the docs
+  content column. The four prose sections between them live in docs/index.md so
+  the words stay in Markdown and still render on GitHub.
 
   House rules this file obeys, and must keep obeying:
 
-    * No third-party requests. No webfonts, no analytics, no CDN, no tag
-      manager. The theme's own SVG icons are inlined into the sprite at build
-      time. This is the same promise the library makes -- a landing page that
-      phones home to three vendors to say "works offline" refutes itself.
-    * No JavaScript. The page must be complete and readable with JS disabled.
-    * The proof block is real. Every line of its output was printed by
-      examples/quickstart_demo.py, which is in the repository and runnable.
-      Do not edit the output to look better; if the code changes, re-run the
-      demo and paste what it actually prints.
+    * The landing page is dark-only and amber. The docs pages keep the theme's
+      light/dark palette and green accent. Nothing here may leak either way:
+      every rule lives under .il-home or `body:has(.il-home)`, and the extra
+      stylesheet is injected only on this page.
+
+    * Google Fonts is the ONE third-party request on the whole site, and it is
+      scoped to this page alone. The rest of the site still makes none. This is
+      a deliberate, reviewed exception for the landing page's typography; if a
+      page is ever added to this block, it inherits the request, so do not add
+      one without deciding that again.
+
+    * The proof block is real where it claims to be. The three receipt rows are
+      the outcomes examples/quickstart_demo.py actually prints, and the rule
+      names on them are the detectors it really installs. The session counters
+      and the bar chart are a sample session, not a measurement, and the caption
+      says so. Do not edit the output to look better; if the demo changes,
+      re-run it and paste what it prints.
+
+    * No star count on the repository badge. The design shows a hardcoded
+      "★ 60"; the repository has 7. A star count in static HTML is wrong within
+      weeks, so the badge links to the repo and lets it say the number.
+
+    * The detector count is 118, from docs/reference/detectors.md, which
+      scripts/gen_detector_catalog.py generates. The design says 105. If the
+      catalog is regenerated to a different count, grep this page for 118.
 -#}
 {% extends "base.html" %}
 
-{% block hero %}
+{% block extrahead %}
   {% if page.url == '' %}
-  <div class="il-hero">
-    <div class="il-hero__inner">
-
-      <p class="il-eyebrow">Open source &middot; Apache-2.0 &middot; Python 3.9+</p>
-
-      <h1 class="il-hero__title">Stop a bad tool call<br />before your AI agent makes it.</h1>
-
-      <p class="il-hero__lede">
-        interlock checks every tool call your agent makes, inside the agent's own
-        process, and allows, blocks, or rewrites it before anything happens.
-        No proxy, no account, no network calls, and no dependencies.
-      </p>
-
-      <div class="il-actions">
-        <a class="il-btn il-btn--primary" href="{{ 'getting-started/' | url }}">
-          Get started
-          <span class="il-btn__arrow" aria-hidden="true">&rarr;</span>
-        </a>
-        <a class="il-btn il-btn--ghost" href="https://github.com/SourceShift/InterLock">
-          Star on GitHub
-        </a>
-      </div>
-
-      <p class="il-install">
-        <span class="il-install__prompt" aria-hidden="true">$</span>
-        <code>pip install "git+https://github.com/SourceShift/InterLock.git"</code>
-      </p>
-
-      <div class="il-proof">
-        <div class="il-proof__chrome" aria-hidden="true">
-          <span class="il-dot"></span><span class="il-dot"></span><span class="il-dot"></span>
-          <span class="il-proof__name">guard.py</span>
-        </div>
-
-        <pre class="il-proof__code"><code>{% raw %}import interlock
-from interlock import Blocked, guard
-from interlock.detectors import network_egress_guard, pii_redaction_guard
-
-
-@guard()
-def http_post(url: str, body: str) -> str:
-    return f"posted to {url}: {body}"
-
-
-interlock.install(rules=[
-    network_egress_guard(allowed_hosts=["api.acme.com"]),  # only hosts you trust
-    pii_redaction_guard(),                                 # mask secrets and PII
-]){% endraw %}</code></pre>
-
-        <div class="il-proof__results">
-          <p class="il-out il-out--allow">
-            <span class="il-out__mark" aria-hidden="true">&#10003;</span>
-            <span class="il-out__verdict">allow</span>
-            <span class="il-out__text">posted to https://api.acme.com/notes: routine sync</span>
-          </p>
-          <p class="il-out il-out--rewrite">
-            <span class="il-out__mark" aria-hidden="true">&#126;</span>
-            <span class="il-out__verdict">rewrite</span>
-            <span class="il-out__text">posted to https://api.acme.com/notes: Card on file: [REDACTED CREDIT_CARD]</span>
-          </p>
-          <p class="il-out il-out--block">
-            <span class="il-out__mark" aria-hidden="true">&#10007;</span>
-            <span class="il-out__verdict">block</span>
-            <span class="il-out__text">Blocked: blocked action 'http_post': egress to 'evil.example' is not on the destination allowlist</span>
-          </p>
-        </div>
-      </div>
-
-      <p class="il-proof__caption">
-        Real output. The first two calls run &mdash; the second with the card
-        number masked. The third never leaves the process.
-        <a href="https://github.com/SourceShift/InterLock/blob/main/examples/quickstart_demo.py">Run it yourself</a>.
-      </p>
-
-    </div>
-  </div>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&amp;family=Martian+Mono:wght@400;500&amp;display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ 'assets/stylesheets/home.css' | url }}" />
+  {% else %}
+    {# The docs pages' own sheet. It carries the system font stack and the green
+       accent, and it must not load on the landing page -- both sheets define the
+       same --il-* names and landing.css's copy wins on specificity. See the note
+       on extra_css in zensical.toml. #}
+    <link rel="stylesheet" href="{{ 'assets/stylesheets/landing.css' | url }}" />
   {% endif %}
 {% endblock %}
 
-{% block content %}
+{% macro lockup() -%}
+<svg class="il-nav__mark" width="30" height="26" viewBox="0 0 28 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="15" height="15" rx="4" stroke="var(--acc)" stroke-width="2.4"></rect><rect x="11" y="7" width="15" height="15" rx="4" stroke="#111214" stroke-width="6"></rect><rect x="11" y="7" width="15" height="15" rx="4" stroke="#ecebe6" stroke-width="2.4"></rect><line x1="17" y1="4.6" x2="17" y2="9.4" stroke="#111214" stroke-width="6"></line><line x1="17" y1="4" x2="17" y2="10" stroke="var(--acc)" stroke-width="2.4"></line></svg>
+{%- endmacro %}
+
+{% macro gh_icon() -%}
+<svg width="14" height="14" viewBox="0 0 512 512" aria-hidden="true"><path fill="currentColor" d="M216.5 362.5c-66-8-112.5-55.5-112.5-117 0-25 9-52 24-70-6.5-16.5-5.5-51.5 2-66 20-2.5 47 8 63 22.5 19-6 39-9 63.5-9s44.5 3 62.5 8.5c15.5-14 43-24.5 63-22 7 13.5 8 48.5 1.5 65.5 16 19 24.5 44.5 24.5 70.5 0 61.5-46.5 108-113.5 116.5 17 11 28.5 35 28.5 62.5v52c0 15 12.5 23.5 27.5 17.5C441 459.5 512 369 512 257 512 115.5 397 0 255.5 0S0 115.5 0 257c0 111 70.5 203 165.5 237.5 13.5 5 26.5-4 26.5-17.5v-40c-7 3-16 5-24 5-33 0-52.5-18-66.5-51.5-5.5-13.5-11.5-21.5-23-23-6-.5-8-3-8-6 0-6 10-10.5 20-10.5 14.5 0 27 9 40 27.5 10 14.5 20.5 21 33 21s20.5-4.5 32-16c8.5-8.5 15-16 21-21"></path></svg>
+{%- endmacro %}
+
+{% block header %}
   {% if page.url == '' %}
-    {{ page.content }}
+  <header class="il-nav">
+    <nav class="il-nav__inner" aria-label="Primary">
+      <a class="il-nav__brand" href="#top">
+        {{ lockup() }}
+        <span class="il-nav__word">interlock</span>
+      </a>
+      <div class="il-nav__links">
+        <a class="il-nav__link" href="#why-interlock">Why interlock</a>
+        <a class="il-nav__link" href="#where-interlock-fits">Where it fits</a>
+        <a class="il-nav__link" href="#know-the-limits">Limits</a>
+        <a class="il-nav__link" href="#read-the-docs">Docs</a>
+      </div>
+      <div class="il-nav__right">
+        <a class="il-nav__doc" href="{{ 'overview/' | url }}">Documentation</a>
+        <a class="il-nav__repo" href="https://github.com/SourceShift/InterLock">
+          {{ gh_icon() }}
+          <span>SourceShift/InterLock</span>
+        </a>
+      </div>
+    </nav>
+  </header>
   {% else %}
     {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{% block hero %}
+  {% if page.url == '' %}
+  <section class="il-hero" id="top">
+    <div class="il-hero__grid-bg" aria-hidden="true"></div>
+    <div class="il-hero__glow" aria-hidden="true"></div>
+    <canvas class="il-hero__canvas" data-il-hero-canvas aria-hidden="true"></canvas>
+
+    <div class="il-hero__inner">
+      <div class="il-hero__cols">
+
+        <div class="il-hero__copy">
+          <p class="il-eyebrow">
+            <span class="il-eyebrow__dot" aria-hidden="true"></span>
+            Open source &middot; Apache-2.0 &middot; Python 3.9+
+          </p>
+
+          <h1 class="il-hero__title">
+            Stop a bad tool call<br />
+            <span>before your AI agent </span><em>makes it.</em>
+          </h1>
+
+          <p class="il-hero__lede">
+            interlock checks every tool call your agent makes, inside the agent's
+            own process, and allows, blocks, or rewrites it before anything
+            happens. No proxy, no account, no network calls, and no dependencies.
+          </p>
+
+          <div class="il-actions">
+            <a class="il-btn il-btn--primary" href="{{ 'getting-started/' | url }}">
+              Get started <span class="il-btn__arrow" aria-hidden="true">&rarr;</span>
+            </a>
+            <a class="il-btn il-btn--ghost" href="https://github.com/SourceShift/InterLock">
+              Star on GitHub
+            </a>
+          </div>
+
+          <div class="il-install">
+            <span class="il-install__prompt" aria-hidden="true">$</span>
+            <code>pip install "git+https://github.com/SourceShift/InterLock.git"</code>
+            <button
+              class="il-install__copy"
+              type="button"
+              data-il-copy='pip install "git+https://github.com/SourceShift/InterLock.git"'
+              title="Copy to clipboard"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span data-il-copy-label>copy</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="il-proof" data-il-proof>
+          <div class="il-console">
+            <div class="il-console__inner">
+
+              <div class="il-console__bar">
+                <span class="il-dot il-dot--r" aria-hidden="true"></span>
+                <span class="il-dot il-dot--y" aria-hidden="true"></span>
+                <span class="il-dot il-dot--g" aria-hidden="true"></span>
+                <span class="il-console__name">interlock console &middot; Activity</span>
+                <span class="il-console__spacer"></span>
+                <span class="il-console__live">
+                  <span class="il-pulse-dot" aria-hidden="true"></span>tailing receipts
+                </span>
+                <button class="il-console__run" type="button" data-il-run>
+                  <span aria-hidden="true">&#9654;</span>
+                  <span data-il-run-label>run</span>
+                </button>
+              </div>
+
+              <div class="il-console__body">
+
+                <div class="il-console__side" aria-hidden="true">
+                  <div class="il-console__group">
+                    <span class="il-console__label">Monitor</span>
+                    <span class="il-console__item il-on">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+                      <span>Activity</span>
+                    </span>
+                    <span class="il-console__item">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg>
+                      <span>Reviews</span><span class="il-console__badge">1</span>
+                    </span>
+                    <span class="il-console__item">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"></path></svg>
+                      <span>Audit log</span>
+                    </span>
+                  </div>
+                  <div class="il-console__group">
+                    <span class="il-console__label">Author</span>
+                    <span class="il-console__item">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"></path><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"></path></svg>
+                      <span>Policy</span>
+                    </span>
+                    <span class="il-console__item">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"></path><path d="M10 3v6L4.2 18.6A1 1 0 0 0 5.1 20h13.8a1 1 0 0 0 .9-1.4L14 9V3"></path><path d="M7 15h10"></path></svg>
+                      <span>Playground</span>
+                    </span>
+                    <span class="il-console__item">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                      <span>Detectors</span><span class="il-console__count">118</span>
+                    </span>
+                  </div>
+                  <div class="il-console__foot">
+                    <span class="il-console__label">Receipt log</span>
+                    <span class="il-console__path">.interlock/receipts.jsonl</span>
+                    <span class="il-console__conn"><i></i>connected</span>
+                  </div>
+                </div>
+
+                <div class="il-console__main">
+                  <p class="il-status">
+                    Protection is <b>&#9679; on</b>. The receipt chain is
+                    <b>&#10003; intact</b>. <i>1 call is waiting on you</i>.
+                  </p>
+
+                  <div class="il-kpi-card">
+                    <div class="il-kpi-head">
+                      <div class="il-kpi-title">
+                        <b>Decisions</b><span>last hour &middot; this process</span>
+                      </div>
+                      <div class="il-kpis" aria-hidden="true">
+                        <div class="il-kpi il-kpi--calls"><span class="il-kpi__n">1281</span><span class="il-kpi__l">calls</span></div>
+                        <div class="il-kpi il-kpi--allow"><span class="il-kpi__n">1060</span><span class="il-kpi__l">allow</span></div>
+                        <div class="il-kpi il-kpi--rewrite"><span class="il-kpi__n">138</span><span class="il-kpi__l">rewrite</span></div>
+                        <div class="il-kpi il-kpi--block"><span class="il-kpi__n">82</span><span class="il-kpi__l">block</span></div>
+                        <div class="il-kpi il-kpi--escalate"><span class="il-kpi__n">1</span><span class="il-kpi__l">escalate</span></div>
+                      </div>
+                    </div>
+
+                    <div class="il-chart" aria-hidden="true">
+                      <div class="il-chart__grid"><span></span><span></span><span></span></div>
+                      <div class="il-bars">
+                        <div class="il-bar" style="height:61%"><span class="il-seg--allow" style="flex:34 0 0"></span><span class="il-seg--rewrite" style="flex:3 0 0"></span><span class="il-seg--block" style="flex:4 0 0"></span></div>
+                        <div class="il-bar" style="height:54%"><span class="il-seg--allow" style="flex:30 0 0"></span><span class="il-seg--rewrite" style="flex:4 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:46%"><span class="il-seg--allow" style="flex:24 0 0"></span><span class="il-seg--rewrite" style="flex:5 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:82%"><span class="il-seg--allow" style="flex:46 0 0"></span><span class="il-seg--rewrite" style="flex:6 0 0"></span><span class="il-seg--block" style="flex:3 0 0"></span></div>
+                        <div class="il-bar" style="height:75%"><span class="il-seg--allow" style="flex:45 0 0"></span><span class="il-seg--rewrite" style="flex:3 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:67%"><span class="il-seg--allow" style="flex:37 0 0"></span><span class="il-seg--rewrite" style="flex:4 0 0"></span><span class="il-seg--block" style="flex:4 0 0"></span></div>
+                        <div class="il-bar" style="height:60%"><span class="il-seg--allow" style="flex:32 0 0"></span><span class="il-seg--rewrite" style="flex:5 0 0"></span><span class="il-seg--block" style="flex:3 0 0"></span></div>
+                        <div class="il-bar" style="height:52%"><span class="il-seg--allow" style="flex:27 0 0"></span><span class="il-seg--rewrite" style="flex:6 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:45%"><span class="il-seg--allow" style="flex:25 0 0"></span><span class="il-seg--rewrite" style="flex:3 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:81%"><span class="il-seg--allow" style="flex:47 0 0"></span><span class="il-seg--rewrite" style="flex:4 0 0"></span><span class="il-seg--block" style="flex:3 0 0"></span></div>
+                        <div class="il-bar" style="height:73%"><span class="il-seg--allow" style="flex:40 0 0"></span><span class="il-seg--rewrite" style="flex:5 0 0"></span><span class="il-seg--block" style="flex:4 0 0"></span></div>
+                        <div class="il-bar" style="height:66%"><span class="il-seg--allow" style="flex:36 0 0"></span><span class="il-seg--rewrite" style="flex:6 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:58%"><span class="il-seg--allow" style="flex:33 0 0"></span><span class="il-seg--rewrite" style="flex:3 0 0"></span><span class="il-seg--block" style="flex:3 0 0"></span></div>
+                        <div class="il-bar" style="height:51%"><span class="il-seg--allow" style="flex:28 0 0"></span><span class="il-seg--rewrite" style="flex:4 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:87%"><span class="il-seg--allow" style="flex:51 0 0"></span><span class="il-seg--rewrite" style="flex:5 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:79%"><span class="il-seg--allow" style="flex:43 0 0"></span><span class="il-seg--rewrite" style="flex:6 0 0"></span><span class="il-seg--block" style="flex:4 0 0"></span></div>
+                        <div class="il-bar" style="height:87%"><span class="il-seg--allow" style="flex:53 0 0"></span><span class="il-seg--rewrite" style="flex:3 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:79%"><span class="il-seg--allow" style="flex:47 0 0"></span><span class="il-seg--rewrite" style="flex:4 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:72%"><span class="il-seg--allow" style="flex:40 0 0"></span><span class="il-seg--rewrite" style="flex:5 0 0"></span><span class="il-seg--block" style="flex:3 0 0"></span></div>
+                        <div class="il-bar" style="height:64%"><span class="il-seg--allow" style="flex:34 0 0"></span><span class="il-seg--rewrite" style="flex:6 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span><span class="il-seg--escalate" style="flex:1 0 0"></span></div>
+                        <div class="il-bar" style="height:100%"><span class="il-seg--allow" style="flex:60 0 0"></span><span class="il-seg--rewrite" style="flex:3 0 0"></span><span class="il-seg--block" style="flex:4 0 0"></span></div>
+                        <div class="il-bar" style="height:93%"><span class="il-seg--allow" style="flex:55 0 0"></span><span class="il-seg--rewrite" style="flex:4 0 0"></span><span class="il-seg--block" style="flex:3 0 0"></span></div>
+                        <div class="il-bar" style="height:85%"><span class="il-seg--allow" style="flex:50 0 0"></span><span class="il-seg--rewrite" style="flex:5 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                        <div class="il-bar" style="height:78%"><span class="il-seg--allow" style="flex:44 0 0"></span><span class="il-seg--rewrite" style="flex:6 0 0"></span><span class="il-seg--block" style="flex:2 0 0"></span></div>
+                      </div>
+                      <div class="il-axis"><span>&minus;60m</span><span>&minus;30m</span><span>now</span></div>
+                    </div>
+                  </div>
+
+                  <div class="il-receipts">
+                    <div class="il-receipts__head"><span>Latest receipts</span><span>hover a row</span></div>
+
+                    <div class="il-receipt" data-il-receipt>
+                      <span class="il-chip il-chip--allow">&#10003; allow</span>
+                      <span class="il-receipt__what">
+                        <span class="il-receipt__call">http_post <i>api.acme.com/notes</i></span>
+                        <span class="il-receipt__why">routine sync</span>
+                      </span>
+                      <span class="il-receipt__when"><span>14:02:09</span><span class="il-receipt__rule">no rule fired</span></span>
+                    </div>
+
+                    <div class="il-receipt" data-il-receipt>
+                      <span class="il-chip il-chip--rewrite">&#126; rewrite</span>
+                      <span class="il-receipt__what">
+                        <span class="il-receipt__call">http_post <i>api.acme.com/notes</i></span>
+                        <span class="il-receipt__why">Card on file: <mark>[REDACTED CREDIT_CARD]</mark></span>
+                      </span>
+                      <span class="il-receipt__when"><span>14:02:10</span><span class="il-receipt__rule">pii_redaction_guard</span></span>
+                    </div>
+
+                    <div class="il-receipt" data-il-receipt>
+                      <span class="il-chip il-chip--block">&#10007; block</span>
+                      <span class="il-receipt__what">
+                        <span class="il-receipt__call">http_post <s>evil.example</s></span>
+                        <span class="il-receipt__why">egress to 'evil.example' is not on the destination allowlist</span>
+                      </span>
+                      <span class="il-receipt__when"><span>14:02:11</span><span class="il-receipt__rule">network_egress_guard</span></span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+          <p class="il-proof__caption">
+            The interlock console reads the receipt log on your machine. The three
+            latest receipts are from the quickstart: the first call runs, the
+            second runs with the card number masked, and the third never leaves
+            the process. The counters and the chart are a sample session.
+            <a href="https://github.com/SourceShift/InterLock/blob/main/examples/quickstart_demo.py">Run it yourself</a>.
+          </p>
+        </div>
+
+      </div>
+
+      <div class="il-stats" data-il-reveal>
+        <div class="il-stat">
+          <div class="il-stat__top">
+            <span class="il-stat__n">118</span>
+            <span class="il-stat__ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg></span>
+          </div>
+          <span class="il-stat__k">detectors, ready-made</span>
+          <span class="il-stat__d">Injection, secret leaks, SSRF and runaway loops are covered on day one.</span>
+        </div>
+        <div class="il-stat il-stat--acc">
+          <div class="il-stat__top">
+            <span class="il-stat__n">4</span>
+            <span class="il-stat__ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 9-4-4v3h-7v2h7v3"></path><path d="M7 11l-4 4 4 4v-3h7v-2H7z"></path></svg></span>
+          </div>
+          <span class="il-stat__k">verdicts, not two</span>
+          <span class="il-stat__d">A risky call can be rewritten and still finish, and one can pause for a human instead, so safety does not have to fail the task.</span>
+        </div>
+        <div class="il-stat">
+          <div class="il-stat__top">
+            <span class="il-stat__n">0</span>
+            <span class="il-stat__ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7.5 4.27 9 5.15"></path><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg></span>
+          </div>
+          <span class="il-stat__k">runtime dependencies</span>
+          <span class="il-stat__d">Pure Python. Nothing extra to install, audit, or keep patched.</span>
+        </div>
+        <div class="il-stat">
+          <div class="il-stat__top">
+            <span class="il-stat__n">0</span>
+            <span class="il-stat__ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"></path></svg></span>
+          </div>
+          <span class="il-stat__k">network calls</span>
+          <span class="il-stat__d">Every check runs in your agent's own process. No round-trip to a server, so no added network latency, and nothing leaves your machine.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+{% endblock %}
+
+{#
+  The theme wraps page content in
+
+      <article class="md-content__inner md-typeset">
+
+  and `.md-typeset h2`, `.md-typeset h3` and friends are (0,1,1) -- one class,
+  one type. That outranks every single-class rule in home.css at (0,1,0), so
+  with the class in place the design's heading sizes silently lose: the section
+  titles render at the theme's 24px instead of the design's clamp(36px,4vw,52px),
+  and `.il-doc__h` renders at 20px instead of 11px.
+
+  Rather than fight that by doubling the selector on every heading the design
+  restyles -- and then again on the next one someone adds -- the landing page
+  renders the article without the class. Nothing here wants the theme's prose
+  typography: every element below is styled by home.css. Docs pages are
+  untouched and keep it, through super().
+
+  This is also why the override is on `container` rather than on `content`: the
+  class is on the article that *contains* the content block, so it is not
+  reachable from inside it.
+#}
+{% block container %}
+  {% if page.url == '' %}
+    <div class="md-content" data-md-component="content">
+      <article class="md-content__inner">
+        <a id="__skip" tabindex="-1"></a>
+        <div class="il-home">{{ page.content }}</div>
+      </article>
+    </div>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{% block footer %}
+  {% if page.url == '' %}
+  <footer class="il-foot">
+    <div class="il-foot__inner">
+      <span class="il-foot__who">Apache-2.0 &middot; SourceShift</span>
+      <span class="il-foot__mid">Made with <a href="https://zensical.org/">Zensical</a></span>
+      <div class="il-foot__links">
+        <a href="https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md">Roadmap</a>
+        <a href="https://github.com/SourceShift/InterLock/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md">Contributing</a>
+        <a href="https://github.com/SourceShift/InterLock">GitHub</a>
+      </div>
+    </div>
+  </footer>
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  {% if page.url == '' %}
+    <script src="{{ 'assets/javascripts/home.js' | url }}" defer></script>
   {% endif %}
 {% endblock %}
