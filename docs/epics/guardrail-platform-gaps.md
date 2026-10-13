@@ -1,7 +1,7 @@
 # Guardrail platform gaps — epic set
 
 Eight epics covering the operational-requirements review recorded as R23–R30 in
-[`ROADMAP.md`](../../ROADMAP.md). Each epic is self-contained, lands in the
+[`ROADMAP.md`](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md). Each epic is self-contained, lands in the
 interlock repo, and is proved by a **live smoke test** — a real process started on
 loopback and exercised over a real socket, never a mock.
 
