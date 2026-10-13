@@ -344,7 +344,7 @@ reg.hits, reg.misses
 For very large trees, an optional Rust implementation of `ScopeTree` cuts memory
 per node by roughly ten times. It's used automatically once built. Check which
 one is active with `interlock.policy.SCOPE_BACKEND` (`"python"` or `"rust"`).
-See [`rust/README.md`](../../rust/README.md).
+See [`rust/README.md`](https://github.com/SourceShift/InterLock/blob/main/rust/README.md).
 
 ## Limits
 

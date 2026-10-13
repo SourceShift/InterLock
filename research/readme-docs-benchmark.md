@@ -72,7 +72,7 @@ what we learned and what we decided because of it.
 |---|---|
 | README opens with a blocked call and its printed output | Patterns 1 and 2 |
 | README stays a landing page (~250 lines) and links into `docs/` | Avoid the link-hub and the do-everything README |
-| `docs/` split into getting started, concepts, guides, and reference, with a legend on `docs/README.md` | Pattern 4 |
+| `docs/` split into getting started, concepts, guides, and reference, with a legend on `docs/overview.md` | Pattern 4 |
 | A dedicated [security model](../docs/security-model.md) page, linked from the README | Pattern 3 |
 | The detector catalog is one page of grouped tables, **generated from the code** by `scripts/gen_detector_catalog.py` | Pattern 5, and the README's detector count has drifted before |
 | The catalog has a "Scoped to" column | 31 detectors only act on named actions; without this column a user cannot tell a detector is silently idle |

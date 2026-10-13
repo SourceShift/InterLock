@@ -1,0 +1,87 @@
+name: Docs
+
+# Publishes the Markdown under docs/ to https://interlock.sourceshift.ai/
+#
+# The site is built by Zensical -- the successor to Material for MkDocs -- and
+# deployed to Cloudflare Pages as a directory of static files. There is no
+# Node build step and no framework: Zensical is a Python package, so this job
+# only needs an interpreter.
+#
+# Zensical requires Python >= 3.11, which is why this job pins 3.13 rather than
+# the 3.9 floor the SDK itself supports.
+#
+# Pinned to an exact Zensical version on purpose. It is 0.0.x and its output
+# is the deployed artefact, so an unreviewed upgrade should be a commit someone
+# made, not something that happens on a Tuesday because CI resolved `latest`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "zensical.toml"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "zensical.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Zensical
+        run: pip install zensical==0.0.70
+
+      # --strict aborts the build on any warning rather than printing it and
+      # carrying on. Verified locally: a broken internal link makes this exit 1.
+      # The docs are read on GitHub *and* on the site, so a link that resolves
+      # in only one of the two places is exactly the drift this catches.
+      - name: Build the site
+        run: zensical build --clean --strict
+
+      - name: Upload the built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site
+          retention-days: 7
+
+  deploy:
+    name: deploy
+    needs: build
+    # Only main publishes. A pull request builds (above) so a broken link or a
+    # bad config fails the PR, but it must not touch the live site.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: docs
+      url: https://interlock.sourceshift.ai/
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: site
+          path: site
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy site --project-name=interlock-docs --branch=main

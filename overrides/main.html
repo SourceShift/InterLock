@@ -1,0 +1,120 @@
+{#-
+  The landing page for interlock.sourceshift.ai.
+
+  Everything below is gated on `page.url == ''` -- the empty url is the site
+  root, which is docs/index.md. For every other page this file behaves exactly
+  like the stock theme's main.html, so the docs are untouched by anything here.
+
+  Not `page.is_homepage`: Zensical's themes reference that attribute but never
+  populate it, so it is always undefined. `{% if page.is_homepage %}` fails
+  silently (undefined is falsy), and `{{ page.is_homepage }}` raises
+  "undefined value" during the build. `page.url` is what the theme itself uses,
+  so it is the one to trust.
+
+  Why HTML and not Markdown: the hero and the proof block are a *layout*, not
+  prose. They need full-bleed placement above the docs content column, which no
+  Markdown construct can express. The prose sections that follow them live in
+  docs/index.md as ordinary Markdown, so the words stay easy to edit.
+
+  House rules this file obeys, and must keep obeying:
+
+    * No third-party requests. No webfonts, no analytics, no CDN, no tag
+      manager. The theme's own SVG icons are inlined into the sprite at build
+      time. This is the same promise the library makes -- a landing page that
+      phones home to three vendors to say "works offline" refutes itself.
+    * No JavaScript. The page must be complete and readable with JS disabled.
+    * The proof block is real. Every line of its output was printed by
+      examples/quickstart_demo.py, which is in the repository and runnable.
+      Do not edit the output to look better; if the code changes, re-run the
+      demo and paste what it actually prints.
+-#}
+{% extends "base.html" %}
+
+{% block hero %}
+  {% if page.url == '' %}
+  <div class="il-hero">
+    <div class="il-hero__inner">
+
+      <p class="il-eyebrow">Open source &middot; Apache-2.0 &middot; Python 3.9+</p>
+
+      <h1 class="il-hero__title">Stop a bad tool call<br />before your AI agent makes it.</h1>
+
+      <p class="il-hero__lede">
+        interlock checks every tool call your agent makes, inside the agent's own
+        process, and allows, blocks, or rewrites it before anything happens.
+        No proxy, no account, no network calls, and no dependencies.
+      </p>
+
+      <div class="il-actions">
+        <a class="il-btn il-btn--primary" href="{{ 'getting-started/' | url }}">
+          Get started
+          <span class="il-btn__arrow" aria-hidden="true">&rarr;</span>
+        </a>
+        <a class="il-btn il-btn--ghost" href="https://github.com/SourceShift/InterLock">
+          Star on GitHub
+        </a>
+      </div>
+
+      <p class="il-install">
+        <span class="il-install__prompt" aria-hidden="true">$</span>
+        <code>pip install "git+https://github.com/SourceShift/InterLock.git"</code>
+      </p>
+
+      <div class="il-proof">
+        <div class="il-proof__chrome" aria-hidden="true">
+          <span class="il-dot"></span><span class="il-dot"></span><span class="il-dot"></span>
+          <span class="il-proof__name">guard.py</span>
+        </div>
+
+        <pre class="il-proof__code"><code>{% raw %}import interlock
+from interlock import Blocked, guard
+from interlock.detectors import network_egress_guard, pii_redaction_guard
+
+
+@guard()
+def http_post(url: str, body: str) -> str:
+    return f"posted to {url}: {body}"
+
+
+interlock.install(rules=[
+    network_egress_guard(allowed_hosts=["api.acme.com"]),  # only hosts you trust
+    pii_redaction_guard(),                                 # mask secrets and PII
+]){% endraw %}</code></pre>
+
+        <div class="il-proof__results">
+          <p class="il-out il-out--allow">
+            <span class="il-out__mark" aria-hidden="true">&#10003;</span>
+            <span class="il-out__verdict">allow</span>
+            <span class="il-out__text">posted to https://api.acme.com/notes: routine sync</span>
+          </p>
+          <p class="il-out il-out--rewrite">
+            <span class="il-out__mark" aria-hidden="true">&#126;</span>
+            <span class="il-out__verdict">rewrite</span>
+            <span class="il-out__text">posted to https://api.acme.com/notes: Card on file: [REDACTED CREDIT_CARD]</span>
+          </p>
+          <p class="il-out il-out--block">
+            <span class="il-out__mark" aria-hidden="true">&#10007;</span>
+            <span class="il-out__verdict">block</span>
+            <span class="il-out__text">Blocked: blocked action 'http_post': egress to 'evil.example' is not on the destination allowlist</span>
+          </p>
+        </div>
+      </div>
+
+      <p class="il-proof__caption">
+        Real output. The first two calls run &mdash; the second with the card
+        number masked. The third never leaves the process.
+        <a href="https://github.com/SourceShift/InterLock/blob/main/examples/quickstart_demo.py">Run it yourself</a>.
+      </p>
+
+    </div>
+  </div>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  {% if page.url == '' %}
+    {{ page.content }}
+  {% else %}
+    {{ super() }}
+  {% endif %}
+{% endblock %}

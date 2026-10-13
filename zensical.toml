@@ -1,0 +1,146 @@
+# Site configuration for interlock.sourceshift.ai
+#
+# Built by Zensical (https://zensical.org), the successor to Material for
+# MkDocs. The Markdown under docs/ is the same source that renders on GitHub --
+# nothing here rewrites it, so a page must read correctly in both places.
+#
+#   zensical serve      # preview at http://localhost:8000
+#   zensical build      # write site/
+#
+# CI builds this and deploys site/ to Cloudflare Pages; see
+# .github/workflows/docs.yml.
+
+[project]
+site_name = "interlock"
+site_url = "https://interlock.sourceshift.ai/"
+site_description = "In-process guardrails for AI agents: block or rewrite a tool, MCP, or model call before it runs."
+site_author = "SourceShift"
+copyright = "Apache-2.0 &middot; SourceShift"
+repo_url = "https://github.com/SourceShift/InterLock"
+repo_name = "SourceShift/InterLock"
+edit_uri = "edit/main/docs/"
+
+# A stylesheet of our own, on every page. It carries the system font stack (see
+# `font = false` below) and the landing page's styles. There is exactly one, and
+# it must stay free of third-party requests.
+extra_css = ["assets/stylesheets/landing.css"]
+
+nav = [
+  # The landing page. Its hero and proof block live in overrides/main.html,
+  # which is gated on `page.is_homepage`; the prose below them is index.md.
+  { "Home" = "index.md" },
+  # The manual's own index. Kept because the README and CONTRIBUTING both point
+  # readers here for "which page do I want".
+  { "Overview" = "overview.md" },
+  { "Getting started" = "getting-started.md" },
+  { "Concepts" = "concepts.md" },
+  { "Security model" = "security-model.md" },
+  { "Guides" = [
+    { "Writing rules" = "guides/writing-rules.md" },
+    { "Using detectors" = "guides/detectors.md" },
+    { "Integrations" = "guides/integrations.md" },
+    { "MCP" = "guides/mcp.md" },
+    { "Scopes" = "guides/scopes.md" },
+    { "Audit log" = "guides/audit-log.md" },
+    { "Sandbox" = "guides/sandbox.md" },
+    { "Production checklist" = "guides/production.md" },
+  ] },
+  { "Reference" = [
+    { "Python API" = "reference/python-api.md" },
+    { "Detector catalog" = "reference/detectors.md" },
+    { "Sidecar" = "reference/sidecar.md" },
+  ] },
+  # These live outside docs/, so they go to the repository rather than being
+  # built into the site.
+  { "Roadmap" = "https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md" },
+  { "Changelog" = "https://github.com/SourceShift/InterLock/blob/main/CHANGELOG.md" },
+  { "Contributing" = "https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md" },
+]
+
+[project.theme]
+language = "en"
+
+# Theme overrides. Currently just the landing page; see overrides/main.html.
+custom_dir = "overrides"
+
+# Turns off the theme's webfonts. Out of the box the theme emits
+#   <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter...">
+# on every page, which sends each visitor's IP to Google -- on the docs site of a
+# library whose pitch is "no account, no network calls, works offline". The stack
+# in docs/assets/stylesheets/landing.css fills the gap for zero bytes.
+font = false
+
+features = [
+  "content.code.annotate",
+  "content.code.copy",
+  "content.code.select",
+  "content.footnote.tooltips",
+  "content.tabs.link",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.indexes",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.path",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+# Sober chrome, so the only colour on the page is the verdict triad.
+# landing.css pins the accent to the "allow" green per scheme.
+primary = "black"
+accent = "green"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "black"
+accent = "green"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to system preference"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/SourceShift/InterLock"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+toc.permalink = true
+pymdownx.arithmatex.generic = true
+pymdownx.betterem = {}
+pymdownx.caret = {}
+pymdownx.details = {}
+pymdownx.emoji.emoji_generator = "zensical.extensions.emoji.to_svg"
+pymdownx.emoji.emoji_index = "zensical.extensions.emoji.twemoji"
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.keys = {}
+pymdownx.magiclink = {}
+pymdownx.mark = {}
+pymdownx.smartsymbols = {}
+pymdownx.superfences.custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+pymdownx.tabbed.alternate_style = true
+pymdownx.tabbed.combine_header_slug = true
+pymdownx.tasklist.custom_checkbox = true
+pymdownx.tilde = {}

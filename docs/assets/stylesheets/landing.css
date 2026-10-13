@@ -1,0 +1,404 @@
+/* ============================================================================
+   interlock -- landing page and site-wide type.
+
+   Loaded on every page (extra_css), but most of it is scoped to the landing
+   page's own class names, so the docs are unaffected.
+
+   Two jobs:
+
+   1. Replace the theme's webfonts. Out of the box, Zensical's `{% block fonts %}`
+      pulls Inter and JetBrains Mono from fonts.googleapis.com on every page
+      view. The library's whole pitch is "no account, no network calls, works
+      offline", so a docs site that reports every visitor's IP to Google while
+      saying that is refuting itself. `font = false` in zensical.toml removes
+      the <link>; the stack below fills the gap at zero kilobytes.
+
+   2. Draw the landing page: hero, install line, and the proof block whose
+      output is the argument.
+
+   Colour: the verdict triad (allow / rewrite / block) is the only chromatic
+   system on the page. Everything else is ink on background. Every verdict is
+   marked AND worded AND coloured -- never colour alone, so it survives
+   colour-blindness, greyscale printing, and a text-only reader.
+   ========================================================================= */
+
+/* --- type: no webfonts, no requests ------------------------------------- */
+:root {
+  --md-text-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --md-code-font: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+/* --- verdict tokens ------------------------------------------------------ */
+:root,
+[data-md-color-scheme="default"] {
+  --il-allow: #0f7b3d;
+  --il-rewrite: #8a5a00;
+  --il-block: #b3261e;
+  --il-rule: rgba(0, 0, 0, 0.1);
+  --il-dim: #57606a;
+  --il-shell-bg: #0d1117;
+  --il-shell-fg: #c9d1d9;
+  --il-shell-dim: #6e7681;
+  --il-glow: rgba(45, 164, 78, 0.13);
+  /* Text used on top of an --il-allow fill. */
+  --il-on-allow: #ffffff;
+  /* Pin the theme accent to the "allow" green, so links, focus rings and the
+     search highlight all speak the same language as the verdicts. Declared
+     inside each scheme block rather than once on :root, so the value resolves
+     against that scheme's --il-allow instead of inheriting the light one. */
+  --md-accent-fg-color: var(--il-allow);
+}
+
+[data-md-color-scheme="slate"] {
+  --il-allow: #3fb950;
+  --il-rewrite: #d29922;
+  --il-block: #f85149;
+  --il-rule: rgba(255, 255, 255, 0.1);
+  --il-dim: #8b949e;
+  --il-glow: rgba(63, 185, 80, 0.1);
+  --il-on-allow: #08130c;
+  --md-accent-fg-color: var(--il-allow);
+}
+
+/* --- hero ---------------------------------------------------------------- */
+.il-hero {
+  position: relative;
+  overflow: hidden;
+  padding: 4rem 1.2rem 3rem;
+  border-bottom: 1px solid var(--il-rule);
+}
+
+/* A single soft light from the top edge. Not an illustration. */
+.il-hero::before {
+  content: "";
+  position: absolute;
+  inset: -18rem 0 auto;
+  height: 30rem;
+  background: radial-gradient(48% 62% at 50% 12%, var(--il-glow), transparent 72%);
+  pointer-events: none;
+}
+
+.il-hero__inner {
+  position: relative;
+  max-width: 46rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.il-eyebrow {
+  margin: 0 0 1.1rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--il-dim);
+}
+
+.il-hero__title {
+  margin: 0 0 1.1rem;
+  font-size: clamp(1.85rem, 1.1rem + 3.2vw, 3.1rem);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.022em;
+}
+
+.il-hero__lede {
+  margin: 0 auto 1.9rem;
+  max-width: 34rem;
+  font-size: 1.02rem;
+  line-height: 1.62;
+  color: var(--il-dim);
+}
+
+/* --- call to action ------------------------------------------------------ */
+.il-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  justify-content: center;
+  margin-bottom: 1.6rem;
+}
+
+.il-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.7rem 1.25rem;
+  border: 1px solid transparent;
+  border-radius: 0.3rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 120ms ease, border-color 120ms ease,
+    transform 120ms ease;
+}
+
+.il-btn--primary {
+  background-color: var(--il-allow);
+  color: var(--il-on-allow);
+}
+
+.il-btn--primary:hover,
+.il-btn--primary:focus-visible {
+  /* Brightness, not a colour swap: the fill is already the "allow" green, and
+     a fixed hover colour would need a second pair of light/dark tokens. */
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+
+.il-btn--ghost {
+  border-color: var(--il-rule);
+  color: inherit;
+}
+
+.il-btn--ghost:hover,
+.il-btn--ghost:focus-visible {
+  border-color: var(--md-accent-fg-color);
+  color: var(--md-accent-fg-color);
+}
+
+.il-btn__arrow {
+  transition: transform 120ms ease;
+}
+
+.il-btn:hover .il-btn__arrow {
+  transform: translateX(3px);
+}
+
+/* Buttons authored in Markdown (docs/index.md) end up inside .md-typeset,
+   where the theme's `.md-typeset a { color: var(--md-accent-fg-color) }` at
+   (0,1,1) outranks a bare `.il-btn--primary` at (0,1,0). The result is a green
+   label on a green fill -- unreadable. The hero button escapes this only
+   because the hero block renders outside .md-typeset. Match the scope. */
+.md-typeset a.il-btn {
+  text-decoration: none;
+}
+
+.md-typeset a.il-btn--primary {
+  color: var(--il-on-allow);
+}
+
+.md-typeset a.il-btn--ghost {
+  color: var(--md-default-fg-color);
+}
+
+/* --- install line -------------------------------------------------------- */
+.il-install {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  margin: 0 0 2.4rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--il-rule);
+  border-radius: 0.3rem;
+  background-color: var(--il-shell-bg);
+  font-size: 0.8rem;
+  text-align: left;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.il-install__prompt {
+  color: var(--il-shell-dim);
+  user-select: none;
+}
+
+.il-install code {
+  background: none;
+  color: var(--il-shell-fg);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+/* --- the proof block ----------------------------------------------------
+   This is the centre of the page: the code, and the output it really printed.
+   It is deliberately the darkest, highest-contrast object on the screen.
+   ------------------------------------------------------------------------ */
+.il-proof {
+  margin: 0 auto;
+  border: 1px solid var(--il-rule);
+  border-radius: 0.45rem;
+  background-color: var(--il-shell-bg);
+  overflow: hidden;
+  text-align: left;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+.il-proof__chrome {
+  display: flex;
+  align-items: center;
+  gap: 0.34rem;
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.il-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.16);
+}
+
+.il-proof__name {
+  margin-left: 0.5rem;
+  font-family: var(--md-code-font);
+  font-size: 0.72rem;
+  color: var(--il-shell-dim);
+}
+
+.il-proof__code {
+  margin: 0;
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+}
+
+.il-proof__code code {
+  background: none;
+  padding: 0;
+  font-family: var(--md-code-font);
+  font-size: 0.795rem;
+  line-height: 1.68;
+  color: var(--il-shell-fg);
+  white-space: pre;
+}
+
+.il-proof__results {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.85rem 1.15rem 0.95rem;
+  background-color: rgba(255, 255, 255, 0.022);
+}
+
+.il-out {
+  display: grid;
+  grid-template-columns: 1.1rem 5.2rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.42rem;
+  font-family: var(--md-code-font);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--il-shell-fg);
+}
+
+.il-out:last-child {
+  margin-bottom: 0;
+}
+
+.il-out__mark {
+  font-weight: 700;
+}
+
+.il-out__verdict {
+  font-weight: 700;
+}
+
+.il-out__text {
+  color: var(--il-shell-dim);
+  overflow-wrap: anywhere;
+}
+
+.il-out--allow .il-out__mark,
+.il-out--allow .il-out__verdict {
+  color: #3fb950;
+}
+
+.il-out--rewrite .il-out__mark,
+.il-out--rewrite .il-out__verdict {
+  color: #d29922;
+}
+
+.il-out--block .il-out__mark,
+.il-out--block .il-out__verdict {
+  color: #f85149;
+}
+
+.il-proof__caption {
+  margin: 0.9rem auto 0;
+  max-width: 36rem;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--il-dim);
+}
+
+/* --- landing prose sections --------------------------------------------- */
+/* The Markdown in docs/index.md arrives inside .md-typeset. These rules give
+   it a slightly wider measure and more air than a docs page. */
+body:has(.il-hero) .md-content__inner > h2 {
+  margin-top: 3.2rem;
+  font-size: 1.42rem;
+  letter-spacing: -0.012em;
+}
+
+body:has(.il-hero) .md-content__inner > h2:first-child {
+  margin-top: 2.4rem;
+}
+
+/* An empty drawer is worse than none: the landing page has no sidebar, so
+   drop the hamburger rather than let it open onto nothing. */
+body:has(.il-hero) .md-header__button[for="__drawer"] {
+  display: none;
+}
+
+/* --- limits list --------------------------------------------------------- */
+/* Specificity note: the theme ships `.md-typeset ul { list-style-type: disc }`
+   at (0,1,1), which outranks a bare `.il-limits` at (0,1,0) -- the default
+   bullets survive and sit next to the counter. Scoping the selector to
+   `.md-typeset ul.il-limits` matches the theme's specificity, and the ::marker
+   rule covers engines that ignore `list-style` on the container. */
+.md-typeset ul.il-limits {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: il-limit;
+}
+
+.md-typeset ul.il-limits > li {
+  position: relative;
+  margin: 0;
+  padding: 0.85rem 1rem 0.85rem 2.9rem;
+  border: 1px solid var(--il-rule);
+  border-radius: 0.35rem;
+  line-height: 1.6;
+  list-style: none;
+}
+
+.md-typeset ul.il-limits > li::marker {
+  content: none;
+}
+
+.md-typeset ul.il-limits > li::before {
+  counter-increment: il-limit;
+  content: counter(il-limit);
+  position: absolute;
+  left: 1rem;
+  top: 0.85rem;
+  font-family: var(--md-code-font);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--il-block);
+}
+
+/* --- the docs hand-off ---------------------------------------------------- */
+.il-flow {
+  text-align: center;
+  margin-top: 2.6rem;
+}
+
+@media (max-width: 600px) {
+  .il-hero {
+    padding: 2.6rem 1rem 2.2rem;
+  }
+
+  .il-out {
+    grid-template-columns: 1.1rem minmax(0, 1fr);
+    row-gap: 0.1rem;
+  }
+
+  .il-out__text {
+    grid-column: 2;
+  }
+}

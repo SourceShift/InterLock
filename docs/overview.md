@@ -37,13 +37,13 @@ minutes), then read [how interlock works](concepts.md).
 | [Python API](reference/python-api.md) | Every public class and function, with signatures |
 | [Detector catalog](reference/detectors.md) | All 105 detectors: what they catch, which calls they see, how to build them |
 | [Sidecar](reference/sidecar.md) | The `interlock-sidecar` daemon for Node.js agents, and its wire protocol |
-| [Node.js client](../js/README.md) | The `interlock-guard` npm package |
-| [Native scope store](../rust/README.md) | The optional Rust backend for very large scope trees |
+| [Node.js client](https://github.com/SourceShift/InterLock/blob/main/js/README.md) | The `interlock-guard` npm package |
+| [Native scope store](https://github.com/SourceShift/InterLock/blob/main/rust/README.md) | The optional Rust backend for very large scope trees |
 
 ## More
 
-- [Roadmap](../ROADMAP.md): what's planned and why.
-- [Contributing](../CONTRIBUTING.md): development setup, adding a detector,
+- [Roadmap](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md): what's planned and why.
+- [Contributing](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md): development setup, adding a detector,
   keeping these docs accurate.
-- [How other projects document themselves](../research/readme-docs-benchmark.md):
+- [How other projects document themselves](https://github.com/SourceShift/InterLock/blob/main/research/readme-docs-benchmark.md):
   the research behind this layout.

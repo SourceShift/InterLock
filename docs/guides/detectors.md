@@ -252,5 +252,5 @@ The catalog's **Factory** column shows each detector's parameters.
 - [Detector catalog](../reference/detectors.md): all 105, grouped, with scope
   and parameters.
 - [Writing rules](writing-rules.md): for anything a detector doesn't cover.
-- [Adding a detector](../../CONTRIBUTING.md#adding-a-detector): contributing a
+- [Adding a detector](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md#adding-a-detector): contributing a
   new one.

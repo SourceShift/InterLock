@@ -28,6 +28,12 @@ import interlock.detectors as detectors_pkg  # noqa: E402
 
 OUT = ROOT / "docs" / "reference" / "detectors.md"
 
+# Source links go to the repository, not to a relative path. The catalog is
+# published as a docs site (interlock.sourceshift.ai) as well as read on GitHub,
+# and a relative ../../interlock/... link 404s once the page is built. An
+# absolute blob URL is correct in both places.
+BLOB = "https://github.com/SourceShift/InterLock/blob/main"
+
 # (title, one-line description, modules). Order is the order on the page.
 CATEGORIES: List[Tuple[str, str, List[str]]] = [
     (
@@ -286,7 +292,7 @@ def render() -> str:
         for name in mods:
             module = importlib.import_module("interlock.detectors." + name)
             source = inspect.getsource(module)
-            link = "[`{0}`](../../interlock/detectors/{0}.py)".format(name)
+            link = "[`{0}`]({1}/interlock/detectors/{0}.py)".format(name, BLOB)
             row = [link, _summary(module), _verdicts(source),
                    _scope(name, module, source), "<br>".join(_factories(module))]
             lines.append("| " + " | ".join(cell.replace("|", "\\|") for cell in row) + " |")

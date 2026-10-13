@@ -580,7 +580,7 @@ PyScopeTree()
 ```
 
 The store of bindings. `ScopeTree` is the native Rust tree when the optional
-[`rust/`](../../rust/README.md) module is installed, and `PyScopeTree` otherwise.
+[`rust/`](https://github.com/SourceShift/InterLock/blob/main/rust/README.md) module is installed, and `PyScopeTree` otherwise.
 `PyScopeTree` is always available.
 
 | Method | Meaning |
@@ -983,7 +983,7 @@ it.
 
 ## Testing helpers (`interlock.testing`)
 
-Guide: [Node.js client](../../js/README.md).
+Guide: [Node.js client](https://github.com/SourceShift/InterLock/blob/main/js/README.md).
 
 The package's top level exports nothing. Its modules exist so that clients in
 other languages, and your own test suites, can check behaviour against a real

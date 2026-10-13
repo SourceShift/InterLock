@@ -6,7 +6,7 @@ tool call, so they are governed by the same rules as your Python code. Nothing i
 reimplemented on the other side, so there is no second rule engine to drift.
 
 The client side, the `interlock-guard` npm package, is documented in
-[`js/README.md`](../../js/README.md). This page covers the daemon, its trust
+[`js/README.md`](https://github.com/SourceShift/InterLock/blob/main/js/README.md). This page covers the daemon, its trust
 boundary, the Python client, and the wire protocol.
 
 ## Quick start
@@ -184,7 +184,7 @@ for the length of a `with` block (see the
 ## Wire protocol
 
 Most users never see this. It matters if you write a client in another language.
-The reference implementation is [`interlock/wire.py`](../../interlock/wire.py).
+The reference implementation is [`interlock/wire.py`](https://github.com/SourceShift/InterLock/blob/main/interlock/wire.py).
 
 ### Frames
 

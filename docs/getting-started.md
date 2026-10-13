@@ -264,8 +264,8 @@ stop surprising you.
 
 ```mermaid
 flowchart LR
-    agent(["agent"]) --> call["tool call"]
-    call --> rules["your rules, in order"]
+    agent(["agent"]) --> toolcall["tool call"]
+    toolcall --> rules["your rules, in order"]
     rules -->|"block"| stop["Blocked raised<br/>tool never runs"]
     rules -->|"rewrite"| safer["tool runs with<br/>safer arguments"]
     rules -->|"no objection"| run["tool runs"]

@@ -73,7 +73,7 @@ Each of these is sometimes the right choice. Make it on purpose.
 
 - **Python import-time hooks don't exist yet.** You wrap each session, tool list,
   or function explicitly. Automatic interception of MCP clients and model SDKs is
-  on the [roadmap](../ROADMAP.md).
+  on the [roadmap](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md).
 - **MCP trust labels are only as good as your adapter.** `guard_mcp_session`
   strips any `__origin__` or `__schema__` the caller passes and adds the ones you
   configure (`origin=`, `schemas=`). If you build MCP events yourself with
@@ -108,7 +108,7 @@ Each of these is sometimes the right choice. Make it on purpose.
 - **Node.js has holes no JavaScript patch can close.** ESM named imports,
   `*Sync` calls, and handle-returning openers like `fs.createReadStream` aren't
   guarded. `installInterceptors().uncovered` lists them
-  ([js/README.md](../js/README.md)).
+  ([js/README.md](https://github.com/SourceShift/InterLock/blob/main/js/README.md)).
 - **The Node.js client depends on a sidecar.** If it's down, every guarded call is
   denied. That's safe, but it makes the sidecar an availability dependency.
 

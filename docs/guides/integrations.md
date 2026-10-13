@@ -156,7 +156,7 @@ guardMcpSession(client, { engine });
 
 The package can also guard `fs`, `child_process`, and `fetch` for the whole
 process, and the tool map or runner of any model SDK. See
-[js/README.md](../../js/README.md) for setup and the
+[js/README.md](https://github.com/SourceShift/InterLock/blob/main/js/README.md) for setup and the
 [sidecar reference](../reference/sidecar.md) for every daemon flag.
 
 ## Subprocesses

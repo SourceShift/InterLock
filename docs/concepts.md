@@ -188,12 +188,12 @@ Every integration funnels into the same two functions:
 
 ```mermaid
 flowchart LR
-    deco["@guard"] --> call["enforce_tool_call"]
-    mcp["guard_mcp_session"] --> call
-    lc["guard_langchain_tools"] --> call
-    js["Node.js client<br/>(via the sidecar)"] --> call
-    own["your own adapter"] --> call
-    call --> engine["your rules"]
+    deco["@guard"] --> callphase["enforce_tool_call"]
+    mcp["guard_mcp_session"] --> callphase
+    lc["guard_langchain_tools"] --> callphase
+    js["Node.js client<br/>(via the sidecar)"] --> callphase
+    own["your own adapter"] --> callphase
+    callphase --> engine["your rules"]
     deco --> result["enforce_tool_result"]
     mcp --> result
     lc --> result

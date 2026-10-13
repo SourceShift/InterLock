@@ -128,7 +128,7 @@ wherever your logs go.
 Rules run in your process as ordinary Python, so a call costs roughly what your
 rules cost. There's no network hop. Scope lookups are cached per scope. There's no
 published benchmark for the Python side yet (one is on the
-[roadmap](../../ROADMAP.md)), so measure with your own rules. The Node.js client
+[roadmap](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md)), so measure with your own rules. The Node.js client
 adds one local socket round trip per guarded call. Its smoke benchmark measured
 tens of microseconds per call on a development machine (`npm run bench` in `js/`).
 
