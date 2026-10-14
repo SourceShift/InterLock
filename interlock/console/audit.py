@@ -32,6 +32,10 @@ DEFAULT_LIMIT = 100
 MIN_LIMIT = 1
 MAX_LIMIT = 500
 
+#: Receipt's fields, in declaration order. Every one is a scalar except
+#: ``masked``, a flat ``{str: int}`` dict, so a shallow copy is all a page needs.
+_RECEIPT_FIELDS = tuple(f.name for f in dataclasses.fields(Receipt))
+
 #: How often the stream polls the receipt file's size for new receipts or a
 #: truncation, in seconds. Set below the spec's 1-second visibility bound: an
 #: append landing right after a tick is only caught on the next one, and the
@@ -90,11 +94,25 @@ def _parse_receipt_line(raw_line: bytes, index: int) -> Dict[str, Any]:
     except UnicodeDecodeError:
         return {"index": index, "unreadable": True}
     try:
-        fields = dataclasses.asdict(Receipt.from_json(text.strip()))
+        fields = _receipt_fields(Receipt.from_json(text.strip()))
     except Exception:
         return {"index": index, "unreadable": True}
     fields["index"] = index
     return fields
+
+
+def _receipt_fields(receipt: Receipt) -> Dict[str, Any]:
+    """A receipt as a plain dict, without :func:`dataclasses.asdict`.
+
+    ``asdict`` deep-copies every value recursively; on a 10k-receipt log that
+    was about 70% of every page load (239k recursive calls a request). The
+    fields are scalars plus one flat dict, so copying that dict is enough.
+    """
+    out = {name: getattr(receipt, name) for name in _RECEIPT_FIELDS}
+    masked = out.get("masked")
+    if isinstance(masked, dict):
+        out["masked"] = dict(masked)
+    return out
 
 
 def _complete_lines(raw: bytes) -> List[bytes]:
@@ -109,18 +127,72 @@ def _complete_lines(raw: bytes) -> List[bytes]:
     return raw.split(b"\n")[:-1]
 
 
+class _ParsedLog:
+    """One receipt log, parsed incrementally and shared by every reader.
+
+    Every page load, filter click, verify, activity view and stream
+    handshake reads the whole log, and re-parsing it each time made a
+    10k-receipt log take seconds per request. The log is append-only, so only
+    the lines written since the previous read are parsed now. ``prefix`` is
+    the exact bytes already parsed: when the file no longer starts with them
+    (truncated, rotated, edited in place) everything is parsed again and
+    ``generation`` moves on, so a cached view is never stale. Reading the raw
+    bytes stays per request; it costs milliseconds even for megabytes.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.prefix = b""
+        self.receipts: List[Dict[str, Any]] = []
+        self.next_index = 0
+        self.generation = 0
+        #: (generation, end offset, key, problem) of the last verification.
+        self.verified: Optional[tuple] = None
+
+
+_LOGS: Dict[str, _ParsedLog] = {}
+_LOGS_LOCK = threading.Lock()
+
+
+def _parsed_log(path: str) -> _ParsedLog:
+    with _LOGS_LOCK:
+        log = _LOGS.get(path)
+        if log is None:
+            log = _LOGS[path] = _ParsedLog()
+        return log
+
+
+def _log_snapshot(path: str) -> "tuple[List[Dict[str, Any]], int, int, int]":
+    """The log's receipts, the byte offset just past its last complete line,
+    its complete-line count and the cache generation, all from one read.
+
+    A trailing line with no newline yet is left unparsed (F19) and picked up
+    once a later write terminates it.
+    """
+    log = _parsed_log(path)
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except FileNotFoundError:
+        raw = b""
+    with log.lock:
+        if not raw.startswith(log.prefix):
+            log.prefix, log.receipts, log.next_index = b"", [], 0
+            log.generation += 1
+        end = raw.rfind(b"\n") + 1
+        if end > len(log.prefix):
+            for raw_line in _complete_lines(raw[len(log.prefix):end]):
+                if raw_line.strip():
+                    log.receipts.append(_parse_receipt_line(raw_line, log.next_index))
+                log.next_index += 1
+            log.prefix = raw[:end]
+        return list(log.receipts), len(log.prefix), log.next_index, log.generation
+
+
 def _read_receipts(path: str) -> List[Dict[str, Any]]:
     """Every complete receipt in ``path``, each carrying its 0-based file
-    line position."""
-    if not os.path.exists(path):
-        return []
-    with open(path, "rb") as fh:
-        raw = fh.read()
-    out: List[Dict[str, Any]] = []
-    for index, raw_line in enumerate(_complete_lines(raw)):
-        if raw_line.strip():
-            out.append(_parse_receipt_line(raw_line, index))
-    return out
+    line position. The dicts are shared between requests: read, never mutate."""
+    return _log_snapshot(path)[0]
 
 
 def _handle_receipts(handler: Any) -> Any:
@@ -190,7 +262,7 @@ def _handle_verify(handler: Any) -> Any:
     if path is None:
         return 404, _not_configured()
 
-    receipts = _read_receipts(path)
+    receipts, end, _lines, generation = _log_snapshot(path)
     count = len(receipts)
     head = receipts[-1].get("mac", GENESIS) if receipts else GENESIS
 
@@ -203,7 +275,7 @@ def _handle_verify(handler: Any) -> Any:
             "head": head,
         }
 
-    problem = _verify_without_partial_tail(path, key)
+    problem = _verify_cached(path, key, generation, end)
     status = "intact" if problem is None else "broken"
     broken_index = None
     if problem:
@@ -216,6 +288,24 @@ def _handle_verify(handler: Any) -> Any:
             broken_index = ordered[min(position, len(ordered) - 1)].get("index")
     return 200, {"status": status, "problem": problem, "count": count, "head": head,
                  "broken_index": broken_index}
+
+
+def _verify_cached(path: str, key: bytes, generation: int, end: int) -> Optional[str]:
+    """Verify the chain, or reuse the answer for bytes already verified.
+
+    A verification reads and MACs every receipt; the result can only change
+    when the log's bytes do, which a new generation (rewrite) or a new end
+    offset (append) both signal.
+    """
+    log = _parsed_log(path)
+    with log.lock:
+        cached = log.verified
+    if cached is not None and cached[:3] == (generation, end, key):
+        return cached[3]
+    problem = _verify_without_partial_tail(path, key)
+    with log.lock:
+        log.verified = (generation, end, key, problem)
+    return problem
 
 
 def _verify_without_partial_tail(path: str, key: bytes) -> Optional[str]:
@@ -297,9 +387,8 @@ def _initial_tail_state(path: str) -> "tuple[List[Dict[str, Any]], int, int]":
     risks a write landing between two of those calls and leaving the stream's
     starting point inconsistent with what it just reported in ``hello``.
     """
-    if not os.path.exists(path):
-        return [], 0, 0
-    return _tail_from(path, 0, 0)
+    receipts, end, lines, _generation = _log_snapshot(path)
+    return receipts, end, lines
 
 
 def _read_new_receipts(path: str, offset: int, line_index: int) -> "tuple[List[Dict[str, Any]], int, int]":

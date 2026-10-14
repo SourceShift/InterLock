@@ -487,3 +487,108 @@ def test_stream_slot_frees_within_two_seconds_and_cap_still_holds_after_refill(
         finally:
             for sock in refill:
                 sock.close()
+
+
+# --- the parsed-log cache -------------------------------------------------------
+# Every reader used to re-read and re-parse the whole log per request (seconds
+# on a 10k-receipt log). The cache parses only what was appended and starts over
+# whenever bytes it already parsed change.
+
+def _write(path: Path, actions, key: bytes = bytes.fromhex(KEYHEX)) -> None:
+    sink = FileSink(str(path), key=key)
+    for action in actions:
+        sink.write(Receipt(ts=time.time(), action=action, verdict="BLOCK", reason="r " + action))
+
+
+def _counting_parser(monkeypatch):
+    from interlock.console import audit
+    calls = []
+    original = audit._parse_receipt_line
+
+    def counted(raw_line, index):
+        calls.append(index)
+        return original(raw_line, index)
+
+    monkeypatch.setattr(audit, "_parse_receipt_line", counted)
+    return audit, calls
+
+
+def test_an_unchanged_log_is_not_parsed_again_and_an_append_parses_only_new_lines(tmp_path, monkeypatch):
+    path = tmp_path / "receipts.jsonl"
+    _write(path, ["a", "b", "c"])
+    audit, calls = _counting_parser(monkeypatch)
+    assert [r["action"] for r in audit._read_receipts(str(path))] == ["a", "b", "c"]
+    assert len(calls) == 3
+    audit._read_receipts(str(path))
+    assert len(calls) == 3
+    _write(path, ["d"])
+    receipts = audit._read_receipts(str(path))
+    assert [r["action"] for r in receipts] == ["a", "b", "c", "d"]
+    assert [r["index"] for r in receipts] == [0, 1, 2, 3]
+    assert calls[3:] == [3]
+
+
+def test_an_in_place_edit_of_parsed_bytes_is_seen_not_served_stale(tmp_path):
+    from interlock.console import audit
+    path = tmp_path / "receipts.jsonl"
+    _write(path, ["aaaa", "bbbb"])
+    assert audit._read_receipts(str(path))[1]["action"] == "bbbb"
+    raw = path.read_bytes()
+    path.write_bytes(raw.replace(b'"bbbb"', b'"zzzz"'))   # same length: size alone would miss it
+    assert audit._read_receipts(str(path))[1]["action"] == "zzzz"
+
+
+def test_a_truncated_log_is_parsed_again(tmp_path):
+    from interlock.console import audit
+    path = tmp_path / "receipts.jsonl"
+    _write(path, ["a", "b", "c"])
+    assert len(audit._read_receipts(str(path))) == 3
+    first_line = path.read_bytes().split(b"\n")[0] + b"\n"
+    path.write_bytes(first_line)
+    assert [r["action"] for r in audit._read_receipts(str(path))] == ["a"]
+
+
+def test_a_partial_last_line_stays_invisible_until_it_is_terminated(tmp_path):
+    from interlock.console import audit
+    path = tmp_path / "receipts.jsonl"
+    _write(path, ["a"])
+    with open(path, "ab") as fh:
+        fh.write(b'{"ts": 1.0, "action": "half')
+    receipts, end, lines, _ = audit._log_snapshot(str(path))
+    assert [r["action"] for r in receipts] == ["a"] and lines == 1
+    assert end == len(path.read_bytes().split(b"\n")[0]) + 1
+    with open(path, "ab") as fh:
+        fh.write(b'"}\n')
+    receipts = audit._read_receipts(str(path))
+    assert len(receipts) == 2 and receipts[1]["index"] == 1
+
+
+def test_verify_is_reused_only_while_the_bytes_are_unchanged(tmp_path, monkeypatch):
+    from interlock.console import audit
+    path = tmp_path / "receipts.jsonl"
+    key = bytes.fromhex(KEYHEX)
+    _write(path, ["a", "b"])
+    calls = []
+    original = audit._verify_without_partial_tail
+    monkeypatch.setattr(audit, "_verify_without_partial_tail",
+                        lambda p, k: calls.append(1) or original(p, k))
+
+    def verify():
+        handler = type("H", (), {"path": "/api/receipts/verify", "server": type(
+            "S", (), {"receipts_path": str(path), "receipts_key": key})()})()
+        return audit._handle_verify(handler)[1]
+
+    assert verify()["status"] == "intact" and len(calls) == 1
+    assert verify()["status"] == "intact" and len(calls) == 1
+    _write(path, ["c"])
+    assert verify()["count"] == 3 and len(calls) == 2
+    path.write_bytes(path.read_bytes().replace(b'"r a"', b'"r z"'))
+    assert verify()["status"] == "broken" and len(calls) == 3
+
+
+def test_receipt_fields_match_asdict_without_the_deep_copy():
+    import dataclasses as _dc
+    from interlock.console import audit
+    r = Receipt(ts=1.0, action="x", verdict="MODIFY", masked={"EMAIL": 1}, tokens=3)
+    assert audit._receipt_fields(r) == _dc.asdict(r)
+    assert audit._receipt_fields(r)["masked"] is not r.masked
