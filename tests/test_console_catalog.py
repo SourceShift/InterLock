@@ -13,7 +13,10 @@ Each test is named for the claim it proves:
   detector module appears in exactly one category (AC3),
 - ``/api/detectors/shell_injection_guard`` answers 200 with ``doc`` equal to
   that module's ``inspect.getdoc`` text; an unknown module and a path-traversal
-  attempt both answer 404 with code ``unknown_detector`` (AC4).
+  attempt both answer 404 with code ``unknown_detector`` (AC4),
+- every detector reports the ``policy_id`` it stamps on a receipt, which is not
+  its module name, so the console can link a rule to its detector's detail page
+  (AC5).
 
 The server is hosted in-process, in a daemon thread, the same way
 :mod:`tests.test_console_server` hosts it for the health-endpoint tests.
@@ -89,9 +92,26 @@ def test_every_detector_has_the_required_shape(tmp_path):
             assert factory["signature"].startswith("(")
         assert set(detector["verdicts"]) <= {"ALLOW", "BLOCK", "MODIFY", "ESCALATE"}
         assert detector["category"] in category_names
+        assert "policy_id" in detector
 
     shell_guard = next(d for d in payload["detectors"] if d["module"] == "shell_injection_guard")
     assert "shell_injection_guard" in [f["name"] for f in shell_guard["factories"]]
+
+
+def test_detector_reports_the_id_it_stamps_on_a_receipt(tmp_path):
+    """A receipt's ``policy_id`` is the id the deciding detector stamped, which is
+    not its module name (``tool_result_injection_guard`` stamps
+    ``tool_result_injection``). The catalog carries it so the console can link a
+    receipt's rule to that detector's detail page instead of the policy list."""
+    with _serve(tmp_path) as server:
+        response, body = _request(server, "/api/detectors")
+
+    assert response.status == 200
+    by_module = {d["module"]: d for d in json.loads(body)["detectors"]}
+    assert by_module["tool_result_injection_guard"]["policy_id"] == "tool_result_injection"
+    assert by_module["shell_injection_guard"]["policy_id"] == "shell_injection"
+    # A module that stamps no id of its own reports null, not a missing key.
+    assert by_module["data_egress"]["policy_id"] is None
 
 
 def test_categories_match_the_docs_page_headings_and_partition_modules(tmp_path):

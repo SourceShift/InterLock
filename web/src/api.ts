@@ -394,6 +394,10 @@ export interface Detector {
   verdicts: string[];
   scope: string;
   configurable: boolean;
+  // The id this detector stamps on a decision it makes; it is what a receipt's
+  // `policy_id` carries, and it differs from `module` (tool_result_injection_guard
+  // stamps "tool_result_injection"). null when the module stamps no id.
+  policy_id: string | null;
 }
 
 export interface DetectorDetail extends Detector {

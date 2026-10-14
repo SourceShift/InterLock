@@ -30,6 +30,24 @@ import {
 import { renderExtras } from "./extras";
 import type { Data, State } from "./model";
 
+/**
+ * Where a rule value in a receipt or review should link.
+ *
+ * A receipt's `policy_id` is the id the deciding rule reported, which is not the
+ * policy screen's rule id: the coding-agent rules are detector rules that stamp
+ * their own `POLICY_ID` (`tool_result_injection`), while the policy screen lists
+ * the rule id (`result-injection`). The detector catalog carries the stamped id,
+ * so resolve it to the module and link to that detector's detail page. An id the
+ * catalog does not know - a plain intent rule like `force-push`, whose id the
+ * policy screen does list - keeps the old `#/policy` target instead of a link to
+ * nowhere.
+ */
+export function ruleDetailHref(D: Data, policyId: string | null | undefined): string {
+  if (!policyId) return "";
+  const detector = (D.catalog?.detectors ?? []).find((d) => d.policy_id === policyId);
+  return detector ? "#/catalog/" + detector.module : "#/policy";
+}
+
 export interface Actions {
   set(patch: Partial<State>): void;
   rootRef(el: HTMLDivElement | null): void;
@@ -530,11 +548,15 @@ function reviewVals(S: State, D: Data, A: Actions, c: { locked: boolean; wide: b
     const mine = R.approvers.includes(c.me);
     const preview = R.preview ? prettyPreview(R.preview) : "(no preview stored)";
     const pendingHours = Math.round((ms(R.pending_until) - ms(R.created)) / 3600e3);
+    // The rule links to its detector's detail page when one exists. `plain` has
+    // to track `href`: the renderer shows the link OR the plain text, never both,
+    // so a `plain: false` with an empty href would draw nothing at all.
+    const ruleLink = ruleDetailHref(D, R.policy_id);
     rv = {
       has: true, id: R.id, action: R.action, phase: R.phase, reason: R.reason ?? "", rule: R.policy_id ?? "",
       st: stMeta[R.status], preview, previewLen: num((R.preview ?? "").length) + " of 4,000 chars", digest: R.args_digest ?? "",
       meta: [
-        { k: "rule", v: R.policy_id ?? "—", href: "#/policy", plain: false, c: "var(--il-fg)" },
+        { k: "rule", v: R.policy_id ?? "—", href: ruleLink, plain: !ruleLink, c: "var(--il-fg)" },
         { k: "principal", v: R.principal ?? "—", href: "", plain: true, c: "var(--il-fg)" },
         { k: "requester", v: (R.requester ?? "—") + (R.requester === c.me ? " (you)" : ""), href: "", plain: true, c: "var(--il-fg)" },
         { k: "filed", v: ago(now - ms(R.created)), href: "", plain: true, c: "var(--il-fg)" },
@@ -690,7 +712,7 @@ function auditVals(S: State, D: Data, A: Actions, c: { wide: boolean; receiptsMi
     });
     const fields = [
       F("time", fmtDT(ms(sr.ts))), F("phase", sr.phase, { mono: true }),
-      F("rule", sr.policy_id, { mono: true, href: sr.policy_id ? "#/policy" : "" }), F("blamed arg", sr.attributed_to, { mono: true }),
+      F("rule", sr.policy_id, { mono: true, href: ruleDetailHref(D, sr.policy_id) }), F("blamed arg", sr.attributed_to, { mono: true }),
       F("principal", sr.principal, { mono: true }),
       F("session", sr.span_id, { mono: true, href: sr.span_id ? "#/audit?q=" + encodeURIComponent(sr.span_id) : "" }),
       F("call_id", sr.call_id, { mono: true }),

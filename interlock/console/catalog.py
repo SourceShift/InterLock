@@ -15,7 +15,7 @@ import inspect
 import pkgutil
 import re
 from functools import lru_cache
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .. import detectors as detectors_pkg
 from .server import HEALTH_CONTRIBUTORS, PREFIX_ROUTES, ROUTES
@@ -331,7 +331,19 @@ def _build_detector(name: str, category: str) -> Dict[str, Any]:
         "verdicts": verdicts(source),
         "scope": scope(name, module, source),
         "configurable": configurable(module),
+        # The id the detector stamps on a decision it makes. This - not the
+        # module name - is what a receipt's ``policy_id`` carries, so it is how
+        # the console resolves a receipt's rule back to this module's detail
+        # page: ``tool_result_injection_guard`` stamps ``tool_result_injection``.
+        # None for a module that stamps no id of its own (a rule's id stands).
+        "policy_id": _policy_id(module),
     }
+
+
+def _policy_id(module: Any) -> Optional[str]:
+    """``module``'s own ``POLICY_ID``, when it is a non-empty string."""
+    value = getattr(module, "POLICY_ID", None)
+    return value if isinstance(value, str) and value else None
 
 
 @lru_cache(maxsize=1)
