@@ -557,3 +557,33 @@ def test_concurrent_writes_leave_one_unbroken_chain():
     # No fork: every receipt closed over a distinct predecessor state, so no
     # two receipts share a mac (identical content would mean a lost update).
     assert len({r.mac for r in sink.receipts}) == 160
+
+
+def test_fields_is_a_shallow_copy_with_the_canonical_shape_of_asdict():
+    """fields() stopped deep-copying through dataclasses.asdict (two thirds of
+    signing and verifying). The canonical shape, and so every MAC, must not move."""
+    import dataclasses as _dc
+
+    def reference(r, include_mac=True):
+        body = _dc.asdict(r)
+        if not body["observed"]:
+            del body["observed"]
+        for name in ("call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
+                     "enforcer", "elapsed_us", "masked", "tokens", "scope_document"):
+            if body[name] is None:
+                del body[name]
+        if not include_mac:
+            del body["mac"]
+        return body
+
+    cases = [
+        Receipt(ts=1.5, action="a", verdict="ALLOW"),
+        Receipt(ts=2.0, action="b", verdict="MODIFY", reason="r", policy_id="p", observed=True,
+                masked={"CREDIT_CARD": 2, "EMAIL": 1}, tokens=12, elapsed_us=7, call_id="c1"),
+    ]
+    for r in cases:
+        for include_mac in (True, False):
+            assert r.fields(include_mac=include_mac) == reference(r, include_mac)
+    body = cases[1].fields()
+    body["masked"]["CREDIT_CARD"] = 99
+    assert cases[1].masked == {"CREDIT_CARD": 2, "EMAIL": 1}

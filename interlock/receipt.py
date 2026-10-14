@@ -205,8 +205,16 @@ class Receipt:
     scope_document: Optional[str] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
-        """The receipt as a dict, in its canonical (serialized) shape."""
-        body = dataclasses.asdict(self)
+        """The receipt as a dict, in its canonical (serialized) shape.
+
+        A shallow copy, not :func:`dataclasses.asdict`: every field is a scalar
+        except ``masked``, a flat ``{str: int}`` dict, and asdict's recursive
+        deep copy was two thirds of the cost of signing or verifying a receipt.
+        The serialized bytes, and so every MAC, are unchanged.
+        """
+        body = {name: getattr(self, name) for name in _FIELD_NAMES}
+        if isinstance(body["masked"], dict):
+            body["masked"] = dict(body["masked"])
         if not body["observed"]:
             del body["observed"]
         for name in _OPTIONAL_FIELDS:
@@ -224,6 +232,9 @@ class Receipt:
     def from_json(cls, line: str) -> "Receipt":
         return cls(**json.loads(line))
 
+
+#: Receipt's fields in declaration order, computed once for :meth:`Receipt.fields`.
+_FIELD_NAMES = tuple(f.name for f in dataclasses.fields(Receipt))
 
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
