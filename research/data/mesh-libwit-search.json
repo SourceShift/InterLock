@@ -1,0 +1,4402 @@
+{
+ "generated": "2026-10-24",
+ "source": "arxiv.libwit.ai /api/search/batch (semantic + hybrid) and /api/paper/{id}/search; see research/mesh-shared-policy-network.md \u00a72",
+ "batches": [
+  {
+   "name": "semantic-1",
+   "queries": [
+    {
+     "query": "collaborative intrusion detection sharing alerts across organizations",
+     "results": [
+      {
+       "arxiv_id": "2509.17341",
+       "title": "Trajectory Encryption Cooperative Salvo Guidance",
+       "score": 0.63,
+       "published": "2025-09-22",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2503.00659",
+       "title": "CATS: A framework for Cooperative Autonomy Trust & Security",
+       "score": 0.616,
+       "published": "2025-03-01",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2602.22244",
+       "title": "Accelerating Incident Response: A Hybrid Approach for Data Breach Reporting",
+       "score": 0.613,
+       "published": "2026-02-24",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2508.09060",
+       "title": "Developing a Transferable Federated Network Intrusion Detection System",
+       "score": 0.612,
+       "published": "2025-08-12",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2609.06140",
+       "title": "Counter-Swarm Doctrine: Containing Coordinated Agent Intrusions",
+       "score": 0.61,
+       "published": "2026-09-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2604.23179",
+       "title": "Cooperative Informative Sensing for Monitoring Dynamic Indoor Environments via Multi-Agent Reinforcement Learning",
+       "score": 0.607,
+       "published": "2026-04-25",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.08763",
+       "title": "When LLMs Team Up: A Coordinated Attack Framework for Automated Cyber Intrusions",
+       "score": 0.607,
+       "published": "2026-05-09",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.19146",
+       "title": "Sarus: Privacy-Preserving Multi-Vendor Perception Fusion via Homomorphic Encryption",
+       "score": 0.606,
+       "published": "2026-07-21",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "privacy-preserving cyber threat intelligence sharing between companies",
+     "results": [
+      {
+       "arxiv_id": "2509.05608",
+       "title": "BinaryShield: Cross-Service Threat Intelligence in LLM Services using Privacy-Preserving Fingerprints",
+       "score": 0.646,
+       "published": "2025-09-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2504.01606",
+       "title": "Vers une mod\u00e9lisation de la confiance dans le renseignement sur les menaces cyber",
+       "score": 0.641,
+       "published": "2025-04-02",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2505.23825",
+       "title": "Privacy-Preserving Inconsistency Measurement",
+       "score": 0.624,
+       "published": "2025-05-28",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2603.13570",
+       "title": "Privacy-Preserving Machine Learning for IoT: A Cross-Paradigm Survey and Future Roadmap",
+       "score": 0.623,
+       "published": "2026-03-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.11592",
+       "title": "Defense Against Prompt Inversion Attacks: An Information-Theoretic Approach for LLM Collaborative Inference",
+       "score": 0.619,
+       "published": "2026-06-10",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.34411",
+       "title": "Coherence Rather Than Error Rate Governs Privacy in Multi-Tenant Quantum Computing",
+       "score": 0.619,
+       "published": "2026-09-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.25072",
+       "title": "Optimizing Privacy-Preserving Primitives to Support LLM-Scale Applications",
+       "score": 0.619,
+       "published": "2025-09-29",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2503.09381",
+       "title": "Faithful and Privacy-Preserving Implementation of Average Consensus",
+       "score": 0.618,
+       "published": "2025-03-12",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "federated learning for anomaly or intrusion detection across organizations",
+     "results": [
+      {
+       "arxiv_id": "2502.05041",
+       "title": "Federated Learning for Anomaly Detection in Energy Consumption Data: Assessing the Vulnerability to Adversarial Attacks",
+       "score": 0.716,
+       "published": "2025-02-07",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2509.21389",
+       "title": "Towards Adapting Federated & Quantum Machine Learning for Network Intrusion Detection: A Survey",
+       "score": 0.704,
+       "published": "2025-09-24",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2604.06101",
+       "title": "Towards Securing IIoT: An Innovative Privacy-Preserving Anomaly Detector Based on Federated Learning",
+       "score": 0.696,
+       "published": "2026-04-07",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2506.19246",
+       "title": "Behavioral Anomaly Detection in Distributed Systems via Federated Contrastive Learning",
+       "score": 0.696,
+       "published": "2025-06-24",
+       "citation_count": 11
+      },
+      {
+       "arxiv_id": "2505.23706",
+       "title": "Distributed Federated Learning for Vehicular Network Security: Anomaly Detection Benefits and Multi-Domain Attack Threats",
+       "score": 0.694,
+       "published": "2025-05-29",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2509.15555",
+       "title": "Hybrid Deep Learning-Federated Learning Powered Intrusion Detection System for IoT/5G Advanced Edge Computing Network",
+       "score": 0.692,
+       "published": "2025-09-19",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2603.21596",
+       "title": "In-network Attack Detection with Federated Deep Learning in IoT Networks: Real Implementation and Analysis",
+       "score": 0.687,
+       "published": "2026-03-23",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.18126",
+       "title": "Anomaly Detection in Electric Vehicle Charging Stations Using Federated Learning",
+       "score": 0.683,
+       "published": "2025-09-11",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "poisoning attacks on collaborative threat intelligence sharing and defenses",
+     "results": [
+      {
+       "arxiv_id": "2609.21573",
+       "title": "Micro-Collaborative Poisoning: A Distributed Attack on RAG Systems",
+       "score": 0.701,
+       "published": "2026-09-18",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2502.03801",
+       "title": "SoK: Benchmarking Poisoning Attacks and Defenses in Federated Learning",
+       "score": 0.667,
+       "published": "2025-02-06",
+       "citation_count": 6
+      },
+      {
+       "arxiv_id": "2502.19145",
+       "title": "Multi-Agent Security Tax: Trading Off Security and Collaboration Capabilities in Multi-Agent Systems",
+       "score": 0.65,
+       "published": "2025-02-26",
+       "citation_count": 22
+      },
+      {
+       "arxiv_id": "2505.01181",
+       "title": "Explainable AI Based Diagnosis of Poisoning Attacks in Evolutionary Swarms",
+       "score": 0.65,
+       "published": "2025-05-02",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2505.20621",
+       "title": "Multi-level Certified Defense Against Poisoning Attacks in Offline Reinforcement Learning",
+       "score": 0.648,
+       "published": "2025-05-27",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2604.09489",
+       "title": "XFED: Non-Collusive Model Poisoning Attack Against Byzantine-Robust Federated Classifiers",
+       "score": 0.64,
+       "published": "2026-04-10",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.14861",
+       "title": "STAR-FL: Secure Federated Learning with Spatial-Temporal Analysis and Robust Aggregation",
+       "score": 0.636,
+       "published": "2026-08-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2505.09983",
+       "title": "Sybil-based Virtual Data Poisoning Attacks in Federated Learning",
+       "score": 0.636,
+       "published": "2025-05-15",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "crowdsourced blocklist reputation of reporters Sybil resistance",
+     "results": [
+      {
+       "arxiv_id": "2510.27554",
+       "title": "Sybil-Resistant Service Discovery for Agent Economies",
+       "score": 0.503,
+       "published": "2025-10-31",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2609.01873",
+       "title": "Epistemic Sybil Resistance: Multiplying AI Agents Without Multiplying Evidence",
+       "score": 0.487,
+       "published": "2026-09-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.16997",
+       "title": "Can LLMs Follow the Pulse of a Crisis? Evaluating Crisis Sentiment in Bangladesh's July Uprising",
+       "score": 0.482,
+       "published": "2026-09-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.09510",
+       "title": "Build it, Break it, Repeat: Benchmarking and improving LLM-manipulated disinformation detection in social media posts",
+       "score": 0.475,
+       "published": "2026-08-10",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.11443",
+       "title": "A Transformer-Based Cross-Platform Analysis of Public Discourse on the 15-Minute City Paradigm",
+       "score": 0.474,
+       "published": "2025-09-14",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2607.27350",
+       "title": "Modeling Decisions in Blockchain Analytics: A Leakage-Aware Evaluation of Tree-Based vs. Sequential Models",
+       "score": 0.472,
+       "published": "2026-07-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.11120",
+       "title": "The Laziness of the Crowd: Effort Aversion Among Raters Risks Undermining the Efficacy of X's Community Notes Program",
+       "score": 0.47,
+       "published": "2026-03-11",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.13053",
+       "title": "A Standardized Re-evaluation of Conversational Recommender Systems on the ReDial Dataset",
+       "score": 0.47,
+       "published": "2026-05-13",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "secure software update framework compromise-resilient signing key hierarchy",
+     "results": [
+      {
+       "arxiv_id": "2504.12062",
+       "title": "A Scalable Framework for Post-Quantum Authentication in Public Key Infrastructures",
+       "score": 0.619,
+       "published": "2025-04-16",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2601.23132",
+       "title": "Secure Tool Manifest and Digital Signing Solution for Verifiable MCP and LLM Pipelines",
+       "score": 0.613,
+       "published": "2026-01-30",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2603.02451",
+       "title": "Composable Attestation: A Generalized Framework for Continuous and Incremental Trust in AI-Driven Distributed Systems",
+       "score": 0.609,
+       "published": "2026-03-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.26207",
+       "title": "Signature Knowledge Shielding: Protecting Antivirus Detection Knowledge through Robust Embedding Matching",
+       "score": 0.595,
+       "published": "2026-10-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.16467",
+       "title": "A Formal Resilience Framework for Cyber-Physical Embodied Systems under Device-Level Cyberattacks",
+       "score": 0.593,
+       "published": "2026-06-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.01263",
+       "title": "Autonomous OSS Threat Detection via Taxonomy-Aligned LLMs",
+       "score": 0.591,
+       "published": "2026-10-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.06087",
+       "title": "Safety Certification is Classification",
+       "score": 0.586,
+       "published": "2026-05-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.26174",
+       "title": "The \"4W+1H\" of Software Supply Chain Security Checklist for Critical Infrastructure",
+       "score": 0.585,
+       "published": "2025-10-30",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "transparency log append-only verifiable log for distributing policies or binaries",
+     "results": [
+      {
+       "arxiv_id": "2608.28542",
+       "title": "Offline-Verifiable Accountability for Cross-Organization Agent Messaging: A Preserved Evidence-Bundle Approach",
+       "score": 0.594,
+       "published": "2026-08-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2503.03974",
+       "title": "Cryptographic Verifiability for Voter Registration Systems",
+       "score": 0.588,
+       "published": "2025-03-05",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2607.24174",
+       "title": "Just Testing, Move Along: Evasion of LLM-based System Log Interpretation by Prompt Injection",
+       "score": 0.568,
+       "published": "2026-07-27",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.10597",
+       "title": "Certified Corruption Budgets: Anytime-Valid Leaderboard Claims under Adaptive Rigging",
+       "score": 0.564,
+       "published": "2026-10-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.17560",
+       "title": "Pay Only for Disagreement: Certified No-Regression Verdicts for Model Updates with Matching Label-Complexity Bounds",
+       "score": 0.562,
+       "published": "2026-07-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.31130",
+       "title": "Post-Audit Mirage: Identifiability Limits of Offline Agent Verification",
+       "score": 0.562,
+       "published": "2026-10-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.30738",
+       "title": "AgentTriage: Replayable Security Diagnosis Across Heterogeneous Agent Runtimes",
+       "score": 0.56,
+       "published": "2026-10-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2512.03816",
+       "title": "Log Probability Tracking of LLM APIs",
+       "score": 0.559,
+       "published": "2025-12-03",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "gossip protocol epidemic dissemination of security rules in peer-to-peer networks",
+     "results": [
+      {
+       "arxiv_id": "2610.22674",
+       "title": "Gossip Agents: Reputation through Opinion Dynamics over Evolving Networks",
+       "score": 0.653,
+       "published": "2026-10-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.01531",
+       "title": "Revisiting Gossip Protocols: A Vision for Emergent Coordination in Agentic Multi-Agent Systems",
+       "score": 0.642,
+       "published": "2025-08-03",
+       "citation_count": 5
+      },
+      {
+       "arxiv_id": "2512.03285",
+       "title": "A Gossip-Enhanced Communication Substrate for Agentic AI: Toward Decentralized Coordination in Large-Scale Multi-Agent Systems",
+       "score": 0.63,
+       "published": "2025-12-02",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2602.19116",
+       "title": "Event-Triggered Gossip for Distributed Learning",
+       "score": 0.627,
+       "published": "2026-02-22",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2512.17913",
+       "title": "Byzantine Fault-Tolerant Multi-Agent System for Healthcare: A Gossip Protocol Approach to Secure Medical Message Propagation",
+       "score": 0.602,
+       "published": "2025-11-27",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2511.20248",
+       "title": "Realistic gossip in Trust Game on networks: the GODS model",
+       "score": 0.599,
+       "published": "2025-11-25",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2508.18292",
+       "title": "Consensus Is All You Need: Gossip-Based Reasoning Among Large Language Models",
+       "score": 0.597,
+       "published": "2025-08-22",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2502.01450",
+       "title": "Simulating Rumor Spreading in Social Networks using LLM Agents",
+       "score": 0.594,
+       "published": "2025-02-03",
+       "citation_count": 15
+      }
+     ]
+    },
+    {
+     "query": "decentralized peer-to-peer distribution of security signatures and blocklists",
+     "results": [
+      {
+       "arxiv_id": "2502.03247",
+       "title": "Thetacrypt: A Distributed Service for Threshold Cryptography",
+       "score": 0.623,
+       "published": "2025-02-05",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2601.00418",
+       "title": "Secure, Verifiable, and Scalable Multi-Client Data Sharing via Consensus-Based Privacy-Preserving Data Distribution",
+       "score": 0.615,
+       "published": "2026-01-01",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2508.10185",
+       "title": "An Architecture for Distributed Digital Identities in the Physical World",
+       "score": 0.594,
+       "published": "2025-08-13",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2604.15641",
+       "title": "Half-Moon Cookie: Private, Similarity-Based Blocklisting with TOCTOU-Attack Resilience",
+       "score": 0.593,
+       "published": "2026-04-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.29826",
+       "title": "Rethinking Collaborative Trust for Verifiably Decentralized Blockchain Systems",
+       "score": 0.591,
+       "published": "2026-06-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.22239",
+       "title": "An Architecture for Decentralised Deployment and Operation of Blockchain Applications",
+       "score": 0.59,
+       "published": "2026-05-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2504.12062",
+       "title": "A Scalable Framework for Post-Quantum Authentication in Public Key Infrastructures",
+       "score": 0.587,
+       "published": "2025-04-16",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2601.20716",
+       "title": "Decentralized Identity in Practice: Benchmarking Latency, Cost, and Privacy",
+       "score": 0.587,
+       "published": "2026-01-28",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "policy as code versioning governance and distribution of security policies at scale",
+     "results": [
+      {
+       "arxiv_id": "2601.05555",
+       "title": "An Empirical Study of Policy-as-Code Adoption in Open-Source Software Projects",
+       "score": 0.636,
+       "published": "2026-01-09",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2511.08484",
+       "title": "Patching LLM Like Software: A Lightweight Method for Improving Safety Policy in Large Language Models",
+       "score": 0.624,
+       "published": "2025-11-11",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2510.18897",
+       "title": "AI for Distributed Systems Design: Scalable Cloud Optimization Through Repeated LLMs Sampling And Simulators",
+       "score": 0.608,
+       "published": "2025-10-20",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2507.10584",
+       "title": "ARPaCCino: An Agentic-RAG for Policy as Code Compliance",
+       "score": 0.607,
+       "published": "2025-07-11",
+       "citation_count": 6
+      },
+      {
+       "arxiv_id": "2507.22223",
+       "title": "Secure coding for web applications: Frameworks, challenges, and the role of LLMs",
+       "score": 0.601,
+       "published": "2025-07-29",
+       "citation_count": 5
+      },
+      {
+       "arxiv_id": "2609.27087",
+       "title": "Policy-as-Skill: Governed LLM Decision Support with Evidence, Deterministic Control, and Audit",
+       "score": 0.6,
+       "published": "2026-09-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.18765",
+       "title": "Governance-as-a-Service: A Multi-Agent Framework for AI System Compliance and Policy Enforcement",
+       "score": 0.598,
+       "published": "2025-08-26",
+       "citation_count": 11
+      },
+      {
+       "arxiv_id": "2609.08810",
+       "title": "Measuring the Security of the Evolving Software Supply Chain: a Research Agenda",
+       "score": 0.597,
+       "published": "2026-09-08",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "sharing prompt injection attack signatures across deployments collective defense for LLM agents",
+     "results": [
+      {
+       "arxiv_id": "2509.14285",
+       "title": "A Multi-Agent LLM Defense Pipeline Against Prompt Injection Attacks",
+       "score": 0.678,
+       "published": "2025-09-16",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2609.16098",
+       "title": "Universal Defenses for Tool-Integrated LLM Agents Against Adversarial Attacks",
+       "score": 0.67,
+       "published": "2026-09-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2504.07467",
+       "title": "Defense against Prompt Injection Attacks via Mixture of Encodings",
+       "score": 0.653,
+       "published": "2025-04-10",
+       "citation_count": 17
+      },
+      {
+       "arxiv_id": "2506.05739",
+       "title": "To Protect the LLM Agent Against the Prompt Injection Attack with Polymorphic Prompt",
+       "score": 0.651,
+       "published": "2025-06-06",
+       "citation_count": 13
+      },
+      {
+       "arxiv_id": "2607.18826",
+       "title": "Cross-Agent Campaign Attribution: Linking Asynchronous Attacks Across LLM Agents",
+       "score": 0.647,
+       "published": "2026-07-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2501.18416",
+       "title": "Exploring Potential Prompt Injection Attacks in Federated Military LLMs and Their Mitigation",
+       "score": 0.646,
+       "published": "2025-01-30",
+       "citation_count": 6
+      },
+      {
+       "arxiv_id": "2610.06966",
+       "title": "APEX: Active Protection at Execution Boundaries for LLM Agents",
+       "score": 0.645,
+       "published": "2026-10-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2507.15613",
+       "title": "Multi-Stage Prompt Inference Attacks on Enterprise LLM Systems",
+       "score": 0.645,
+       "published": "2025-07-21",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "immune system inspired collective defense distributed guardrails for AI agents",
+     "results": [
+      {
+       "arxiv_id": "2610.28397",
+       "title": "MAS-Guard: Unified Guardrails from Individual Agents to Multi-Agent LLM Systems",
+       "score": 0.637,
+       "published": "2026-10-20",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.07918",
+       "title": "CausalArmor: Efficient Indirect Prompt Injection Guardrails via Causal Attribution",
+       "score": 0.636,
+       "published": "2026-02-08",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2511.08842",
+       "title": "3D Guard-Layer: An Integrated Agentic AI Safety System for Edge Artificial Intelligence",
+       "score": 0.635,
+       "published": "2025-11-11",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2512.16856",
+       "title": "Distributional AGI Safety",
+       "score": 0.632,
+       "published": "2025-12-18",
+       "citation_count": 5
+      },
+      {
+       "arxiv_id": "2610.03434",
+       "title": "Persona Guardrail: A Production-Grade Defense Framework for Agentic Systems",
+       "score": 0.623,
+       "published": "2026-10-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2502.01241",
+       "title": "Peering Behind the Shield: Guardrail Identification in Large Language Models",
+       "score": 0.622,
+       "published": "2025-02-03",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2604.15579",
+       "title": "Symbolic Guardrails for Domain-Specific Agents: Stronger Safety and Security Guarantees Without Sacrificing Utility",
+       "score": 0.622,
+       "published": "2026-04-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.14517",
+       "title": "From Shield to Target: Denial-of-Service Attacks on LLM-Based Agent Guardrails",
+       "score": 0.621,
+       "published": "2026-06-12",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "security incident reporting taxonomy and telemetry for LLM agent failures",
+     "results": [
+      {
+       "arxiv_id": "2608.14680",
+       "title": "When Agentic Executions Fail: Detecting and Localizing Runtime Faults from Telemetry",
+       "score": 0.654,
+       "published": "2026-08-04",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.14589",
+       "title": "When Errors Become Narratives: A Longitudinal Taxonomy of Silent Failures in a Production LLM Agent Runtime",
+       "score": 0.651,
+       "published": "2026-06-12",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.02464",
+       "title": "Real-Time Detection and Repair of LLM Agent Failures",
+       "score": 0.651,
+       "published": "2026-08-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.20563",
+       "title": "Beyond End-to-End Success: Diagnosing Failures in Long-Horizon Security LLM Agents",
+       "score": 0.646,
+       "published": "2026-08-20",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.06422",
+       "title": "Before You Hand Over the Wheel: Evaluating LLMs for Security Incident Analysis",
+       "score": 0.639,
+       "published": "2026-03-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.28915",
+       "title": "On the Effectiveness of Kernel-Level Evidence for Agent Security",
+       "score": 0.639,
+       "published": "2026-09-24",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.24271",
+       "title": "Observability and Fault Injection for LLM-Based Multi-Agent Systems in Software Engineering",
+       "score": 0.638,
+       "published": "2026-08-25",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.21423",
+       "title": "Agentic Security: A Systematization of Tools, Failure Modes, and Design Laws for LLM-Driven Penetration Testing",
+       "score": 0.636,
+       "published": "2026-08-16",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "shared corpus or database of agent attacks prompt injection red team findings",
+     "results": [
+      {
+       "arxiv_id": "2609.06140",
+       "title": "Counter-Swarm Doctrine: Containing Coordinated Agent Intrusions",
+       "score": 0.61,
+       "published": "2026-09-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.12524",
+       "title": "An Exploration of Attacks on AI Agent Systems",
+       "score": 0.599,
+       "published": "2026-10-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.15714",
+       "title": "How Vulnerable Are AI Agents to Indirect Prompt Injections? Insights from a Large-Scale Public Competition",
+       "score": 0.599,
+       "published": "2026-03-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.21573",
+       "title": "Micro-Collaborative Poisoning: A Distributed Attack on RAG Systems",
+       "score": 0.597,
+       "published": "2026-09-18",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.30207",
+       "title": "SIR: Self-improving Red-teaming for Compute Use Agents",
+       "score": 0.59,
+       "published": "2026-08-31",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.08951",
+       "title": "ASPIRE: Agentic Safety & Prompt Injection Red-teaming Engine",
+       "score": 0.589,
+       "published": "2026-10-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.14611",
+       "title": "Bad Memory: Evaluating Prompt Injection Risks from Memory in Agentic Systems",
+       "score": 0.588,
+       "published": "2026-07-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.25164",
+       "title": "PIDP-Attack: Combining Prompt Injection with Database Poisoning Attacks on Retrieval-Augmented Generation Systems",
+       "score": 0.583,
+       "published": "2026-03-26",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "automatically generating detection rules or signatures from observed attacks using LLMs",
+     "results": [
+      {
+       "arxiv_id": "2508.18684",
+       "title": "FALCON: Autonomous Cyber Threat Intelligence Mining with LLMs for IDS Rule Generation",
+       "score": 0.709,
+       "published": "2025-08-26",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2510.13257",
+       "title": "GRIDAI: Generating and Repairing Intrusion Detection Rules via Collaboration among Multiple LLM-based Agents",
+       "score": 0.705,
+       "published": "2025-10-15",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2509.16749",
+       "title": "Evaluating LLM Generated Detection Rules in Cybersecurity",
+       "score": 0.693,
+       "published": "2025-09-20",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2511.12224",
+       "title": "RulePilot: An LLM-Powered Agent for Security Rule Generation",
+       "score": 0.687,
+       "published": "2025-11-15",
+       "citation_count": 5
+      },
+      {
+       "arxiv_id": "2606.05844",
+       "title": "GenTI: Benchmarking LLMs for Autonomous IDPS Rule Generation for Unseen Attacks",
+       "score": 0.685,
+       "published": "2026-06-04",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.05252",
+       "title": "From Attack Simulation to SIEM Rule: Deterministic Detection-as-Code Synthesis with Probe-Level Traceability",
+       "score": 0.682,
+       "published": "2026-06-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.04186",
+       "title": "CAM-LDS: Cyber Attack Manifestations for Automatic Interpretation of System Logs and Security Alerts",
+       "score": 0.681,
+       "published": "2026-03-04",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.16508",
+       "title": "LLMs for Zero-Shot Threat Detection via Structured Risk Indicators",
+       "score": 0.677,
+       "published": "2026-08-17",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "false positive rate of guardrail rules measured on benign traffic regression gate",
+     "results": [
+      {
+       "arxiv_id": "2609.01519",
+       "title": "When Guardrails Look Effective: Construct Validity Failures in LLM Agent Commerce Evaluation",
+       "score": 0.597,
+       "published": "2026-09-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.29942",
+       "title": "Influence Is Not Authority: When Causal Guardrail Signals Make Legitimate Tool Use Look Like an Attack in Tool-Using LLM Agents",
+       "score": 0.597,
+       "published": "2026-08-30",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.13083",
+       "title": "Phantom Guardrails: When Self-Improving Agent Harnesses Fix Failures That Never Happened",
+       "score": 0.589,
+       "published": "2026-07-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.33671",
+       "title": "COGNIT-Guard: Calibrated Standalone Direct-Decision Guardrails with Heterogeneous CPU-NPU Confidence Cascading under Explicit Latency and False-Positive Constraints",
+       "score": 0.587,
+       "published": "2026-09-27",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.01046",
+       "title": "HiveTraceGuard-Pro: A Compact Generative Guardrail for Prompt Injection, Jailbreaks, and Adversarial Obfuscation",
+       "score": 0.583,
+       "published": "2026-09-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.17556",
+       "title": "Reflex-Guard: A Low-Latency Guardrail for LLM Prompt Safety Using Dense Semantic Embeddings",
+       "score": 0.579,
+       "published": "2026-08-18",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.19444",
+       "title": "When the Majority Votes Wrong, the Intervention Timing for Test-Time Reinforcement Learning Hides in the Extinction Window",
+       "score": 0.577,
+       "published": "2026-05-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.08641",
+       "title": "Whose Refusal Is It? The Unmeasured Contribution of Black-Box Multimodal Guardrails",
+       "score": 0.577,
+       "published": "2026-08-09",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "live runtime policy update hot reload of agent guardrails without restart",
+     "results": [
+      {
+       "arxiv_id": "2610.16280",
+       "title": "agent-risk: Risk Assessment for Changes to AI Agents",
+       "score": 0.58,
+       "published": "2026-10-12",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.12216",
+       "title": "Guardrailed Meta-Agent Loops: Stress-Testing Policy Pinning, Budget Bounds, and Crash Recovery",
+       "score": 0.562,
+       "published": "2026-09-10",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.23994",
+       "title": "Policy-as-Prompt: Turning AI Governance Rules into Guardrails for AI Agents",
+       "score": 0.562,
+       "published": "2025-09-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.03441",
+       "title": "No Time Like the Present: Agentic Test-Time Training for LLM Agents",
+       "score": 0.561,
+       "published": "2026-07-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.20488",
+       "title": "Autonomous Topology Mutation: Safe Runtime Restructuring for Multi-Agent LLM Systems with Capability, State, and Shadow Invariants",
+       "score": 0.56,
+       "published": "2026-06-04",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2512.23738",
+       "title": "Enforcing Temporal Constraints for LLM Agents",
+       "score": 0.557,
+       "published": "2025-12-25",
+       "citation_count": 9
+      },
+      {
+       "arxiv_id": "2608.05695",
+       "title": "DreamGuard: Efficient Runtime Guardrail for LLM Agents via Risk-Aware World Model",
+       "score": 0.556,
+       "published": "2026-08-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.28914",
+       "title": "AIRGuard: Guarding Agent Actions with Runtime Authority Control",
+       "score": 0.553,
+       "published": "2026-05-27",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "differential privacy for aggregating security telemetry across organizations",
+     "results": [
+      {
+       "arxiv_id": "2609.15885",
+       "title": "Privacy-enhanced federated learning via asynchronous aggregation and local differential perturbation",
+       "score": 0.646,
+       "published": "2026-09-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2507.22849",
+       "title": "Decentralized Differentially Private Power Method",
+       "score": 0.631,
+       "published": "2025-07-30",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2506.08347",
+       "title": "Differentially Private Relational Learning with Entity-level Privacy Guarantees",
+       "score": 0.626,
+       "published": "2025-06-10",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2508.07505",
+       "title": "Enhancing Privacy in Decentralized Min-Max Optimization: A Differentially Private Approach",
+       "score": 0.625,
+       "published": "2025-08-10",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2604.14495",
+       "title": "Decoupling Identity from Utility: Privacy-by-Design Frameworks for Financial Ecosystems",
+       "score": 0.625,
+       "published": "2026-04-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2506.00660",
+       "title": "Differential privacy for medical deep learning: methods, tradeoffs, and deployment implications",
+       "score": 0.624,
+       "published": "2025-05-31",
+       "citation_count": 11
+      },
+      {
+       "arxiv_id": "2604.00942",
+       "title": "Differentially Private Manifold Denoising",
+       "score": 0.621,
+       "published": "2026-04-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.28934",
+       "title": "Revisiting the Provable-Auditable Privacy Gap of DP-SGD",
+       "score": 0.62,
+       "published": "2026-08-28",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "secure aggregation multi-party computation for threat statistics",
+     "results": [
+      {
+       "arxiv_id": "2509.10793",
+       "title": "ORQ: Complex Analytics on Private Data with Strong Security Guarantees",
+       "score": 0.65,
+       "published": "2025-09-13",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2601.09916",
+       "title": "Learning-Augmented Perfectly Secure Collaborative Matrix Multiplication",
+       "score": 0.626,
+       "published": "2026-01-14",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2507.05228",
+       "title": "Cascade: Token-Sharded Private LLM Inference",
+       "score": 0.624,
+       "published": "2025-07-07",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2605.04858",
+       "title": "A Pragmatic Comparison of Cryptographic Computation Technologies for Machine Learning",
+       "score": 0.612,
+       "published": "2026-05-06",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2506.00518",
+       "title": "Robust and Verifiable MPC with Applications to Linear Machine Learning Inference",
+       "score": 0.605,
+       "published": "2025-05-31",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2602.05612",
+       "title": "ADCA: Attention-Driven Multi-Party Collusion Attack in Federated Self-Supervised Learning",
+       "score": 0.597,
+       "published": "2026-02-05",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2605.19847",
+       "title": "Auditing Privacy in Multi-Tenant RAG under Account Collusion",
+       "score": 0.594,
+       "published": "2026-05-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.27293",
+       "title": "Vulnerability Analysis for Safe Multi-Agent Reinforcement",
+       "score": 0.591,
+       "published": "2026-10-19",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "private set intersection for matching indicators of compromise",
+     "results": [
+      {
+       "arxiv_id": "2604.19219",
+       "title": "Sherpa.ai Privacy-Preserving Multi-Party Entity Alignment without Intersection Disclosure for Noisy Identifiers",
+       "score": 0.604,
+       "published": "2026-04-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.01291",
+       "title": "Toward a Holistic Multi-Criteria Trajectory Evaluation Framework for Autonomous Driving in Mixed Traffic Environment",
+       "score": 0.598,
+       "published": "2025-09-01",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2601.18145",
+       "title": "Exact Minimum-Volume Confidence Set Intersection for Multinomial Outcomes",
+       "score": 0.59,
+       "published": "2026-01-26",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2604.09351",
+       "title": "Decentralized Opinion-Integrated Decision making at Unsignalized Intersections via Signed Networks",
+       "score": 0.587,
+       "published": "2026-04-10",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.09164",
+       "title": "CIDER: A Dataset of Contextual Disclosure Boundaries for Privacy Preference Alignment",
+       "score": 0.583,
+       "published": "2026-08-10",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2506.01072",
+       "title": "IDCloak: A Practical Secure Multi-party Dataset Join Framework for Vertical Privacy-preserving Machine Learning",
+       "score": 0.583,
+       "published": "2025-06-01",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2512.23816",
+       "title": "Improved Bounds for Private and Robust Alignment",
+       "score": 0.576,
+       "published": "2025-12-29",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2607.21417",
+       "title": "Towards Privacy-Preserving Federated Prompt Tuning under Data Heterogeneity: A Subspace-Decomposed Expert Approach",
+       "score": 0.572,
+       "published": "2026-07-23",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "privacy-preserving record linkage with Bloom filters hashed indicators",
+     "results": [
+      {
+       "arxiv_id": "2609.02947",
+       "title": "Privacy-Preserving Heterogeneous Multi-LLM Federated Inference for Cognitive Diagnosis",
+       "score": 0.582,
+       "published": "2026-09-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "medrxiv:10.64898/2026.01.15.26344228",
+       "title": "Hide and Seek: Privacy-Preserving Artificial Intelligence with a Feasibility Study in Rare Disease Diagnosis",
+       "score": 0.581,
+       "published": "2026-01-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2507.17199",
+       "title": "Threshold-Protected Searchable Sharing: Privacy Preserving Aggregated-ANN Search for Collaborative RAG",
+       "score": 0.581,
+       "published": "2025-07-23",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2607.16648",
+       "title": "Synchronization-Free Algebraic Fingerprints for Large Language Models: From Autoregressive to Diffusion Models",
+       "score": 0.564,
+       "published": "2026-07-18",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.20796",
+       "title": "Privacy-Preserving Text Inference for Health-Misinformation Classification and Semantic Retrieval",
+       "score": 0.564,
+       "published": "2026-10-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.15460",
+       "title": "Differentially Private Motif-Preserving Multi-modal Hashing",
+       "score": 0.562,
+       "published": "2026-05-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.07044",
+       "title": "Balancing Privacy and Efficiency: Music Information Retrieval via Additive Homomorphic Encryption",
+       "score": 0.56,
+       "published": "2025-08-09",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2505.08849",
+       "title": "Improved Algorithms for Differentially Private Language Model Alignment",
+       "score": 0.559,
+       "published": "2025-05-13",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "reputation and incentive systems for contributors in open collaborative security repositories",
+     "results": [
+      {
+       "arxiv_id": "2604.08643",
+       "title": "Creator Incentives in Recommender Systems: A Cooperative Game-Theoretic Approach for Stable and Fair Collaboration in Multi-Agent Bandits",
+       "score": 0.635,
+       "published": "2026-04-09",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.25055",
+       "title": "Building Digital Societies as Ecosystems: How Recognition and Repeat Relationships Sustain Cross-Community Work in Open Source",
+       "score": 0.592,
+       "published": "2026-05-24",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.20016",
+       "title": "Emergence of cooperation: A reputation-modulated reinforcement learning",
+       "score": 0.591,
+       "published": "2026-08-20",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2502.01971",
+       "title": "Bottom-Up Reputation Promotes Cooperation with Multi-Agent Reinforcement Learning",
+       "score": 0.591,
+       "published": "2025-02-04",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2507.21583",
+       "title": "Ethical Classification of Non-Coding Contributions in Open-Source Projects via Large Language Models",
+       "score": 0.589,
+       "published": "2025-07-29",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2601.11583",
+       "title": "Bit-politeia: An AI Agent Community in Blockchain",
+       "score": 0.587,
+       "published": "2026-01-01",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2505.21684",
+       "title": "Incentivizing Permissionless Distributed Learning of LLMs",
+       "score": 0.584,
+       "published": "2025-05-27",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2609.11983",
+       "title": "Who Pays for Open Review? Visible Author Reputation and Its Effect on Ratings",
+       "score": 0.58,
+       "published": "2026-09-07",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "verifiable provenance attestation of contributed security data",
+     "results": [
+      {
+       "arxiv_id": "2603.02451",
+       "title": "Composable Attestation: A Generalized Framework for Continuous and Incremental Trust in AI-Driven Distributed Systems",
+       "score": 0.612,
+       "published": "2026-03-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.00801",
+       "title": "Hardware-rooted attestation for AI-agent evidence: composing IETF RATS with action evidence packages",
+       "score": 0.594,
+       "published": "2026-08-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.21340",
+       "title": "Conformal Privacy Auditing: Calibrated Re-identification Attacks with Statistical Guarantees",
+       "score": 0.594,
+       "published": "2026-09-18",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.28988",
+       "title": "Attesting LLM Pipelines: Enforcing Verifiable Training and Release Claims",
+       "score": 0.592,
+       "published": "2026-03-30",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.16830",
+       "title": "Verifiable Fine-Tuning for LLMs: Zero-Knowledge Training Proofs Bound to Data Provenance and Policy",
+       "score": 0.584,
+       "published": "2025-10-19",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "medrxiv:10.64898/2026.04.07.26350316",
+       "title": "Validated Synthetic Data Generation from a Multicenter Spine Surgery Registry: Methodology and Benchmark",
+       "score": 0.582,
+       "published": "2026-04-11",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.22560",
+       "title": "Evidence-Bound Gateway-Path Provenance for Third-Party LLM Inference",
+       "score": 0.581,
+       "published": "2026-06-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.03534",
+       "title": "A Challenge-Nonce Freshness Gap in Project Veraison's TPM Reference Schemes, Found by Appraising Application-Layer Action Evidence End-to-End",
+       "score": 0.574,
+       "published": "2026-08-04",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Byzantine-robust aggregation against poisoned contributions in federated settings",
+     "results": [
+      {
+       "arxiv_id": "2503.20884",
+       "title": "Byzantine-Robust Federated Learning Using Generative Adversarial Networks",
+       "score": 0.664,
+       "published": "2025-03-26",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2502.08123",
+       "title": "Provably Robust Federated Reinforcement Learning",
+       "score": 0.653,
+       "published": "2025-02-12",
+       "citation_count": 14
+      },
+      {
+       "arxiv_id": "2511.03529v1",
+       "title": "Byzantine-Robust Federated Learning with Learnable Aggregation Weights",
+       "score": 0.647,
+       "published": "2025-11-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.08658",
+       "title": "Byzantine-Resilient Decentralized Online Resource Allocation",
+       "score": 0.635,
+       "published": "2025-08-12",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2511.02657",
+       "title": "Nesterov-Accelerated Robust Federated Learning Over Byzantine Adversaries",
+       "score": 0.625,
+       "published": "2025-11-04",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2501.03301",
+       "title": "Rethinking Byzantine Robustness in Federated Recommendation from Sparse Aggregation Perspective",
+       "score": 0.622,
+       "published": "2025-01-06",
+       "citation_count": 5
+      },
+      {
+       "arxiv_id": "2609.33037",
+       "title": "Byzantine-Robust Federated RAG via Aligned Calibration and Fixed-Membership Conformal Prediction",
+       "score": 0.617,
+       "published": "2026-09-27",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2506.23183",
+       "title": "A Practical and Secure Byzantine Robust Aggregator",
+       "score": 0.611,
+       "published": "2025-06-29",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "automatic signature generation from attack samples clustering generalization",
+     "results": [
+      {
+       "arxiv_id": "2507.22133",
+       "title": "Prompt Optimization and Evaluation for LLM Automated Red Teaming",
+       "score": 0.595,
+       "published": "2025-07-29",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.00143",
+       "title": "Symbolic Attack Chain Generation from Atomic Red Team Techniques: An Empirical Study of Predicate Representation Granularity",
+       "score": 0.588,
+       "published": "2026-07-31",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.11683",
+       "title": "An Unsupervised Learning Approach For A Reliable Profiling Of Cyber Threat Actors Reported Globally Based On Complete Contextual Information Of Cyber Attacks",
+       "score": 0.577,
+       "published": "2025-09-15",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2601.01723",
+       "title": "Structural Representations for Cross-Attack Generalization in AI Agent Threat Detection",
+       "score": 0.575,
+       "published": "2026-01-05",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2510.17724",
+       "title": "Signature Forgery Detection: Improving Cross-Dataset Generalization",
+       "score": 0.575,
+       "published": "2025-10-20",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2509.01046",
+       "title": "Lightening the Load: A Cluster-Based Framework for A Lower-Overhead, Provable Website Fingerprinting Defense",
+       "score": 0.575,
+       "published": "2025-09-01",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2506.04566",
+       "title": "Clustering and Median Aggregation Improve Differentially Private Inference",
+       "score": 0.574,
+       "published": "2025-06-05",
+       "citation_count": 6
+      },
+      {
+       "arxiv_id": "2511.09493",
+       "title": "Consensus Sampling for Safer Generative AI",
+       "score": 0.571,
+       "published": "2025-11-12",
+       "citation_count": 2
+      }
+     ]
+    },
+    {
+     "query": "collective learning of safety policies across multiple LLM agent deployments",
+     "results": [
+      {
+       "arxiv_id": "2609.00595",
+       "title": "SoK: When Safe Agents Fail Together: The Security of Multi Agent LLM Systems",
+       "score": 0.67,
+       "published": "2026-09-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.05687",
+       "title": "Risk Analysis Techniques for Governed LLM-based Multi-Agent Systems",
+       "score": 0.658,
+       "published": "2025-08-06",
+       "citation_count": 11
+      },
+      {
+       "arxiv_id": "2605.17830",
+       "title": "Remembering More, Risking More: Longitudinal Safety Risks in Memory-Equipped LLM Agents",
+       "score": 0.657,
+       "published": "2026-05-18",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.14130",
+       "title": "Contract-Based Compositional Shielding for Safe Multi-Agent Reinforcement Learning",
+       "score": 0.657,
+       "published": "2026-06-12",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.22462",
+       "title": "Learning \"Partner-Aware\" Collaborators in Multi-Party Collaboration",
+       "score": 0.649,
+       "published": "2025-10-26",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2606.07940",
+       "title": "SGTO-MAS: Secure Gorilla Troops Optimization for Multi-Agent LLM Systems",
+       "score": 0.648,
+       "published": "2026-06-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2502.17813",
+       "title": "Safe Multi-Agent Navigation guided by Goal-Conditioned Safe Reinforcement Learning",
+       "score": 0.647,
+       "published": "2025-02-25",
+       "citation_count": 5
+      },
+      {
+       "arxiv_id": "2504.15585",
+       "title": "A Comprehensive Survey in LLM(-Agent) Full Stack Safety: Data, Training and Deployment",
+       "score": 0.645,
+       "published": "2025-04-22",
+       "citation_count": 115
+      }
+     ]
+    },
+    {
+     "query": "indirect prompt injection attack variants evolve detection rule drift",
+     "results": [
+      {
+       "arxiv_id": "2609.07529",
+       "title": "CoRL: Co-Evolutionary Reinforcement Learning for Adaptive Indirect Prompt-Injection Attacks and Defenses",
+       "score": 0.614,
+       "published": "2026-09-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2604.18248",
+       "title": "Beyond Pattern Matching: Seven Cross-Domain Techniques for Prompt Injection Detection",
+       "score": 0.609,
+       "published": "2026-04-20",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.00750",
+       "title": "Bypassing Prompt Injection Detectors through Evasive Injections",
+       "score": 0.606,
+       "published": "2026-01-31",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2506.06565",
+       "title": "Adapting Under Fire: Multi-Agent Reinforcement Learning for Adversarial Drift in Network Security",
+       "score": 0.601,
+       "published": "2025-06-06",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2502.16580",
+       "title": "Can Indirect Prompt Injection Attacks Be Detected and Removed?",
+       "score": 0.598,
+       "published": "2025-02-23",
+       "citation_count": 48
+      },
+      {
+       "arxiv_id": "2609.22510",
+       "title": "Defusing Explosive Prompts: Understanding and Preventing Trigger-Based Prompt Injections in LLM Agents",
+       "score": 0.597,
+       "published": "2026-09-18",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2601.12359",
+       "title": "Zero-Shot Embedding Drift Detection: A Lightweight Defense Against Prompt Injections in LLMs",
+       "score": 0.596,
+       "published": "2026-01-18",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.05430",
+       "title": "Robust Context-Aware Detection of Malicious Instructions in Text",
+       "score": 0.595,
+       "published": "2026-08-05",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "threat intelligence quality scoring timeliness relevance of shared indicators",
+     "results": [
+      {
+       "arxiv_id": "2508.13644",
+       "title": "Conflicting Scores, Confusing Signals: An Empirical Study of Vulnerability Scoring Systems",
+       "score": 0.639,
+       "published": "2025-08-19",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2504.01606",
+       "title": "Vers une mod\u00e9lisation de la confiance dans le renseignement sur les menaces cyber",
+       "score": 0.624,
+       "published": "2025-04-02",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2610.20284",
+       "title": "Towards Efficient Threat Intelligence Instruction Tuning via Quality-Aware and Optimal Transport-Guided Data Selection",
+       "score": 0.621,
+       "published": "2026-10-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.27967",
+       "title": "DisCTI: Who Needs to Know Timely? Automated Sector-Aware Cyber Threat Intelligence Dissemination",
+       "score": 0.619,
+       "published": "2026-08-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2511.12743",
+       "title": "An Evaluation Framework for Network IDS/IPS Datasets: Leveraging MITRE ATT&CK and Industry Relevance Metrics",
+       "score": 0.615,
+       "published": "2025-11-16",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2502.07045",
+       "title": "Scalable and Ethical Insider Threat Detection through Data Synthesis and Analysis by LLMs",
+       "score": 0.611,
+       "published": "2025-02-10",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2504.14302",
+       "title": "Learning to Score",
+       "score": 0.609,
+       "published": "2025-04-19",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2610.09667",
+       "title": "Shared and structured inputs undermine collective random choice by reasoning AI agents",
+       "score": 0.607,
+       "published": "2026-10-07",
+       "citation_count": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "semantic-2",
+   "queries": [
+    {
+     "query": "staged canary rollout of detection rules measuring regressions before fleet-wide deployment",
+     "results": [
+      {
+       "arxiv_id": "2606.21014",
+       "title": "BayesFP: Posterior Estimation for Flow-Based Policies via Feynman-Kac Sampling",
+       "score": 0.571,
+       "published": "2026-06-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.23377",
+       "title": "Predict before you train: Scaling Laws for particle physics foundation models",
+       "score": 0.567,
+       "published": "2026-07-25",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.12733",
+       "title": "On Using Machine Learning to Early Detect Catastrophic Failures in Marine Diesel Engines",
+       "score": 0.564,
+       "published": "2026-03-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.22667",
+       "title": "Reinforcement Learning for Heterogeneous Sensor Selection in Maritime Surveillance",
+       "score": 0.562,
+       "published": "2026-07-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.12826",
+       "title": "CoralscapesV2: Panoptic and Fine-Grained Visual Scene Understanding in Coral Reefs",
+       "score": 0.559,
+       "published": "2026-09-11",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.23565",
+       "title": "Anticipatory Risk-Guided Reinforcement Learning for Safe Flight Through Dynamic Clutter",
+       "score": 0.558,
+       "published": "2026-07-26",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "rollback and kill switch for a faulty security rule update distributed to many clients",
+     "results": [
+      {
+       "arxiv_id": "2608.29381",
+       "title": "Safe to Resume? Breaking Execution Continuity of Agent Execution via Rollback",
+       "score": 0.589,
+       "published": "2026-08-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.08015",
+       "title": "From Version Conflicts to Decision Conflicts: Selective Revalidation for Long-Running AI Agents",
+       "score": 0.554,
+       "published": "2026-09-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.04896",
+       "title": "When Shared Rollouts Fail in Defensive Driving Evaluation: A NAVSIM Score Basis Audit",
+       "score": 0.551,
+       "published": "2026-08-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.19844",
+       "title": "Trust, but Validate the Instrument: Auditing AI-Generated RTL Verification Plans on Authored Security-Regression Proxies",
+       "score": 0.55,
+       "published": "2026-09-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.21682",
+       "title": "Router Drift Control: Mitigating Off-Policy Degradation in Mixture-of-Experts Reinforcement Learning",
+       "score": 0.55,
+       "published": "2026-10-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.12485",
+       "title": "Speculative Rollback Correction for Quality-Diverse Web Agent Imitation",
+       "score": 0.545,
+       "published": "2026-06-10",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "minimum number of independent reporters before publishing an indicator threshold release k-anonymity",
+     "results": [
+      {
+       "arxiv_id": "2506.12814",
+       "title": "Tiered Anonymity on Social-Media Platforms as a Countermeasure against Deepfakes and LLM-Driven Mass Misinformation",
+       "score": 0.577,
+       "published": "2025-06-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.00236",
+       "title": "How Many Categories Are Enough? Distribution-Free Certification Limits for Few-Shot Anomaly Thresholds",
+       "score": 0.535,
+       "published": "2026-09-23",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2604.06409",
+       "title": "Say Something Else: Rethinking Contextual Privacy as Information Sufficiency",
+       "score": 0.53,
+       "published": "2026-04-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.03350",
+       "title": "Exposing Privacy Risks in Anonymizing Clinical Data: Combinatorial Refinement Attacks on k-Anonymity Without Auxiliary Information",
+       "score": 0.529,
+       "published": "2025-09-03",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2609.33280",
+       "title": "The Text Beside the Image: Detection, Utility and Leakage for Trustworthy Multimodal Medical Data and Beyond",
+       "score": 0.526,
+       "published": "2026-09-27",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.27044",
+       "title": "ECHO: Revealing Review-to-Submission Linkage in Anonymous Peer Review",
+       "score": 0.525,
+       "published": "2026-10-19",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "correlating attack campaigns across organizations using shared fingerprints and time windows",
+     "results": [
+      {
+       "arxiv_id": "2607.18826",
+       "title": "Cross-Agent Campaign Attribution: Linking Asynchronous Attacks Across LLM Agents",
+       "score": 0.652,
+       "published": "2026-07-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.00124",
+       "title": "A Whole New World: Creating a Parallel-Poisoned Web Only AI-Agents Can See",
+       "score": 0.605,
+       "published": "2025-08-29",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2605.03158",
+       "title": "HackerSignal: A Large-Scale Multi-Source Dataset Linking Hacker Community Discourse to the CVE Vulnerability Lifecycle",
+       "score": 0.598,
+       "published": "2026-05-04",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2601.00848",
+       "title": "Temporal Attack Pattern Detection in Multi-Agent AI Workflows: An Open Framework for Training Trace-Based Security Models",
+       "score": 0.594,
+       "published": "2025-12-29",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2605.14786",
+       "title": "Known By Their Actions: Fingerprinting LLM Browser Agents via UI Traces",
+       "score": 0.594,
+       "published": "2026-05-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2505.14616",
+       "title": "TSA-WF: Exploring the Effectiveness of Time Series Analysis for Website Fingerprinting",
+       "score": 0.591,
+       "published": "2025-05-20",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "fuzzy hashing similarity-preserving hashes of attack payloads for private matching MinHash SimHash",
+     "results": [
+      {
+       "arxiv_id": "2601.23088",
+       "title": "From Similarity to Vulnerability: Key Collision Attack on LLM Semantic Caching",
+       "score": 0.613,
+       "published": "2026-01-30",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2607.01601",
+       "title": "SemHash-LLM: A Multi-Granularity Semantic Hashing Framework for Document Deduplication",
+       "score": 0.608,
+       "published": "2026-07-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.15376",
+       "title": "A Unified Evaluation of Learning-Based Similarity Techniques for Malware Detection",
+       "score": 0.602,
+       "published": "2026-02-17",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2510.25687",
+       "title": "Model Inversion Attacks Meet Cryptographic Fuzzy Extractors",
+       "score": 0.579,
+       "published": "2025-10-29",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2509.12824",
+       "title": "DiffHash: Text-Guided Targeted Attack via Diffusion Models against Deep Hashing Image Retrieval",
+       "score": 0.572,
+       "published": "2025-09-16",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2609.35908",
+       "title": "Similarity Is Not Validity: Defending LLM Semantic Caches Against Poisoning",
+       "score": 0.568,
+       "published": "2026-09-28",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "sharing embeddings of malicious prompts instead of raw text privacy and inversion risk",
+     "results": [
+      {
+       "arxiv_id": "2508.19287",
+       "title": "Prompt-in-Content Attacks: Exploiting Uploaded Inputs to Hijack LLM Behavior",
+       "score": 0.636,
+       "published": "2025-08-25",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2511.04834",
+       "title": "Prompt-Based Safety Guidance Is Ineffective for Unlearned Text-to-Image Diffusion Models",
+       "score": 0.626,
+       "published": "2025-11-06",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2505.16957",
+       "title": "Invisible Prompts, Visible Threats: Malicious Font Injection in External Resources for Large Language Models",
+       "score": 0.626,
+       "published": "2025-05-22",
+       "citation_count": 10
+      },
+      {
+       "arxiv_id": "2503.09022",
+       "title": "Prompt Inversion Attack against Collaborative Inference of Large Language Models",
+       "score": 0.618,
+       "published": "2025-03-12",
+       "citation_count": 12
+      },
+      {
+       "arxiv_id": "2504.20376",
+       "title": "When Memory Becomes a Vulnerability: Towards Multi-turn Jailbreak Attacks against Text-to-Image Generation Systems",
+       "score": 0.615,
+       "published": "2025-04-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2507.07700",
+       "title": "Rethinking the Privacy of Text Embeddings: A Reproducibility Study of \"Text Embeddings Reveal (Almost) As Much As Text\"",
+       "score": 0.614,
+       "published": "2025-07-10",
+       "citation_count": 4
+      }
+     ]
+    },
+    {
+     "query": "embedding inversion attack reconstructing text from sentence embeddings",
+     "results": [
+      {
+       "arxiv_id": "2502.11308",
+       "title": "ALGEN: Few-shot Inversion Attacks on Textual Embeddings using Alignment and Generation",
+       "score": 0.689,
+       "published": "2025-02-16",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2504.16609",
+       "title": "Information Leakage of Sentence Embeddings via Generative Embedding Inversion Attacks",
+       "score": 0.683,
+       "published": "2025-04-23",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2504.00147",
+       "title": "Universal Zero-shot Embedding Inversion",
+       "score": 0.681,
+       "published": "2025-03-31",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2509.17302",
+       "title": "TextCrafter: Optimization-Calibrated Noise for Defending Against Text Embedding Inversion",
+       "score": 0.666,
+       "published": "2025-09-22",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2510.24365",
+       "title": "Text Simplification with Sentence Embeddings",
+       "score": 0.659,
+       "published": "2025-10-28",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2506.15001",
+       "title": "Memory Tokens: Large Language Models Can Generate Reversible Sentence Embeddings",
+       "score": 0.654,
+       "published": "2025-06-17",
+       "citation_count": 5
+      }
+     ]
+    },
+    {
+     "query": "free-rider problem and incentives for cyber threat intelligence sharing game theory",
+     "results": [
+      {
+       "arxiv_id": "2605.13145",
+       "title": "Collaborating in Multi-Armed Bandits with Strategic Agents",
+       "score": 0.63,
+       "published": "2026-05-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.16311",
+       "title": "$\\texttt{Flip-Team}$: Cooperative Takeover Games with Stochastic Human Override",
+       "score": 0.612,
+       "published": "2026-08-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2503.15962",
+       "title": "Information maximization for a broad variety of multi-armed bandit games",
+       "score": 0.61,
+       "published": "2025-03-20",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2602.17203",
+       "title": "Algorithmic Collusion at Test Time: A Meta-game Design and Evaluation",
+       "score": 0.61,
+       "published": "2026-02-19",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.28409",
+       "title": "Cooperative Risk-Aware Exploration in Heterogeneous Multi-Robot Systems Using Algorithmic Altruism",
+       "score": 0.608,
+       "published": "2026-08-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2507.19725",
+       "title": "Minding Motivation: The Effect of Intrinsic Motivation on Agent Behaviors",
+       "score": 0.605,
+       "published": "2025-07-26",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "verifying a reported attack by replaying it in a sandbox before accepting the report",
+     "results": [
+      {
+       "arxiv_id": "2509.00561",
+       "title": "FreeTalk:A plug-and-play and black-box defense against speech synthesis attacks",
+       "score": 0.614,
+       "published": "2025-08-30",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.19741",
+       "title": "One Success Isn't Reliability: Thinkingbox, a Sandbox and Benchmark for Agents in Stateful Business Workflows",
+       "score": 0.604,
+       "published": "2026-08-20",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.12996",
+       "title": "ATOBench: Tracing How Autonomous Penetration-Testing Agents Verify Vulnerabilities When Target Evidence Lies",
+       "score": 0.604,
+       "published": "2026-08-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.28542",
+       "title": "Offline-Verifiable Accountability for Cross-Organization Agent Messaging: A Preserved Evidence-Bundle Approach",
+       "score": 0.604,
+       "published": "2026-08-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.18356",
+       "title": "SafeClawBench: Separating Semantic, Audit-Evidence, and Sandbox Harm in Tool-Using LLM Agents",
+       "score": 0.599,
+       "published": "2026-06-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2507.04903",
+       "title": "BackFed: An Efficient & Standardized Benchmark Suite for Backdoor Attacks in Federated Learning",
+       "score": 0.597,
+       "published": "2025-07-07",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "zero-knowledge proof that a telemetry report was derived from an authentic signed event",
+     "results": [
+      {
+       "arxiv_id": "2608.16178",
+       "title": "Agent-Native Telemetry: Verifiable State-Delta Evidence for Autonomous Operations",
+       "score": 0.572,
+       "published": "2026-08-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.21377",
+       "title": "ARENA: An Architecture for Measuring the Transferability of Autonomous Cyber Defense",
+       "score": 0.562,
+       "published": "2026-06-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.07899",
+       "title": "TelemetrySuffBench: Is Agent Telemetry Sufficient for Failure-Origin Diagnosis?",
+       "score": 0.553,
+       "published": "2026-08-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.21389",
+       "title": "From Production SIEM to Reusable Cybersecurity Artifacts",
+       "score": 0.552,
+       "published": "2026-06-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.26343",
+       "title": "Hermes Seal: Zero-Knowledge Assurance for Autonomous Vehicle Communications",
+       "score": 0.551,
+       "published": "2026-03-27",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2601.12978",
+       "title": "Reproducibility in Event-Log Research: A Parametrised Generator and Benchmark for Event-based Signatures",
+       "score": 0.55,
+       "published": "2026-01-19",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "distributing a small classifier model as a detection update to many clients instead of rules",
+     "results": [
+      {
+       "arxiv_id": "2606.30499",
+       "title": "Discovering Collaboration from Novelty: Random Network Distillation for Clustered Federated Learning",
+       "score": 0.603,
+       "published": "2026-06-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.27715",
+       "title": "Beyond Non-IID: Learner--Client Distribution Mismatch in Federated Learning",
+       "score": 0.599,
+       "published": "2026-08-27",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2509.20877",
+       "title": "Distribution-Controlled Client Selection to Improve Federated Learning Strategies",
+       "score": 0.586,
+       "published": "2025-09-25",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2601.16530",
+       "title": "Curate-Train-Refine: A Closed-Loop Agentic Framework for Zero Shot Classification",
+       "score": 0.584,
+       "published": "2026-01-23",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2503.02119",
+       "title": "An Efficient Plugin Method for Metric Optimization of Black-Box Models",
+       "score": 0.584,
+       "published": "2025-03-03",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2604.06598",
+       "title": "Train-Small Deploy-Large: Leveraging Diffusion-Based Multi-Robot Planning",
+       "score": 0.582,
+       "published": "2026-04-08",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "flooding a shared defense with false reports to induce blocking of legitimate traffic",
+     "results": [
+      {
+       "arxiv_id": "2510.17276v2",
+       "title": "Breaking and Fixing Defenses Against Control-Flow Hijacking in Multi-Agent Systems",
+       "score": 0.612,
+       "published": "2025-10-20",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.17276",
+       "title": "Breaking and Fixing Defenses Against Control-Flow Hijacking in Multi-Agent Systems",
+       "score": 0.612,
+       "published": "2025-10-20",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2605.22122",
+       "title": "Adversarial Trust Poisoning in Vehicular Collaborative Perception",
+       "score": 0.606,
+       "published": "2026-05-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.11433",
+       "title": "Adversarial Reinforcement Learning for Detecting False Data Injection Attacks in Vehicular Routing",
+       "score": 0.572,
+       "published": "2026-03-12",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.08403",
+       "title": "Hiding in Plain Floats: Steganographic Carriers for Indirect Prompt and Content Injection",
+       "score": 0.569,
+       "published": "2026-06-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.06970",
+       "title": "Falsification-Driven Reinforcement Learning for Maritime Motion Planning",
+       "score": 0.568,
+       "published": "2025-10-08",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "canary tokens honeytokens for detecting prompt injection in agent tool outputs",
+     "results": [
+      {
+       "arxiv_id": "2606.04141",
+       "title": "Caught in the Act(ivation): Toward Pre-Output and Multi-Turn Detection of Credential Exfiltration by LLM Agents",
+       "score": 0.626,
+       "published": "2026-06-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.26664",
+       "title": "Honeypots for AI Agent Insider Threats",
+       "score": 0.615,
+       "published": "2026-10-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.14122",
+       "title": "Towards Agentic Honeynet Configuration",
+       "score": 0.613,
+       "published": "2026-03-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.05244",
+       "title": "Indirect Prompt Injections: Are Firewalls All You Need, or Stronger Benchmarks?",
+       "score": 0.612,
+       "published": "2025-10-06",
+       "citation_count": 6
+      },
+      {
+       "arxiv_id": "2509.22040",
+       "title": "\"Your AI, My Shell\": Demystifying Prompt Injection Attacks on Agentic AI Coding Editors",
+       "score": 0.61,
+       "published": "2025-09-26",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2607.10490",
+       "title": "NetInjectBench: Benchmarking Indirect Prompt Injection in Tool-Using Large Language Model Agents for Network Operations",
+       "score": 0.608,
+       "published": "2026-07-11",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "legal and regulatory constraints on cross-border sharing of security telemetry GDPR",
+     "results": [
+      {
+       "arxiv_id": "2607.20190",
+       "title": "Multiparty Session Types for GDPR Purpose Compliance",
+       "score": 0.59,
+       "published": "2026-07-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.22270",
+       "title": "Comparing and Conceptualizing Data Protection Requirements Worldwide for Privacy Regulatory Compliance",
+       "score": 0.584,
+       "published": "2026-07-24",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2503.07172",
+       "title": "Lawful and Accountable Personal Data Processing with GDPR-based Access and Usage Control in Distributed Systems",
+       "score": 0.584,
+       "published": "2025-03-10",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2511.12830",
+       "title": "Telekommunikations\u00fcberwachung am Scheideweg: Zur Regulierbarkeit des Zugriffes auf verschl\u00fcsselte Kommunikation",
+       "score": 0.583,
+       "published": "2025-11-16",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2610.03425",
+       "title": "Becoming Suspicious Across Borders: Algorithmic Extraterritoriality and AI-Driven Financial Surveillance",
+       "score": 0.564,
+       "published": "2026-10-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2601.17373",
+       "title": "\"Privacy across the boundary\": Examining Perceived Privacy Risk Across Data Transmission and Sharing Ranges of Smart Home Personal Assistants",
+       "score": 0.556,
+       "published": "2026-01-24",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "open source community governance review of contributed detection rules quality assurance",
+     "results": [
+      {
+       "arxiv_id": "2607.27310",
+       "title": "TrustChain-Review: A Risk-Adaptive Blockchain and Game-Theoretic Framework for Trustworthy AI-Assisted Code Review",
+       "score": 0.638,
+       "published": "2026-07-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.15769",
+       "title": "Making Agent-Mediated Contributions Governable: A Project-Level Governance Manifest for Open-Source AI Collaboration",
+       "score": 0.634,
+       "published": "2026-07-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2507.21583",
+       "title": "Ethical Classification of Non-Coding Contributions in Open-Source Projects via Large Language Models",
+       "score": 0.63,
+       "published": "2025-07-29",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2607.26819",
+       "title": "A First Look at Coding Agents' Compliance with AI Contribution Rules in Open-Source Communities",
+       "score": 0.617,
+       "published": "2026-07-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2504.18407",
+       "title": "Are We on the Same Page? Examining Developer Perception Alignment in Open Source Code Reviews",
+       "score": 0.617,
+       "published": "2025-04-25",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2603.19093",
+       "title": "Follow the Rules (or Not): Community Norms and AI-Generated Support in Online Health Communities",
+       "score": 0.617,
+       "published": "2026-03-19",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "web of trust propagation between organizations sharing security data",
+     "results": [
+      {
+       "arxiv_id": "2603.19452",
+       "title": "TrustFlow: Topic-Aware Vector Reputation Propagation for Multi-Agent Ecosystems",
+       "score": 0.605,
+       "published": "2026-03-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.07407",
+       "title": "Simulating Strategies for Defense Against Brand-Targeted Online Disinformation",
+       "score": 0.597,
+       "published": "2026-10-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2604.27819",
+       "title": "MCPHunt: An Evaluation Framework for Cross-Boundary Data Propagation in Multi-Server MCP Agents",
+       "score": 0.595,
+       "published": "2026-04-30",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.26866",
+       "title": "Fortress and Gatekeeper: Theorizing Transitive Trust in Third-Party Cybersecurity Risk Governance",
+       "score": 0.591,
+       "published": "2026-06-25",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.21802",
+       "title": "Modal Logic for Distributed Trust",
+       "score": 0.583,
+       "published": "2026-03-23",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.00543",
+       "title": "Feedback-Assisted Trust Propagation over Document Relation Graphs for Retrieval-Augmented Generation",
+       "score": 0.581,
+       "published": "2026-09-01",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "local differential privacy heavy hitters frequency estimation of attack patterns across clients",
+     "results": [
+      {
+       "arxiv_id": "2605.26465",
+       "title": "Beyond Epsilon: A Principled QIF Framework for Local Differential Privacy",
+       "score": 0.639,
+       "published": "2026-05-26",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2504.21036",
+       "title": "Can Differentially Private Fine-tuning LLMs Protect Against Privacy Attacks?",
+       "score": 0.63,
+       "published": "2025-04-28",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2507.08158",
+       "title": "Beyond the Worst Case: Extending Differential Privacy Guarantees to Realistic Adversaries",
+       "score": 0.626,
+       "published": "2025-07-10",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2509.02076",
+       "title": "Forecasting Future DDoS Attacks Using Long Short Term Memory (LSTM) Model",
+       "score": 0.623,
+       "published": "2025-09-02",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2602.22633",
+       "title": "Tackling Privacy Heterogeneity in Differentially Private Federated Learning",
+       "score": 0.622,
+       "published": "2026-02-26",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2509.21800v1",
+       "title": "Federated Learning of Quantile Inference under Local Differential Privacy",
+       "score": 0.62,
+       "published": "2025-09-26",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "conflict-free replicated data types for replicating policy state across untrusted peers",
+     "results": [
+      {
+       "arxiv_id": "2510.26026",
+       "title": "Conformal Prediction Beyond the Horizon: Distribution-Free Inference for Policy Evaluation",
+       "score": 0.603,
+       "published": "2025-10-29",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2502.16242",
+       "title": "Reproducibility Study of Cooperation, Competition, and Maliciousness: LLM-Stakeholders Interactive Negotiation",
+       "score": 0.579,
+       "published": "2025-02-22",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2601.11217",
+       "title": "Model-free policy gradient for discrete-time mean-field control",
+       "score": 0.577,
+       "published": "2026-01-16",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2607.06984",
+       "title": "Modeling Misinformation as a Commons Problem",
+       "score": 0.577,
+       "published": "2026-07-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.05047",
+       "title": "Exact Model-Free Policy Iteration for Co-safe LTL Planning",
+       "score": 0.57,
+       "published": "2026-08-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.05844",
+       "title": "StateFuse: Deterministic Conflict-Preserving Memory for Multi-Agent Systems",
+       "score": 0.568,
+       "published": "2026-07-07",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Merkle tree consistency proofs for a public append-only registry of rules",
+     "results": [
+      {
+       "arxiv_id": "2606.09593",
+       "title": "Parent-Hash DAG: A Cost Analysis of Constant-Time Append for On-Chain Registries",
+       "score": 0.58,
+       "published": "2026-06-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.19436",
+       "title": "Building Trust in Autonomous Commerce: A Verifiable Global Event Timeline and AI-Ready Fraud Intelligence Layer",
+       "score": 0.554,
+       "published": "2026-07-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.36279",
+       "title": "Proofs Without Nominals: G\u00f6del's Ontological Argument, its Shallow Embedding, and the Open Questions of the Monatshefte Notes",
+       "score": 0.551,
+       "published": "2026-09-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.07725",
+       "title": "Finite Constant Frontiers and Auditable Regret Certificates for Average-Reward Reinforcement Learning",
+       "score": 0.547,
+       "published": "2026-08-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.17177v1",
+       "title": "Designing Rules to Pick a Rule: Aggregation by Consistency",
+       "score": 0.543,
+       "published": "2025-08-24",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.02451",
+       "title": "Composable Attestation: A Generalized Framework for Continuous and Incremental Trust in AI-Driven Distributed Systems",
+       "score": 0.539,
+       "published": "2026-03-02",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "adaptive attackers evade signatures once published disclosure tradeoff arms race",
+     "results": [
+      {
+       "arxiv_id": "2510.20566",
+       "title": "AdaDoS: Adaptive DoS Attack via Deep Adversarial Reinforcement Learning in SDN",
+       "score": 0.566,
+       "published": "2025-10-23",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2610.18948",
+       "title": "Limits of Statistical Assurance for Embodied and Agentic AI under Adaptive Adversaries",
+       "score": 0.561,
+       "published": "2026-10-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.13565",
+       "title": "UTS at ELOQUENT 2026 Voight-Kampff: structural shifts in AI writing bypass state-of-the-art detectors",
+       "score": 0.555,
+       "published": "2026-07-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.10608",
+       "title": "Adaptive Diffusion Freezing: Privacy-preserving Diffusion Models Against Membership Inference Attacks",
+       "score": 0.554,
+       "published": "2026-09-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.05431",
+       "title": "LTRAS: A Linkable Threshold Ring Adaptor Signature Scheme for Efficient and Private Cross-Chain Transactions",
+       "score": 0.551,
+       "published": "2026-02-05",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2605.16436",
+       "title": "The End of Trust: How Agentic AI Breaks Security Assumptions",
+       "score": 0.55,
+       "published": "2026-05-14",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "learning a global policy from many tenants while keeping tenant policies isolated",
+     "results": [
+      {
+       "arxiv_id": "2609.34136",
+       "title": "Waggle: Learning One Anonymous Local Law for Self-Organizing LLM Swarms",
+       "score": 0.58,
+       "published": "2026-09-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.18537",
+       "title": "Do as the Romans Do: Learning Universal Behaviors from Heterogeneous Agents",
+       "score": 0.578,
+       "published": "2026-06-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2502.14777",
+       "title": "Making Universal Policies Universal",
+       "score": 0.577,
+       "published": "2025-02-20",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.30067",
+       "title": "How do World Models and Policies Compose in LLM Agents? A Joint Spectral and Behavioral Account",
+       "score": 0.576,
+       "published": "2026-08-30",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.26010",
+       "title": "MATES: Learning Multi-Agent Interactions by Transforming Observations for Frozen Single-Agent Policies",
+       "score": 0.576,
+       "published": "2026-09-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.01561",
+       "title": "FedWorld: Scope-Aware Federation of Agent World Models",
+       "score": 0.574,
+       "published": "2026-08-03",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "benchmark dataset of benign agent tool calls for false positive evaluation of guardrails",
+     "results": [
+      {
+       "arxiv_id": "2608.27009",
+       "title": "The Guard That Cried Wolf: How Scary Words Make Agent Guardrails Refuse Legitimate Actions",
+       "score": 0.63,
+       "published": "2026-08-27",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.29942",
+       "title": "Influence Is Not Authority: When Causal Guardrail Signals Make Legitimate Tool Use Look Like an Attack in Tool-Using LLM Agents",
+       "score": 0.602,
+       "published": "2026-08-30",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.01519",
+       "title": "When Guardrails Look Effective: Construct Validity Failures in LLM Agent Commerce Evaluation",
+       "score": 0.597,
+       "published": "2026-09-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.13083",
+       "title": "Phantom Guardrails: When Self-Improving Agent Harnesses Fix Failures That Never Happened",
+       "score": 0.592,
+       "published": "2026-07-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.06122",
+       "title": "Benchmarking Jailbreak Guardrails for Embodied Agents",
+       "score": 0.589,
+       "published": "2026-10-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.03271",
+       "title": "Agentic Relationship Harm: Benchmarking and Gating Relational Manipulation in AI Agents",
+       "score": 0.586,
+       "published": "2026-06-02",
+       "citation_count": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "hybrid-2",
+   "queries": [
+    {
+     "query": "STIX TAXII",
+     "results": [
+      {
+       "arxiv_id": "2604.14209",
+       "title": "Towards Verified and Targeted Explanations through Formal Methods",
+       "score": 0.514,
+       "published": "2026-04-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.20577",
+       "title": "Mahjax: A GPU-Accelerated Mahjong Simulator for Reinforcement Learning in JAX",
+       "score": 0.468,
+       "published": "2026-05-20",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2504.02685",
+       "title": "STOOD-X methodology: using statistical nonparametric test for OOD Detection Large-Scale datasets enhanced with explainability",
+       "score": 0.464,
+       "published": "2025-04-03",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2509.15357",
+       "title": "MaskAttn-SDXL: Controllable Region-Level Text-To-Image Generation",
+       "score": 0.461,
+       "published": "2025-09-18",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2512.07848",
+       "title": "RaX-Crash: A Resource Efficient and Explainable Small Model Pipeline with an Application to City Scale Injury Severity Prediction",
+       "score": 0.461,
+       "published": "2025-11-26",
+       "citation_count": 7
+      }
+     ]
+    },
+    {
+     "query": "MISP threat intelligence sharing platform",
+     "results": [
+      {
+       "arxiv_id": "2608.27967",
+       "title": "DisCTI: Who Needs to Know Timely? Automated Sector-Aware Cyber Threat Intelligence Dissemination",
+       "score": 0.606,
+       "published": "2026-08-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2604.13849",
+       "title": "MCPThreatHive: Automated Threat Intelligence for Model Context Protocol Ecosystems",
+       "score": 0.629,
+       "published": "2026-04-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.04580",
+       "title": "TIBlender: Early-Warning Threat Intelligence from Cross-Platform Social Media Evidence",
+       "score": 0.626,
+       "published": "2026-06-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.27027",
+       "title": "ShareLock: A Stealthy Multi-Tool Threshold Poisoning Attack Against MCP",
+       "score": 0.622,
+       "published": "2026-06-25",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.17590",
+       "title": "BMC4TimeSec: Verification Of Timed Security Protocols",
+       "score": 0.606,
+       "published": "2026-02-19",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "CrowdSec",
+     "results": [
+      {
+       "arxiv_id": "2604.02032",
+       "title": "IndoorCrowd: A Multi-Scene Dataset for Human Detection, Segmentation, and Tracking with an Automated Annotation Pipeline",
+       "score": 0.586,
+       "published": "2026-04-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2504.19546",
+       "title": "Crowd Detection Using Very-Fine-Resolution Satellite Imagery",
+       "score": 0.58,
+       "published": "2025-04-28",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2609.07685",
+       "title": "CrowdTraj: A Benchmark for Dense Crowd Trajectory Prediction in Realistic Crowded Environments",
+       "score": 0.57,
+       "published": "2026-09-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2507.02479",
+       "title": "CrowdTrack: A Benchmark for Difficult Multiple Pedestrian Tracking in Real Scenarios",
+       "score": 0.569,
+       "published": "2025-07-03",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2503.01836",
+       "title": "CrowdSelect: Synthetic Instruction Data Selection with Multi-LLM Wisdom",
+       "score": 0.564,
+       "published": "2025-03-03",
+       "citation_count": 5
+      }
+     ]
+    },
+    {
+     "query": "The Update Framework TUF",
+     "results": [
+      {
+       "arxiv_id": "2503.14924",
+       "title": "UTFix: Change Aware Unit Test Repairing using LLM",
+       "score": 0.599,
+       "published": "2025-03-19",
+       "citation_count": 12
+      },
+      {
+       "arxiv_id": "2605.07355",
+       "title": "TTF: Temporal Token Fusion for Efficient Video-Language Model",
+       "score": 0.579,
+       "published": "2026-05-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.28622",
+       "title": "PUFFER: Incremental Fuzzy Deduplication for Continuously Evolving Corpora",
+       "score": 0.577,
+       "published": "2026-07-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2511.04728",
+       "title": "Trustworthiness Calibration Framework for Phishing Email Detection Using Large Language Models",
+       "score": 0.571,
+       "published": "2025-11-06",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2602.17837",
+       "title": "TFL: Targeted Bit-Flip Attack on Large Language Model",
+       "score": 0.567,
+       "published": "2026-02-19",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "Certificate Transparency gossip",
+     "results": [
+      {
+       "arxiv_id": "2610.10597",
+       "title": "Certified Corruption Budgets: Anytime-Valid Leaderboard Claims under Adaptive Rigging",
+       "score": 0.55,
+       "published": "2026-10-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.04445",
+       "title": "Conformity Breaks Conformal Prediction",
+       "score": 0.539,
+       "published": "2026-09-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.25938",
+       "title": "Certified Against Which Oracle? Execution Labels Set the Reported Risk of Conformal Abstention for Text-to-SQL",
+       "score": 0.531,
+       "published": "2026-09-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.10566",
+       "title": "Finite-sample certification and operating envelopes for spectral clustering and graph centrality",
+       "score": 0.53,
+       "published": "2026-02-11",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.22964",
+       "title": "Certification from Examples is Hard for Circuits and Transformers under Minimal Overparametrization",
+       "score": 0.527,
+       "published": "2026-05-21",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Sigstore Rekor transparency log",
+     "results": [
+      {
+       "arxiv_id": "2602.08072",
+       "title": "IssueGuard: Real-Time Secret Leak Prevention Tool for GitHub Issue Reports",
+       "score": 0.498,
+       "published": "2026-02-08",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.13930",
+       "title": "Extracting and Verifying Illicit Bitcoin Addresses from Underground Forum Discussions",
+       "score": 0.493,
+       "published": "2026-08-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.08400",
+       "title": "TRACE: A Two-Channel Robust Attribution Watermark via Complementary Embeddings for LLM-Agent Trajectories",
+       "score": 0.492,
+       "published": "2026-07-09",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.28655",
+       "title": "What Git Does Not Record: Provenance Legibility in Two AI-Assisted Research Repositories",
+       "score": 0.49,
+       "published": "2026-10-09",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.35659",
+       "title": "Tracekit: Tamper-Evident Intent-Reasoning-Action Auditing for Autonomous Coding Agents",
+       "score": 0.49,
+       "published": "2026-09-28",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Sigma detection rules",
+     "results": [
+      {
+       "arxiv_id": "2606.05252",
+       "title": "From Attack Simulation to SIEM Rule: Deterministic Detection-as-Code Synthesis with Probe-Level Traceability",
+       "score": 0.652,
+       "published": "2026-06-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.19011",
+       "title": "From Threat Intelligence to Detection: Knowledge-driven Enrichment and Template-based Rule Grounding for Automated Sigma Rule Generation",
+       "score": 0.617,
+       "published": "2026-08-19",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.09007",
+       "title": "Sigma-Hunter: A Domain-Specific Language Model for Threat Hunting and Detection Engineering",
+       "score": 0.619,
+       "published": "2026-10-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.05383",
+       "title": "Evolution of Log-Based Detection Rules in Public Repositories",
+       "score": 0.607,
+       "published": "2026-05-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.07003",
+       "title": "Optimizer as Detector: Stochastic Gradient Descent for Latent Mixture Models",
+       "score": 0.578,
+       "published": "2026-09-07",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Snort Suricata community rules",
+     "results": [
+      {
+       "arxiv_id": "2609.16231",
+       "title": "RuleAutoPilot: Synthesizing Deployable Suricata Rules from Network Traffic",
+       "score": 0.454,
+       "published": "2026-09-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.06061",
+       "title": "SCoCaT: Success Conditioned Constrained Reinforcement Learning for Spacecraft Docking",
+       "score": 0.424,
+       "published": "2026-09-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.24393",
+       "title": "Passive Hybrid Network-Based Intrusion Detection System (Hybrid-NIDS) Combining Suricata and Random Forest",
+       "score": 0.42,
+       "published": "2026-09-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2601.12179",
+       "title": "Tolerance Principle and Small Language Model Learning",
+       "score": 0.414,
+       "published": "2026-01-17",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2505.15033",
+       "title": "Toward Task Capable Active Matter: Learning to Avoid Clogging in Confined Collectives via Collisions",
+       "score": 0.405,
+       "published": "2025-05-21",
+       "citation_count": 10
+      }
+     ]
+    },
+    {
+     "query": "Google Safe Browsing",
+     "results": [
+      {
+       "arxiv_id": "2508.16488",
+       "title": "SafeSpace: An Integrated Web Application for Digital Safety and Emotional Well-being",
+       "score": 0.583,
+       "published": "2025-08-22",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2509.23694",
+       "title": "SafeSearch: Automated Red-Teaming of LLM-Based Search Agents",
+       "score": 0.561,
+       "published": "2025-09-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.17457",
+       "title": "BrowseSafe++: Benchmarking Prompt Injection Detection Across Web Contexts, Languages, and Browser Views",
+       "score": 0.559,
+       "published": "2026-10-12",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2502.17542",
+       "title": "Data Voids and Warning Banners on Google Search",
+       "score": 0.557,
+       "published": "2025-02-24",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2610.24277",
+       "title": "SPIDES: Information-Flow Control for Browser Agents",
+       "score": 0.554,
+       "published": "2026-10-16",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "k-anonymity range query password",
+     "results": [
+      {
+       "arxiv_id": "2508.07086",
+       "title": "SEF-MK: Speaker-Embedding-Free Voice Anonymization through Multi-k-means Quantization",
+       "score": 0.564,
+       "published": "2025-08-09",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2509.03350",
+       "title": "Exposing Privacy Risks in Anonymizing Clinical Data: Combinatorial Refinement Attacks on k-Anonymity Without Auxiliary Information",
+       "score": 0.564,
+       "published": "2025-09-03",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2601.12407",
+       "title": "De-Anonymization at Scale via Tournament-Style Attribution",
+       "score": 0.541,
+       "published": "2026-01-18",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.09140",
+       "title": "Beyond Direct Identifiers: Probabilistic Privacy Risk Estimation for Privacy-Conscious LLM Query Delegation",
+       "score": 0.532,
+       "published": "2026-08-10",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.26373",
+       "title": "Hybrid privacy-aware semantic search: SVD-truncated document geometry and CKKS-encrypted query reranking under a restricted threat model",
+       "score": 0.529,
+       "published": "2026-06-24",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Prio secure aggregation telemetry",
+     "results": [
+      {
+       "arxiv_id": "2504.21029",
+       "title": "PICO: Secure Transformers via Robust Prompt Isolation and Cybersecurity Oversight",
+       "score": 0.552,
+       "published": "2025-04-26",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2607.16156",
+       "title": "PRISA: Proactive Infrastructure LiDAR Framework for Intersection Safety Assessment",
+       "score": 0.545,
+       "published": "2026-07-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2501.01187",
+       "title": "NET-SA: An Efficient Secure Aggregation Architecture Based on In-Network Computing",
+       "score": 0.542,
+       "published": "2025-01-02",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.11418",
+       "title": "A Study of Kernel Telemetry Options for Security-Oriented Provenance",
+       "score": 0.539,
+       "published": "2026-08-11",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.28252",
+       "title": "Secret Key Rate Analysis of RIS-Assisted THz MIMO CV-QKD Systems under Localized and Global Eavesdropping",
+       "score": 0.535,
+       "published": "2026-03-30",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "in-toto supply chain attestation",
+     "results": [
+      {
+       "arxiv_id": "2603.02451",
+       "title": "Composable Attestation: A Generalized Framework for Continuous and Incremental Trust in AI-Driven Distributed Systems",
+       "score": 0.588,
+       "published": "2026-03-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.08771",
+       "title": "Mission-Aware Attestation Envelopes for Time-Critical Autonomous Action: A Hardware-in-the-Loop V2I Study",
+       "score": 0.564,
+       "published": "2026-10-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.37819",
+       "title": "Making Duplicate Reimbursement Unrepresentable: A Verified Ethereum E-Invoice System for Humans and AI Agents",
+       "score": 0.558,
+       "published": "2026-09-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.28988",
+       "title": "Attesting LLM Pipelines: Enforcing Verifiable Training and Release Claims",
+       "score": 0.557,
+       "published": "2026-03-30",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.03534",
+       "title": "A Challenge-Nonce Freshness Gap in Project Veraison's TPM Reference Schemes, Found by Appraising Application-Layer Action Evidence End-to-End",
+       "score": 0.55,
+       "published": "2026-08-04",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "SCITT supply chain integrity transparency trust",
+     "results": [
+      {
+       "arxiv_id": "2608.27265",
+       "title": "SCIT: Testing Causal Cache Carriers in Latent Chain-of-Thought Models",
+       "score": 0.607,
+       "published": "2026-08-27",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.26036",
+       "title": "Trace Integrity for LLM Data Agents: A Vision for Auditable Structured Reasoning in Real-World Systems",
+       "score": 0.58,
+       "published": "2026-08-26",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2511.18045",
+       "title": "SCI-IoT: A Quantitative Framework for Trust Scoring and Certification of IoT Devices",
+       "score": 0.576,
+       "published": "2025-11-22",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2504.14760",
+       "title": "Establishing Workload Identity for Zero Trust CI/CD: From Secrets to SPIFFE-Based Authentication",
+       "score": 0.556,
+       "published": "2025-04-20",
+       "citation_count": 7
+      },
+      {
+       "arxiv_id": "2610.22913",
+       "title": "Provable Compliance: A Protocol for Runtime Compliance Evidence and Transaction-Specific Decisioning",
+       "score": 0.548,
+       "published": "2026-10-16",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "RATS remote attestation IETF",
+     "results": [
+      {
+       "arxiv_id": "2608.00801",
+       "title": "Hardware-rooted attestation for AI-agent evidence: composing IETF RATS with action evidence packages",
+       "score": 0.641,
+       "published": "2026-08-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.01938",
+       "title": "D-MUTRA: DLT-based MUTual Remote Attestation for Multi-Agent Systems",
+       "score": 0.56,
+       "published": "2026-08-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2502.17653",
+       "title": "Formally-verified Security against Forgery of Remote Attestation using SSProve",
+       "score": 0.548,
+       "published": "2025-02-24",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2607.26102",
+       "title": "A Reference-Free Score for Detecting Silent Reasoning Failures in Large Language Models",
+       "score": 0.546,
+       "published": "2026-07-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.02876",
+       "title": "RRISE: Robust Radius Inference via a Surrogate Estimator",
+       "score": 0.545,
+       "published": "2026-06-01",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "BitTorrent",
+     "results": [
+      {
+       "arxiv_id": "2604.06945",
+       "title": "NTIRE 2026 Challenge on Bitstream-Corrupted Video Restoration: Methods and Results",
+       "score": 0.482,
+       "published": "2026-04-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.13669",
+       "title": "EchoTorrent: Towards Swift, Sustained, and Streaming Multi-Modal Video Generation",
+       "score": 0.467,
+       "published": "2026-02-14",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2504.12285",
+       "title": "BitNet b1.58 2B4T Technical Report",
+       "score": 0.467,
+       "published": "2025-04-16",
+       "citation_count": 29
+      },
+      {
+       "arxiv_id": "2608.21837",
+       "title": "Towards Bitstream-corrupted Harsh Visual Understanding: Through Bitstream Language Modeling as Robust Semantic Priors",
+       "score": 0.466,
+       "published": "2026-08-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.14041",
+       "title": "BitDance: Scaling Autoregressive Generative Models with Binary Tokens",
+       "score": 0.465,
+       "published": "2026-02-15",
+       "citation_count": 3
+      }
+     ]
+    },
+    {
+     "query": "IPFS content addressed",
+     "results": [
+      {
+       "arxiv_id": "2601.13003",
+       "title": "PrivFly: A Privacy-Preserving Self-Supervised Framework for Rare Attack Detection in IoFT",
+       "score": 0.516,
+       "published": "2026-01-19",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2603.04323",
+       "title": "PTOPOFL: Privacy-Preserving Personalised Federated Learning via Persistent Homology",
+       "score": 0.513,
+       "published": "2026-03-04",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.23019",
+       "title": "Sentinel: Dynamic Knowledge Distillation for Personalized Federated Intrusion Detection in Heterogeneous IoT Networks",
+       "score": 0.511,
+       "published": "2025-10-27",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2511.06862",
+       "title": "Generalized Security-Preserving Refinement for Concurrent Systems",
+       "score": 0.51,
+       "published": "2025-11-10",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2601.18570",
+       "title": "Feature-Indexed Federated Recommendation with Residual-Quantized Codebooks",
+       "score": 0.508,
+       "published": "2026-01-26",
+       "citation_count": 4
+      }
+     ]
+    },
+    {
+     "query": "AgentDojo",
+     "results": [
+      {
+       "arxiv_id": "2506.01055",
+       "title": "Simple Prompt Injection Attacks Can Leak Personal Data Observed by LLM Agents During Task Execution",
+       "score": 0.6,
+       "published": "2025-06-01",
+       "citation_count": 17
+      },
+      {
+       "arxiv_id": "2608.15888",
+       "title": "Bounded Agents: Delegation Security for Multi-Agent AI Systems",
+       "score": 0.573,
+       "published": "2026-08-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.15057",
+       "title": "AutoDojo: Adaptive Attacks Expose Superficial Defenses and User-Underspecification Limits in LLM Agents",
+       "score": 0.597,
+       "published": "2026-06-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2505.05849",
+       "title": "AgentVigil: Generic Black-Box Red-teaming for Indirect Prompt Injection against LLM Agents",
+       "score": 0.577,
+       "published": "2025-05-09",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.04484",
+       "title": "AgentJet: A Flexible Swarm Training Framework for Agentic Reinforcement Learning",
+       "score": 0.563,
+       "published": "2026-06-03",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "InjecAgent",
+     "results": [
+      {
+       "arxiv_id": "2505.21499",
+       "title": "AdInject: Real-World Black-Box Attacks on Web Agents via Advertising Delivery",
+       "score": 0.565,
+       "published": "2025-05-27",
+       "citation_count": 6
+      },
+      {
+       "arxiv_id": "2610.20681",
+       "title": "IneqAgent: Agentic Inequality Proving in Lean with Symbolic Computation",
+       "score": 0.564,
+       "published": "2026-10-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2601.13114",
+       "title": "IntAgent: NWDAF-Based Intent LLM Agent Towards Advanced Next Generation Networks",
+       "score": 0.562,
+       "published": "2026-01-19",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.23471",
+       "title": "InjecMEM: Memory Injection Attack on LLM Agent Memory Systems",
+       "score": 0.561,
+       "published": "2026-08-24",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.17925",
+       "title": "SpecAgent: A Speculative Retrieval and Forecasting Agent for Code Completion",
+       "score": 0.558,
+       "published": "2025-10-20",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "FoolsGold sybil",
+     "results": [
+      {
+       "arxiv_id": "2609.19791",
+       "title": "Sybil-TraceGuard: Traceability-enhanced Sybil Guardian for Connected and Autonomous Vehicles Using Dynamic Semi-supervised GNN",
+       "score": 0.517,
+       "published": "2026-09-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.17202",
+       "title": "Fool's Gold: Defensive Deception Against Safety-Removal Attacks on Open-Weight Models",
+       "score": 0.514,
+       "published": "2026-08-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.27350",
+       "title": "Modeling Decisions in Blockchain Analytics: A Leakage-Aware Evaluation of Tree-Based vs. Sequential Models",
+       "score": 0.507,
+       "published": "2026-07-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2505.09983",
+       "title": "Sybil-based Virtual Data Poisoning Attacks in Federated Learning",
+       "score": 0.488,
+       "published": "2025-05-15",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2607.03739",
+       "title": "A Failure-Mode Benchmark for Polymorphic Sybil Poisoning in RAG",
+       "score": 0.486,
+       "published": "2026-07-04",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Brahms peer sampling Byzantine",
+     "results": [
+      {
+       "arxiv_id": "2503.19209",
+       "title": "Byzantine Resilient Federated Multi-Task Representation Learning",
+       "score": 0.51,
+       "published": "2025-03-24",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2605.09076",
+       "title": "Robust Multi-Agent LLMs under Byzantine Faults",
+       "score": 0.504,
+       "published": "2026-05-09",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.08658",
+       "title": "Byzantine-Resilient Decentralized Online Resource Allocation",
+       "score": 0.504,
+       "published": "2025-08-12",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.07974",
+       "title": "PRISM: PRior-guided Imagination Sampling in world Models",
+       "score": 0.499,
+       "published": "2026-06-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.38104",
+       "title": "Explore Broadly, Reason Sharply: Push Small Models toward the Frontier via Sampling",
+       "score": 0.496,
+       "published": "2026-09-29",
+       "citation_count": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "semantic-3",
+   "queries": [
+    {
+     "query": "privacy-preserving sharing of suspicious tool call arguments or shell commands observed by LLM agents across organizations",
+     "results": [
+      {
+       "arxiv_id": "2608.24957",
+       "title": "ToolMinimize: Auditing and Rewriting LLM Agent Tool Calls to Minimize Privacy Exposure",
+       "score": 0.682,
+       "published": "2026-08-25",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2604.05432",
+       "title": "Your LLM Agent Can Leak Your Data: Data Exfiltration via Backdoored Tool Use",
+       "score": 0.682,
+       "published": "2026-04-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.10880v2",
+       "title": "Searching for Privacy Risks in LLM Agents via Simulation",
+       "score": 0.68,
+       "published": "2025-08-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2508.10880",
+       "title": "Searching for Privacy Risks in LLM Agents via Simulation",
+       "score": 0.68,
+       "published": "2025-08-14",
+       "citation_count": 13
+      },
+      {
+       "arxiv_id": "2605.27766",
+       "title": "Got a Secret? LLM Agents Can't Keep It: Evaluating Privacy in Multi-Agent Systems",
+       "score": 0.679,
+       "published": "2026-05-26",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2506.10171",
+       "title": "Beyond Jailbreaking: Auditing Contextual Privacy in LLM Agents",
+       "score": 0.677,
+       "published": "2025-06-11",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "self-propagating prompt injection worm spreading between AI agents and applications",
+     "results": [
+      {
+       "arxiv_id": "2606.03811",
+       "title": "AI Agents Enable Adaptive Computer Worms",
+       "score": 0.691,
+       "published": "2026-06-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.12524",
+       "title": "An Exploration of Attacks on AI Agent Systems",
+       "score": 0.684,
+       "published": "2026-10-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.00430",
+       "title": "Memetic Trojans: Social Contagions as Carriers of Adversarial Payloads in Agent Networks",
+       "score": 0.667,
+       "published": "2026-09-30",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.04170",
+       "title": "A Case Study on Emergent Cheating and Whistleblowing in Autonomous Research Swarms",
+       "score": 0.64,
+       "published": "2026-09-03",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2512.23557",
+       "title": "Toward Trustworthy Agentic AI: A Multimodal Framework for Preventing Prompt Injection Attacks",
+       "score": 0.631,
+       "published": "2025-12-29",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2603.15727",
+       "title": "ClawWorm: Self-Propagating Attacks Across LLM Agent Ecosystems",
+       "score": 0.629,
+       "published": "2026-03-16",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "value decay of threat intelligence over time and latency of indicator sharing",
+     "results": [
+      {
+       "arxiv_id": "2511.19146",
+       "title": "VIL2C: Value-of-Information Aware Low-Latency Communication for Multi-Agent Reinforcement Learning",
+       "score": 0.599,
+       "published": "2025-11-24",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2609.36732",
+       "title": "Deep Learning Latency Attacks and Defenses: A Cross-Domain Survey of Availability Threats",
+       "score": 0.593,
+       "published": "2026-09-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.04689",
+       "title": "Evolaris: A Roadmap to Self-Evolving Software Intelligence Management",
+       "score": 0.585,
+       "published": "2025-10-06",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2609.01174",
+       "title": "A SoK for SoCs: Reading the TI Leaves on AI for Cyber Threat Intelligence Generation and Sharing",
+       "score": 0.583,
+       "published": "2026-09-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.17458",
+       "title": "The CTI Echo Chamber: Fragmentation, Overlap, and Vendor Specificity in Twenty Years of Cyber Threat Reporting",
+       "score": 0.582,
+       "published": "2026-02-19",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2603.01283",
+       "title": "The Informational Cost of Agency: A Bounded Measure of Interaction Efficiency for Deployed Reinforcement Learning",
+       "score": 0.58,
+       "published": "2026-03-01",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "trust and provenance of third-party detection rules supply chain security of rule feeds",
+     "results": [
+      {
+       "arxiv_id": "2603.28988",
+       "title": "Attesting LLM Pipelines: Enforcing Verifiable Training and Release Claims",
+       "score": 0.567,
+       "published": "2026-03-30",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.14055",
+       "title": "The Inevitability of Side-Channel Leakage in Encrypted Traffic",
+       "score": 0.566,
+       "published": "2026-02-15",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2601.14311",
+       "title": "Tracing the Data Trail: A Survey of Data Provenance, Transparency and Traceability in LLMs",
+       "score": 0.557,
+       "published": "2026-01-19",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2605.29973",
+       "title": "Replicable Simulation-Based Robot Validation through Provenance",
+       "score": 0.555,
+       "published": "2026-05-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2511.08867",
+       "title": "Conformal Prediction for Multi-Source Detection on a Network",
+       "score": 0.552,
+       "published": "2025-11-12",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.01454",
+       "title": "How Benchmarks and Evaluation Protocols Shape Conclusions in Provenance-Based Intrusion Detection",
+       "score": 0.552,
+       "published": "2026-08-02",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "attaching reproducible attack test cases to detection rules regression corpus for rules",
+     "results": [
+      {
+       "arxiv_id": "2606.25721",
+       "title": "Tracing Target Answers in Poisoned Retrieval Corpora via Token Influence Attribution",
+       "score": 0.621,
+       "published": "2026-06-24",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2608.13010",
+       "title": "RAGSieve: Self-Referenced Local Contrast for Knowledge-Poison Detection in Retrieval-Augmented Generation",
+       "score": 0.6,
+       "published": "2026-08-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.21200",
+       "title": "Poisoning the corpora of protein design systems during pre-training and retrieval",
+       "score": 0.596,
+       "published": "2026-10-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.18034",
+       "title": "Semantic Chameleon: Corpus-Dependent Poisoning Attacks and Defenses in RAG Systems",
+       "score": 0.596,
+       "published": "2026-03-10",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.00327",
+       "title": "Actions with Receipts: Jointly Binding Claims, Evidence, and Execution for Replayable Tool-Agent Auditing",
+       "score": 0.591,
+       "published": "2026-09-29",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.22694",
+       "title": "Bayesian Repetition Penalty: A Principled Adjacent-Conditional Framework for Reversing Attention Collapse in Autoregressive Language Models",
+       "score": 0.583,
+       "published": "2026-07-17",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Bloom filter or cuckoo filter based privacy-preserving blocklist distribution bandwidth tradeoff",
+     "results": [
+      {
+       "arxiv_id": "2604.15641",
+       "title": "Half-Moon Cookie: Private, Similarity-Based Blocklisting with TOCTOU-Attack Resilience",
+       "score": 0.563,
+       "published": "2026-04-17",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2503.16233",
+       "title": "Empirical Analysis of Privacy-Fairness-Accuracy Trade-offs in Federated Learning: A Step Towards Responsible AI",
+       "score": 0.554,
+       "published": "2025-03-20",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2606.08521",
+       "title": "Exploring CKKS Parameter Trade-offs for Privacy-Preserving Personalized Federated Learning",
+       "score": 0.549,
+       "published": "2026-06-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.08092",
+       "title": "Equivariant Quantum Clustering with Differential Privacy: Parameter-Efficient Privacy-Preserving Analysis Across Heterogeneous Sensitive Datasets",
+       "score": 0.548,
+       "published": "2026-07-09",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2505.08719",
+       "title": "PWC-MoE: Privacy-Aware Wireless Collaborative Mixture of Experts",
+       "score": 0.545,
+       "published": "2025-05-13",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2606.20668",
+       "title": "BELLS-O: Evaluating the Operational Trade-offs of LLM Supervision Systems",
+       "score": 0.542,
+       "published": "2026-06-12",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "incremental delta updates and synchronization of signature databases to many clients",
+     "results": [
+      {
+       "arxiv_id": "2609.12426",
+       "title": "IDORacle: Template-Guided SQL-Sink Mediation for Object-Level Authorization in Java Applications",
+       "score": 0.586,
+       "published": "2026-09-11",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.04595",
+       "title": "A Late-Fusion Multimodal AI Framework for Privacy-Preserving Deduplication in National Healthcare Data Environments",
+       "score": 0.578,
+       "published": "2026-03-04",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2508.10493",
+       "title": "AlDBaran: Towards Blazingly Fast State Commitments for Blockchains",
+       "score": 0.577,
+       "published": "2025-08-14",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2601.00418",
+       "title": "Secure, Verifiable, and Scalable Multi-Client Data Sharing via Consensus-Based Privacy-Preserving Data Distribution",
+       "score": 0.575,
+       "published": "2026-01-01",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2505.12038",
+       "title": "Safe Delta: Consistently Preserving Safety when Fine-Tuning LLMs on Diverse Datasets",
+       "score": 0.575,
+       "published": "2025-05-17",
+       "citation_count": 21
+      },
+      {
+       "arxiv_id": "2510.08150",
+       "title": "Unsupervised Multi-Source Federated Domain Adaptation under Domain Diversity through Group-Wise Discrepancy Minimization",
+       "score": 0.575,
+       "published": "2025-10-09",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "learning allowlists of normal agent tool usage per deployment and sharing anomaly patterns not raw data",
+     "results": [
+      {
+       "arxiv_id": "2606.02132",
+       "title": "Learning When Not to Act: Mitigating Tool Abuse in Agentic Reinforcement Learning",
+       "score": 0.678,
+       "published": "2026-06-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.11126",
+       "title": "ToolAtlas: Learning Once, Reusing Everywhere with Tool-Side Memory",
+       "score": 0.642,
+       "published": "2026-07-13",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.09667",
+       "title": "Shared and structured inputs undermine collective random choice by reasoning AI agents",
+       "score": 0.642,
+       "published": "2026-10-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2512.16301",
+       "title": "Adaptation of Agentic AI: A Survey of Post-Training, Memory, and Skills",
+       "score": 0.632,
+       "published": "2025-12-18",
+       "citation_count": 10
+      },
+      {
+       "arxiv_id": "2505.20127",
+       "title": "Agentic AI Process Observability: Discovering Behavioral Variability",
+       "score": 0.632,
+       "published": "2025-05-26",
+       "citation_count": 6
+      },
+      {
+       "arxiv_id": "2609.05837",
+       "title": "AgentBrew: Offline Tool-Use Agent Learning from Raw Real-World Trajectories",
+       "score": 0.627,
+       "published": "2026-09-05",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "defender coordination against adaptive adversary disclosure of detection logic weakens detection",
+     "results": [
+      {
+       "arxiv_id": "2610.10752",
+       "title": "Detection-Guided Adaptive Purification with Diffusion Models for Robust Audio Deepfake Detection",
+       "score": 0.632,
+       "published": "2026-10-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.19596",
+       "title": "Learning Mutual View Information Graph for Adaptive Adversarial Collaborative Perception",
+       "score": 0.631,
+       "published": "2026-02-23",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2601.00968",
+       "title": "Explainability-Guided Defense: Attribution-Aware Model Refinement Against Adversarial Data Attacks",
+       "score": 0.625,
+       "published": "2026-01-02",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2510.27249",
+       "title": "C-LEAD: Contrastive Learning for Enhanced Adversarial Defense",
+       "score": 0.622,
+       "published": "2025-10-31",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2604.00605",
+       "title": "Fluently Lying: Adversarial Robustness Can Be Substrate-Dependent",
+       "score": 0.621,
+       "published": "2026-04-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2512.08107",
+       "title": "Detecting Ambiguity Aversion in Cyberattack Behavior to Inform Cognitive Defense Strategies",
+       "score": 0.619,
+       "published": "2025-12-08",
+       "citation_count": 1
+      }
+     ]
+    },
+    {
+     "query": "partitioned sharing communities sectors sharing groups need to know for sensitive indicators",
+     "results": [
+      {
+       "arxiv_id": "2506.18732",
+       "title": "Towards Group Fairness with Multiple Sensitive Attributes in Federated Foundation Models",
+       "score": 0.584,
+       "published": "2025-06-23",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2608.27967",
+       "title": "DisCTI: Who Needs to Know Timely? Automated Sector-Aware Cyber Threat Intelligence Dissemination",
+       "score": 0.578,
+       "published": "2026-08-28",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2506.19937",
+       "title": "The Most Important Features in Generalized Additive Models Might Be Groups of Features",
+       "score": 0.571,
+       "published": "2025-06-24",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2605.10316",
+       "title": "Mapping Partisan Fault Lines Within DAOs",
+       "score": 0.569,
+       "published": "2026-05-11",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.17897",
+       "title": "Learn to Quantify Social Interaction with Constraints for Pedestrian Walking",
+       "score": 0.568,
+       "published": "2026-06-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.36852",
+       "title": "Socialality Anchors: Towards Group-bounded Trajectory Prediction",
+       "score": 0.567,
+       "published": "2026-09-29",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "quantifying cross-organization transfer of attack patterns do attacks seen at one deployment appear at others",
+     "results": [
+      {
+       "arxiv_id": "2506.12913v2",
+       "title": "Jailbreak Transferability Emerges from Shared Representations",
+       "score": 0.612,
+       "published": "2025-06-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2506.12913",
+       "title": "Jailbreak Transferability Emerges from Shared Representations",
+       "score": 0.612,
+       "published": "2025-06-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.18826",
+       "title": "Cross-Agent Campaign Attribution: Linking Asynchronous Attacks Across LLM Agents",
+       "score": 0.585,
+       "published": "2026-07-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.14514",
+       "title": "Defenses at Odds: Measuring and Explaining Defense Conflicts in Large Language Models",
+       "score": 0.585,
+       "published": "2026-05-14",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.28425",
+       "title": "After the Attacker Leaves: Benchmarking Carryover Attacks on LLM Agents",
+       "score": 0.583,
+       "published": "2026-10-20",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.10041",
+       "title": "Evaluating Generalization Mechanisms in Autonomous Cyber Attack Agents",
+       "score": 0.582,
+       "published": "2026-03-06",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "verifiable distributed aggregation function private heavy hitters strings across clients",
+     "results": [
+      {
+       "arxiv_id": "2509.05162",
+       "title": "Verifiability and Privacy in Federated Learning through Context-Hiding Multi-Key Homomorphic Authenticators",
+       "score": 0.599,
+       "published": "2025-09-05",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2610.13631",
+       "title": "Private and Distributionally Robust Federated Multiclass Classification",
+       "score": 0.589,
+       "published": "2026-10-09",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2510.04902",
+       "title": "DP-HYPE: Distributed Differentially Private Hyperparameter Search",
+       "score": 0.563,
+       "published": "2025-10-06",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2509.10691",
+       "title": "Privacy-Preserving Decentralized Federated Learning via Explainable Adaptive Differential Privacy",
+       "score": 0.562,
+       "published": "2025-09-12",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2508.12672",
+       "title": "Robust Federated Learning under Adversarial Attacks via Loss-Based Client Clustering",
+       "score": 0.561,
+       "published": "2025-08-18",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2609.02971",
+       "title": "Privacy Leakage in Federated Learning: Gradient-Based Client Identity Inference and Defenses for Inertial Sensing in Vehicular Edge Networks",
+       "score": 0.56,
+       "published": "2026-09-02",
+       "citation_count": null
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "hybrid-3",
+   "queries": [
+    {
+     "query": "Morris II worm GenAI",
+     "results": [
+      {
+       "arxiv_id": "2508.21082",
+       "title": "ImmunoAI: Accelerated Antibody Discovery Using Gradient-Boosted Machine Learning with Thermodynamic-Hydrodynamic Descriptors and 3D Geometric Interface Topology",
+       "score": 0.511,
+       "published": "2025-08-25",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2501.14728",
+       "title": "Mitigating GenAI-powered Evidence Pollution for Out-of-Context Multimodal Misinformation Detection",
+       "score": 0.508,
+       "published": "2025-01-24",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2603.06051",
+       "title": "A LINDDUN-based Privacy Threat Modeling Framework for GenAI",
+       "score": 0.504,
+       "published": "2026-03-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2602.11226",
+       "title": "Generative AI-Driven Phase Control for RIS-Aided Cell-Free Massive MIMO Systems",
+       "score": 0.5,
+       "published": "2026-02-11",
+       "citation_count": 0
+      }
+     ]
+    },
+    {
+     "query": "RAPPOR randomized response",
+     "results": [
+      {
+       "arxiv_id": "2604.20650",
+       "title": "MAPRPose: Mask-Aware Proposal and Amodal Refinement for Multi-Object 6D Pose Estimation",
+       "score": 0.575,
+       "published": "2026-04-22",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2601.16406",
+       "title": "Reasoning-Enhanced Rare-Event Prediction with Balanced Outcome Correction",
+       "score": 0.557,
+       "published": "2026-01-23",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2501.13726",
+       "title": "RPO: Retrieval Preference Optimization for Robust Retrieval-Augmented Generation",
+       "score": 0.553,
+       "published": "2025-01-23",
+       "citation_count": 4
+      },
+      {
+       "arxiv_id": "2607.14886",
+       "title": "Reachability-Aware Pretraining for Efficient Target-Oriented Path Exploration in Temporal Knowledge Graph Reasoning",
+       "score": 0.547,
+       "published": "2026-07-16",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Poplar private heavy hitters",
+     "results": [
+      {
+       "arxiv_id": "2608.00440",
+       "title": "Poplar: A Scalable Pipeline for Human-Centric Image Dataset Synthesis",
+       "score": 0.44,
+       "published": "2026-08-01",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.06649",
+       "title": "POPS: Recovering Unlearned Multi-Modality Knowledge in MLLMs with Prompt-Optimized Parameter Shaking",
+       "score": 0.429,
+       "published": "2026-07-07",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2605.22756",
+       "title": "Lumberjack: Better Differentially Private Random Forests through Heavy Hitter Detection in Trees",
+       "score": 0.421,
+       "published": "2026-05-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2504.16438",
+       "title": "POPri: Private Federated Learning using Preference-Optimized Synthetic Data",
+       "score": 0.418,
+       "published": "2025-04-23",
+       "citation_count": 12
+      }
+     ]
+    },
+    {
+     "query": "verifiable distributed aggregation function",
+     "results": [
+      {
+       "arxiv_id": "2509.14444",
+       "title": "FedAVOT: Exact Distribution Alignment in Federated Learning via Masked Optimal Transport",
+       "score": 0.577,
+       "published": "2025-09-17",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2501.08512",
+       "title": "Ensuring Truthfulness in Distributed Aggregative Optimization",
+       "score": 0.569,
+       "published": "2025-01-15",
+       "citation_count": 2
+      },
+      {
+       "arxiv_id": "2509.05162",
+       "title": "Verifiability and Privacy in Federated Learning through Context-Hiding Multi-Key Homomorphic Authenticators",
+       "score": 0.568,
+       "published": "2025-09-05",
+       "citation_count": 0
+      },
+      {
+       "arxiv_id": "2609.16373",
+       "title": "Certified Uncertainty Propagation in One-Shot Federated Bayesian Models via Posterior Event Transport",
+       "score": 0.568,
+       "published": "2026-09-14",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "SimHash near-duplicate",
+     "results": [
+      {
+       "arxiv_id": "2501.01046",
+       "title": "FED: Fast and Efficient Dataset Deduplication Framework with GPU Acceleration",
+       "score": 0.602,
+       "published": "2025-01-02",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2607.01601",
+       "title": "SemHash-LLM: A Multi-Granularity Semantic Hashing Framework for Document Deduplication",
+       "score": 0.592,
+       "published": "2026-07-02",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2610.07402",
+       "title": "Rethinking Semantic ID Construction for Generative Recommendation: SimHash with Parallel Decoding and Semantic Alignment",
+       "score": 0.585,
+       "published": "2026-10-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2607.11591",
+       "title": "Similarity-Guided Curriculum Fine-Tuning of LLMs for Neural Architecture Synthesis",
+       "score": 0.578,
+       "published": "2026-07-13",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "CaMeL capabilities prompt injection",
+     "results": [
+      {
+       "arxiv_id": "2505.22852",
+       "title": "Operationalizing CaMeL: Strengthening LLM Defenses for Enterprise Deployment",
+       "score": 0.649,
+       "published": "2025-05-28",
+       "citation_count": 1
+      },
+      {
+       "arxiv_id": "2610.05640",
+       "title": "Can CaMeLs Talk? Securing Multi-Agent Systems Against Indirect Prompt Injection Attacks",
+       "score": 0.62,
+       "published": "2026-10-05",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2503.18813",
+       "title": "Defeating Prompt Injections by Design",
+       "score": 0.633,
+       "published": "2025-03-24",
+       "citation_count": 115
+      },
+      {
+       "arxiv_id": "2609.18674",
+       "title": "CaMeLoT: CaMeL orchestrated with Temporal logic for static verification and liveness",
+       "score": 0.541,
+       "published": "2026-09-16",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "OPA Rego bundle",
+     "results": [
+      {
+       "arxiv_id": "2610.29456",
+       "title": "RegoMender: A Multi-agent Framework for Automated Rego Policy Repair",
+       "score": 0.498,
+       "published": "2026-10-21",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2604.07428",
+       "title": "Regret-Aware Policy Optimization: Environment-Level Memory for Replay Suppression under Delayed Harm",
+       "score": 0.498,
+       "published": "2026-04-08",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2603.15799",
+       "title": "Prose2Policy (P2P): A Practical LLM Pipeline for Translating Natural-Language Access Policies into Executable Rego",
+       "score": 0.494,
+       "published": "2026-03-16",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2609.01335",
+       "title": "Bandits in Prod: Hyperparameter Optimization at Inference Time",
+       "score": 0.494,
+       "published": "2026-09-01",
+       "citation_count": null
+      }
+     ]
+    },
+    {
+     "query": "Sigstore keyless",
+     "results": [
+      {
+       "arxiv_id": "2608.06130",
+       "title": "Hardware Keystores for AI Agent Signing Workflows: A Zero-Trust MCP Enforcement Architecture",
+       "score": 0.56,
+       "published": "2026-08-06",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2606.17122",
+       "title": "TrustErase: Auditable Instant Machine Unlearning with Passport-Embedded Representations",
+       "score": 0.526,
+       "published": "2026-06-15",
+       "citation_count": null
+      },
+      {
+       "arxiv_id": "2601.16472",
+       "title": "Secure Intellicise Wireless Network: Agentic AI for Coverless Semantic Steganography Communication",
+       "score": 0.512,
+       "published": "2026-01-23",
+       "citation_count": 3
+      },
+      {
+       "arxiv_id": "2512.16518",
+       "title": "Poster: Recognizing Hidden-in-the-Ear Private Key for Reliable Silent Speech Interface Using Multi-Task Learning",
+       "score": 0.507,
+       "published": "2025-12-18",
+       "citation_count": 2
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "unique_papers": 528
+}
