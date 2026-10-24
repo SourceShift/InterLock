@@ -12,6 +12,7 @@ import dataclasses
 import functools
 import inspect
 import logging
+import shlex
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -41,6 +42,42 @@ def registered_modes() -> Dict[str, str]:
     return dict(_MODES)
 
 
+def _exposed_arguments(
+    sig: inspect.Signature, arguments: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Shape a bound call so rules can see every argument by its caller name.
+
+    ``arguments`` is a fresh dict of the bound arguments; any mapping nested in
+    it is copied here, so a rule that edits ``event.args`` cannot reach the
+    caller's mapping or the call. A keyword-variadic mapping is flattened into
+    the top level (a declared parameter of the same name wins) while the
+    variadic parameter keeps the caller's mapping under its own key. A variadic
+    positional tuple made only of strings is exposed as one shell-joined
+    command; anything else stays the original sequence. The call itself is
+    untouched - this is only what a rule sees.
+    """
+    for param in sig.parameters.values():
+        name = param.name
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            entries = arguments.get(name)
+            if not isinstance(entries, dict):
+                continue
+            entries = dict(entries)
+            # Keep the variadic key, but never the caller's mapping object.
+            arguments[name] = entries
+            for key, value in entries.items():
+                arguments.setdefault(key, value)
+        elif param.kind is inspect.Parameter.VAR_POSITIONAL:
+            value = arguments.get(name)
+            if (
+                isinstance(value, (tuple, list))
+                and value
+                and all(isinstance(item, str) for item in value)
+            ):
+                arguments[name] = shlex.join(value)
+    return arguments
+
+
 def _event_for(
     func: Callable,
     args: tuple,
@@ -48,9 +85,10 @@ def _event_for(
     principal: Optional[str],
 ) -> SensorEvent:
     try:
-        bound = inspect.signature(func).bind_partial(*args, **kwargs)
+        sig = inspect.signature(func)
+        bound = sig.bind_partial(*args, **kwargs)
         bound.apply_defaults()
-        arg_map = dict(bound.arguments)
+        arg_map = _exposed_arguments(sig, dict(bound.arguments))
     except Exception:
         arg_map = dict(kwargs)
     return SensorEvent(
@@ -116,7 +154,21 @@ def _apply_modified_args(
     )
     undeclared: Dict[str, Any] = {}
     for name, value in modified.items():
-        if name in sig.parameters:
+        param = sig.parameters.get(name)
+        if param is not None and param.kind is inspect.Parameter.VAR_KEYWORD:
+            # A rewrite naming the keyword-variadic parameter itself must stay
+            # a mapping; merge it so the caller's other entries survive.
+            if isinstance(value, dict):
+                bound.arguments[name] = {
+                    **bound.arguments.get(name, {}), **value,
+                }
+        elif param is not None and param.kind is inspect.Parameter.VAR_POSITIONAL:
+            # A positional-variadic rewrite has no safe slot: a string would be
+            # spread character by character. Leave the call untouched (see the
+            # guard docstring); only a tuple can be applied.
+            if isinstance(value, (tuple, list)):
+                bound.arguments[name] = tuple(value)
+        elif param is not None:
             bound.arguments[name] = value
         elif var_keyword is not None:
             bound.arguments[var_keyword] = {
@@ -184,6 +236,16 @@ def guard(
     :class:`NotApproved`, a :class:`Blocked`. Both receipts of one call share a
     ``call_id``, and a tool that raises after being allowed leaves a
     ``phase="outcome"`` receipt.
+
+    Rules see the call's arguments under the names the caller used: declared
+    parameters by name, each ``**kwargs`` entry flattened to the top level (the
+    variadic parameter keeps the caller's mapping under its own name), and a
+    ``*args`` tuple of strings as one shell-joined command. Only a string-only
+    variadic positional tuple is joined; anything else stays the original
+    sequence. The event's argument map is a copy, so a rule that edits it
+    cannot change the call. The wrapped callable always receives exactly what
+    the caller passed. Rewriting the positional-variadic parameter itself with
+    ``modified_args`` is not supported.
     """
 
     def decorator(func: Callable) -> Callable:

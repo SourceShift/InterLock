@@ -115,12 +115,22 @@ guard(policy_id=None, enforcement="blocking", principal=None) -> Callable
 Decorator for your own functions, sync or async. For each call it:
 
 1. builds an event whose `action` is the function's `__name__` and whose `args`
-   are the call's arguments bound to the signature, defaults filled in;
+   are the call's arguments bound to the signature, defaults filled in, with
+   every variadic argument exposed by name (see below);
 2. evaluates it and raises `Blocked` before the body runs on a block;
 3. on a modify, applies `modified_args` wherever each argument was passed:
    positionally, by keyword, or into `**kwargs`;
 4. runs the function and passes its return value through
    [`enforce_tool_result`](#enforce_tool_result), so result-phase rules apply too.
+
+Rules see every argument under the name the caller used. Declared parameters
+appear by name; each `**kwargs` entry is also flattened to the top level (the
+variadic parameter's own key still holds the caller's mapping), so a rule can
+look a keyword up directly. A `*args` tuple made only of strings is exposed as
+one shell-joined command under the variadic parameter's name; a tuple with any
+non-string item is left as the original sequence. This view is a copy, and the
+function is always called with exactly what the caller passed. Rewriting the
+positional-variadic parameter with `modified_args` is not supported.
 
 `policy_id` labels every decision on this tool that doesn't name a policy of its
 own, on the call side and the result side, so it shows up in `Blocked`, logs, and
