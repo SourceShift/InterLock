@@ -17,6 +17,7 @@ import child from "node:child_process";
 import fs from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import { BlockedError } from "../src/enforce.js";
 import { patchChildProcess } from "../src/exec.js";
@@ -113,6 +114,45 @@ test("exec: spawn is left alone - it returns a live handle", async () => {
     try {
       assert.equal(bag["spawn"], originalSpawn);
       assert.ok(!patch.covered.includes("child_process.spawn"));
+    } finally {
+      patch.uninstall();
+    }
+  });
+});
+
+test("exec: util.promisify keeps the resolved {stdout, stderr} shape", async () => {
+  const unpatched = await promisify(child.exec)("echo hi");
+  assert.deepEqual(Object.keys(unpatched).sort(), ["stderr", "stdout"]);
+
+  await withEngine(EFFECT_RULES, async ({ engine }) => {
+    const patch = patchChildProcess({ engine });
+    try {
+      const resolved = await promisify(child.exec)("echo hi");
+      // Without the copied custom implementation this would be a bare string.
+      assert.equal(typeof resolved, "object");
+      assert.deepEqual(Object.keys(resolved).sort(), Object.keys(unpatched).sort());
+      assert.equal(resolved.stdout.trim(), "hi");
+      assert.equal(typeof resolved.stderr, "string");
+    } finally {
+      patch.uninstall();
+    }
+  });
+});
+
+test("exec: util.promisify still decides before running", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine, dir }) => {
+    fs.mkdirSync(join(dir, "victim"));
+    fs.writeFileSync(join(dir, "victim", "victim.txt"), "still here");
+    const patch = patchChildProcess({ engine });
+    try {
+      await assert.rejects(
+        promisify(child.exec)(`rm -rf ${join(dir, "victim")}`),
+        BlockedError,
+      );
+      assert.equal(
+        fs.readFileSync(join(dir, "victim", "victim.txt"), "utf8"),
+        "still here",
+      );
     } finally {
       patch.uninstall();
     }

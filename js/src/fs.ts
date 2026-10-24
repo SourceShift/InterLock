@@ -14,10 +14,15 @@
  *   whose contract is to return a value now. This is the same platform fact that
  *   makes a synchronous JS tool call unguardable, and it is stated rather than
  *   papered over. `installInterceptors()` reports it in `uncovered`.
- * - **The handle-returning openers.** `open`/`opendir` return a `FileHandle` /
- *   `Dir` synchronously, and `createReadStream`/`createWriteStream` return a
- *   stream synchronously; a wrapper that must await first cannot produce them.
- *   (`createReadStream` is a *read* of a path, so it is listed too.)
+ * - **The synchronous stream openers.** `createReadStream` /
+ *   `createWriteStream` return a stream synchronously, which a wrapper that must
+ *   await a verdict first cannot produce. (`createReadStream` is a *read* of a
+ *   path, so it is listed too.)
+ *
+ * `open` and `opendir` **are** guarded. Their callback forms report through the
+ * callback, and their promise forms (`fs.promises.open`, `fs.promises.opendir`)
+ * already return a promise, so a decision-first wrapper fits both without
+ * stealing a synchronous handle.
  * - **ESM named imports.** `import { readFile } from "node:fs"` and
  *   `import * as fs from "node:fs"` bind to the original function at link time;
  *   no pure-JS patch can redirect them. Only `require("node:fs")` and
@@ -68,6 +73,8 @@ const FS_OPS: readonly EffectSpec[] = [
   { member: "realpath", action: "fs.realpath", fields: [at("path", 0), at("options", 1)] },
   { member: "readlink", action: "fs.readlink", fields: [at("path", 0), at("options", 1)] },
   { member: "utimes", action: "fs.utimes", fields: [at("path", 0), at("atime", 1), at("mtime", 2)] },
+  { member: "open", action: "fs.open", fields: [at("path", 0), at("flags", 1), at("mode", 2)] },
+  { member: "opendir", action: "fs.opendir", fields: [at("path", 0), at("options", 1)] },
 ];
 
 /**

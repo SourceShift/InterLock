@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { BlockedError } from "../src/enforce.js";
+import { BlockedError, Decision } from "../src/enforce.js";
 import { guardToolMap, guardToolRunner } from "../src/model.js";
 import { CONFORMANCE_RULES, withEngine } from "./harness.js";
 
@@ -121,4 +121,139 @@ test("model: guardToolRunner matches guardToolMap", async () => {
     assert.equal(await guarded("write_file", { path: "/etc/hosts" }), "ran");
     assert.deepEqual(calls[0], ["write_file", { path: "/tmp/quarantine" }]);
   });
+});
+
+test("model: trailing arguments reach the policy as positional_args", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const engine = {
+    async evaluate(event: { args: Record<string, unknown> }) {
+      seen.push(event.args);
+      return Decision.allow();
+    },
+  };
+  const calls: unknown[][] = [];
+  const tools = guardToolMap(
+    {
+      echo: async (...args: unknown[]) => {
+        calls.push(args);
+        return "ok";
+      },
+    },
+    { engine },
+  );
+  const context = { user: "u-1" };
+  const options = { timeout: 10 };
+  assert.equal(await tools.echo("hi", context, options), "ok");
+  assert.deepEqual(seen[0], { input: "hi", positional_args: [context, options] });
+  assert.deepEqual(calls[0], ["hi", context, options]);
+});
+
+test("model: a positional_args rewrite replaces the trailing arguments", async () => {
+  const engine = {
+    async evaluate(event: { args: Record<string, unknown> }) {
+      if (Array.isArray(event.args["positional_args"])) {
+        return Decision.modify({ positional_args: ["rewritten"] });
+      }
+      return Decision.allow();
+    },
+  };
+  const calls: unknown[][] = [];
+  const tools = guardToolMap(
+    {
+      echo: async (...args: unknown[]) => {
+        calls.push(args);
+        return "ok";
+      },
+    },
+    { engine },
+  );
+  assert.equal(await tools.echo("hi", "original"), "ok");
+  assert.deepEqual(calls[0], ["hi", "rewritten"]);
+});
+
+test("model: an object argument plus trailing arguments keeps both visible and unstripped", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const engine = {
+    async evaluate(event: { args: Record<string, unknown> }) {
+      seen.push(event.args);
+      return Decision.allow();
+    },
+  };
+  const calls: unknown[][] = [];
+  const tools = guardToolMap(
+    {
+      write_file: async (...args: unknown[]) => {
+        calls.push(args);
+        return "ok";
+      },
+    },
+    { engine },
+  );
+  const input = { path: "/tmp/x" };
+  const context = { user: "u-2" };
+  assert.equal(await tools.write_file(input, context), "ok");
+  assert.deepEqual(seen[0], { path: "/tmp/x", positional_args: [context] });
+  assert.deepEqual(calls[0], [{ path: "/tmp/x" }, context]);
+  assert.deepEqual(input, { path: "/tmp/x" }, "the caller's object is not mutated");
+});
+
+test("model: an object-only call keeps exactly the old event shape", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const engine = {
+    async evaluate(event: { args: Record<string, unknown> }) {
+      seen.push(event.args);
+      return Decision.allow();
+    },
+  };
+  const tools = guardToolMap(
+    { ping: async (_args: Record<string, unknown>) => "ok" },
+    { engine },
+  );
+  assert.equal(await tools.ping({ a: 1 }), "ok");
+  assert.deepEqual(seen[0], { a: 1 });
+});
+
+test("model: an unrepresentable trailing argument is omitted, not a failed call", async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const engine = {
+    async evaluate(event: { args: Record<string, unknown> }) {
+      seen.push(event.args);
+      return Decision.allow();
+    },
+  };
+  const calls: unknown[][] = [];
+  const tools = guardToolMap(
+    {
+      run: async (...args: unknown[]) => {
+        calls.push(args);
+        return "ok";
+      },
+    },
+    { engine },
+  );
+  // An SDK often appends a signal or a class-instance context. Neither can
+  // cross the wire; the guard must not block the call over it.
+  const signal = new AbortController().signal;
+  assert.equal(await tools.run("hi", signal), "ok");
+  assert.deepEqual(seen[0], { input: "hi" });
+  assert.equal(calls[0]?.length, 2);
+  assert.equal(calls[0]?.[1], signal, "the tool still receives the argument");
+});
+
+test("model: a caller's own positional_args key is not treated as a rewrite", async () => {
+  const calls: unknown[][] = [];
+  const tools = guardToolMap(
+    {
+      run: async (...args: unknown[]) => {
+        calls.push(args);
+        return "ok";
+      },
+    },
+    { engine: { async evaluate() { return Decision.allow(); } } },
+  );
+  const signal = new AbortController().signal;
+  const input = { positional_args: ["caller-owned"], path: "/tmp/x" };
+  assert.equal(await tools.run(input, signal), "ok");
+  assert.deepEqual(calls[0]?.[0], input, "the caller's key survives as data");
+  assert.equal(calls[0]?.[1], signal, "the real trailing argument is passed");
 });

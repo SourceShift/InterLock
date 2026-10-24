@@ -27,6 +27,8 @@ interface Hit {
   url: string;
   method: string;
   header: string | undefined;
+  /** Present only when the request carried a body. */
+  body?: string;
 }
 
 /** Run `body` against a throwaway server that records the requests it receives. */
@@ -35,12 +37,20 @@ async function withServer(
 ): Promise<void> {
   const hits: Hit[] = [];
   const server = http.createServer((req, res) => {
-    hits.push({
-      url: req.url ?? "",
-      method: req.method ?? "",
-      header: req.headers["x-test"] as string | undefined,
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const hit: Hit = {
+        url: req.url ?? "",
+        method: req.method ?? "",
+        header: req.headers["x-test"] as string | undefined,
+      };
+      if (chunks.length > 0) {
+        hit.body = Buffer.concat(chunks).toString("utf8");
+      }
+      hits.push(hit);
+      res.end("OK from server");
     });
-    res.end("OK from server");
   });
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
   const port = (server.address() as AddressInfo).port;
@@ -140,6 +150,88 @@ test("http: uninstall restores globalThis.fetch", async () => {
       assert.equal(globalThis.fetch, original);
       const res = await fetch(`${base}/after`);
       assert.equal(await res.text(), "OK from server");
+    });
+  });
+});
+
+test("http: a blocked Request input never reaches the server", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine }) => {
+    await withServer(async (base, hits) => {
+      const patch = patchFetch({ engine });
+      try {
+        // A `Request` is not a plain object; without recognition `urlOf` would
+        // produce "[object Request]" and the egress rule would never match.
+        await assert.rejects(fetch(new Request(`${base}/blockme`)), BlockedError);
+        assert.equal(hits.length, 0, "the request must not leave the process");
+      } finally {
+        patch.uninstall();
+      }
+    });
+  });
+});
+
+test("http: a benign Request keeps its method and headers", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine }) => {
+    await withServer(async (base, hits) => {
+      const patch = patchFetch({ engine });
+      try {
+        const request = new Request(`${base}/request`, {
+          method: "POST",
+          headers: { "x-test": "3" },
+        });
+        const res = await fetch(request);
+        assert.equal(await res.text(), "OK from server");
+        assert.deepEqual(hits, [{ url: "/request", method: "POST", header: "3" }]);
+      } finally {
+        patch.uninstall();
+      }
+    });
+  });
+});
+
+test("http: a MODIFY of a Request input rewrites the url and keeps its method", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine }) => {
+    await withServer(async (base, hits) => {
+      const patch = patchFetch({ engine });
+      try {
+        const request = new Request(`${base}/redirectme`, { method: "PUT" });
+        const res = await fetch(request);
+        assert.equal(await res.text(), "OK from server");
+        assert.deepEqual(hits, [{ url: "/target", method: "PUT", header: undefined }]);
+      } finally {
+        patch.uninstall();
+      }
+    });
+  });
+});
+
+test("http: rewriting a body-carrying Request forwards the body without consuming it", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine }) => {
+    await withServer(async (base, hits) => {
+      const patch = patchFetch({ engine });
+      try {
+        const request = new Request(`${base}/redirectme`, {
+          method: "POST",
+          body: "payload",
+        });
+        const res = await fetch(request);
+        assert.equal(await res.text(), "OK from server");
+        assert.deepEqual(hits, [
+          { url: "/target", method: "POST", header: undefined, body: "payload" },
+        ]);
+        assert.equal(
+          request.bodyUsed,
+          false,
+          "rebuilding must not consume the caller's body",
+        );
+        assert.equal(
+          await request.text(),
+          "payload",
+          "the caller's Request is still readable after the guard forwards it",
+        );
+      } finally {
+        patch.uninstall();
+      }
     });
   });
 });

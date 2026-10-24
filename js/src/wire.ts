@@ -179,6 +179,23 @@ function byCanonical(a: unknown, b: unknown): number {
 }
 
 /**
+ * Define an own enumerable property, including one literally named `__proto__`.
+ *
+ * `out[key] = value` invokes the inherited `__proto__` setter, which replaces
+ * the object's prototype instead of storing the key - so the key silently
+ * vanishes from `Object.keys`, the canonical JSON, and the frame. A computed
+ * definition creates the own key, which is what JSON and Python mean by it.
+ */
+function defineOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/**
  * Convert a JavaScript value to JSON, escaping what JSON lacks.
  *
  * Lossy by design, and the losses are named: a `Set` becomes a sorted list (JSON
@@ -239,7 +256,7 @@ export function encodeValue(value: unknown): unknown {
   }
   const out: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    out[key] = encodeValue(item);
+    defineOwn(out, key, encodeValue(item));
   }
   return out;
 }
@@ -277,7 +294,7 @@ export function decodeValue(value: unknown): unknown {
     }
     const out: Record<string, unknown> = {};
     for (const key of keys) {
-      out[key] = decodeValue(record[key]);
+      defineOwn(out, key, decodeValue(record[key]));
     }
     return out;
   }

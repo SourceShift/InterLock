@@ -213,6 +213,20 @@ configured with `http_fetch`, and either spelling works in a configured action
 set. An `execFile(file, args)` call is judged as the one command it runs, not as
 the bare program name.
 
+The JS client projects the call shapes applications actually use. Path-carrying
+fields (`path`, `dest`, `target`, `file`) are projected as **text**, so a policy
+sees a `Buffer` path decoded as UTF-8 and a `file://` `URL` as its filesystem
+path; binary payloads such as `writeFile` data are left as bytes, and the
+caller's original argument is replaced only when the policy rewrites it.
+`fs.open` and `fs.opendir` are decided before a handle exists, `fetch` accepts a
+`Request` input (its `url`, `method`, and `headers` are projected; its body is
+not inspected, and a rewritten url rebuilds around a clone so the caller's body
+stays unread), and `guardToolMap` exposes every wire-representable tool
+argument to the policy, with trailing arguments under `positional_args`. A
+trailing value the codec cannot send (an `AbortSignal`, a class instance) omits
+that key rather than blocking the call. `util.promisify` of a guarded function
+keeps the shape its custom implementation returns.
+
 ## Subprocesses
 
 When your agent runs a program (`subprocess.run`, a shell tool, generated code),

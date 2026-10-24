@@ -41,7 +41,7 @@ export interface Interceptors {
  * author can see at a glance that no rule on them will ever fire.
  */
 export const UNGUARDABLE: readonly string[] = [
-  // fs: synchronous variants, and the openers that return a handle/stream.
+  // fs: synchronous variants and the synchronous stream openers.
   "fs.readFileSync",
   "fs.writeFileSync",
   "fs.appendFileSync",
@@ -64,9 +64,7 @@ export const UNGUARDABLE: readonly string[] = [
   "fs.realpathSync",
   "fs.readlinkSync",
   "fs.utimesSync",
-  "fs.open",
   "fs.openSync",
-  "fs.opendir",
   "fs.createReadStream",
   "fs.createWriteStream",
   // child_process: a ChildProcess is returned synchronously.

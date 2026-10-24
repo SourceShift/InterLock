@@ -210,14 +210,25 @@ Each effect reaches your rules as an action with a namespaced name, so a raw
 
 | Action | Arguments your rule sees |
 |---|---|
-| `fs.readFile`, `fs.writeFile`, `fs.rm`, `fs.rename`, … (22 in total) | `path`, plus `data`, `dest`, `options`, etc. where the function takes them |
+| `fs.readFile`, `fs.writeFile`, `fs.rm`, `fs.rename`, `fs.open`, `fs.opendir`, … (24 in total) | `path`, plus `data`, `dest`, `options`, `flags`, etc. where the function takes them |
 | `child_process.exec` | `command`, `options` |
 | `child_process.execFile` | `command` (the file), `args`, `options` |
-| `http.fetch` | `url`, plus `method`, `headers`, `body` when given |
+| `http.fetch` | `url` (a string, `URL`, or `Request`), plus `method`, `headers`, `body` when given |
 
 A Python rule then reads `event.action == "fs.rm"` and `event.args["path"]`. A
 rewrite changes the argument (`path`, `command`, `url`), and the effect uses the
 rewritten value.
+
+Path-carrying arguments (`path`, `dest`, `target`, `file`) reach the rule as
+**text**: a `Buffer`/`Uint8Array` path is decoded as UTF-8, and a `file://`
+`URL` becomes a filesystem path (any other URL keeps its `href`). The caller's
+original argument is left untouched unless the policy actually rewrites it, and
+binary payloads such as `writeFile`'s `data` are never converted. A
+`fetch(new Request(...))` input contributes its own `url`, `method`, and
+`headers`; an explicit `init` still overrides them. A `Request` body is **not**
+inspected: when a rewritten url forces a rebuild, the guard clones the Request
+first, so the caller's body is forwarded rather than consumed and stays
+readable.
 
 ## Guard a model SDK's tools
 
@@ -239,9 +250,23 @@ result after, through the same `enforceToolCall` / `enforceToolResult` used
 everywhere else. So one rule behaves the same whether your agent uses MCP, a
 model SDK, or a hand-written loop.
 
-For `guardToolMap`: when a tool's first argument is a plain object, that object
-is what the policy sees and rewrites. Any other first argument (a string, a
+For `guardToolMap`: when a tool's first argument is a plain object, its own keys
+are what the policy sees and rewrites. Any other first argument (a string, a
 `Buffer`, nothing) is shown to the policy as `{ input: ... }`.
+
+Every trailing argument the wire can carry is visible too, under the reserved
+key `positional_args`: a tool called as `(input, context)` shows the policy
+`{ input, positional_args: [context] }`, and a MODIFY whose `positional_args` is
+an array replaces the trailing arguments. An object-only call keeps the shape
+above (no `positional_args`), and the synthetic key is never passed to the tool
+as a key of the first argument. If a first object already has its own
+`positional_args` key, the wrapper's reserved key wins.
+
+A trailing value the codec refuses - an `AbortSignal`, a class instance, a
+function - omits `positional_args` for the whole call rather than failing the
+call before the tool runs. The policy cannot see what cannot be sent, and the
+tool still receives the argument untouched. Positions are never compacted, so
+an index into `positional_args` always names the same real argument.
 
 ## What can't be guarded
 
@@ -259,14 +284,17 @@ gaps are permanent, so they're listed by name in `installInterceptors().uncovere
   the daemon's verdict before the effect, so anything that must return a value
   immediately is out of reach:
   - every `*Sync` function (`readFileSync`, `rmSync`, `execSync`, …)
-  - functions that return a live handle or stream: `fs.open`, `fs.opendir`,
-    `fs.createReadStream`, `fs.createWriteStream`, `child_process.spawn`,
-    `child_process.fork`
+  - functions that return a stream synchronously: `fs.createReadStream`,
+    `fs.createWriteStream`
+  - `child_process.spawn` and `child_process.fork`, which return a live
+    `ChildProcess`
   - `http.request`, `http.get`, `https.request`, `https.get`, which return a
     request object synchronously
 
-  `child_process.exec` and `execFile` **are** guarded, because their result
-  arrives through a callback and their return value is normally ignored.
+  `child_process.exec` and `execFile`, `fs.open` and `fs.opendir` **are**
+  guarded. Their callback forms report through the callback and their promise
+  forms (`fs.promises.open`, `fs.promises.opendir`) already return a promise, so
+  a decision-first wrapper does not steal a synchronous handle.
 - **Result checks on fs, exec, and fetch.** The interceptors check the call, not
   what it returns. An `fs` call can return a `Stats`, a `Dirent`, or a stream,
   which can't be sent to the daemon, so checking results would turn an ordinary
@@ -295,7 +323,16 @@ gaps are permanent, so they're listed by name in `installInterceptors().uncovere
   silently drop or corrupt, which could hand the engine an event with nothing to
   object to, and so allow it. Refusing turns that silent allow into a visible
   block. Bytes (`Buffer`, `Uint8Array`) and `Set`s are supported; everything else
-  must be plain JSON.
+  must be plain JSON. The one exception is a `guardToolMap` trailing argument:
+  an unrepresentable value omits `positional_args` instead of blocking the
+  call, so the guard never refuses a call over an argument it merely could not
+  show the policy.
+- **Path projection is textual, and lossy in one direction.** A `Buffer` path
+  reaches the policy as its UTF-8 string. That is the encoding a filesystem path
+  is made of, but a byte sequence that is not valid UTF-8 cannot round-trip
+  exactly; the rule sees the replacement-character form. A non-`file:` `URL` in
+  a path field keeps its `href` rather than throwing, and a `Request` body is
+  not inspected.
 - **No audit receipts from JS.** The Python side writes a signed receipt for each
   decision. Here the daemon already records the decision when it answers (start
   it with `--receipts`), so the JS client doesn't write a second, unsigned copy.
@@ -337,7 +374,7 @@ What the tests cover:
   blocked request never leaves the process.
 - `test/install.test.ts` pins the coverage report and checks that `uninstall`
   restores everything.
-- `test/model.test.ts` covers `guardToolMap` and `guardToolRunner`.
+- `test/model.test.ts` covers `guardToolMap` and `guardToolRunner`; `test/shapes.test.ts` covers the projection helpers and the event-only write-back rule.
 - `test/client.test.ts`, `test/mcp.test.ts`, and `test/wire.test.ts` cover the
   client, the MCP wrapper, and the protocol codec.
 - `test/timeout.test.ts` checks the default timeout and the `timeout: null`

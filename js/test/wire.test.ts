@@ -298,3 +298,26 @@ test("responseFrame: a decision encodes to the frozen response keys", () => {
   ]);
   assert.equal(frame["verdict"], Verdict.BLOCK);
 });
+
+test("encodeValue/decodeValue: a literal __proto__ key round-trips as an own key", () => {
+  const source = { ["__proto__"]: { polluted: true } };
+  const encoded = encodeValue(source) as Record<string, unknown>;
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(encoded, "__proto__"),
+    "the encoder must keep __proto__ as an own key",
+  );
+  assert.equal(canonical(encoded), '{"__proto__":{"polluted":true}}');
+
+  const back = decodeValue(encoded) as Record<string, unknown>;
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(back, "__proto__"),
+    "the decoder must keep __proto__ as an own key",
+  );
+  assert.deepEqual(back["__proto__"], { polluted: true });
+  assert.equal(Object.getPrototypeOf(back), Object.prototype);
+  assert.equal(
+    (Object.prototype as unknown as Record<string, unknown>)["polluted"],
+    undefined,
+    "Object.prototype must not be polluted",
+  );
+});

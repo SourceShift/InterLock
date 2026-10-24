@@ -4,7 +4,9 @@
  * `fetch` is guarded under the action name `http.fetch` (namespaced, so a
  * policy can tell a raw egress call from an MCP tool that happens to be named
  * "fetch"). The event carries a *narrowed* view of the request - `url`,
- * `method`, `headers`, and a string/Buffer `body` - not the raw `init`.
+ * `method`, `headers`, and a string/Buffer `body` - not the raw `init`. A
+ * `Request` input is recognised as such and contributes its own `url`, `method`
+ * and `headers`; an explicit `init` still overrides them.
  *
  * ## Why the view is narrowed
  *
@@ -30,6 +32,11 @@ import { isPlainObject } from "./enforce.js";
 import type { EnforceOptions } from "./mcp.js";
 import { enforceToolCall } from "./mcp.js";
 
+/** Is `input` a `Request`? Guarded, so a runtime without one does not throw. */
+function isRequest(input: unknown): input is Request {
+  return typeof Request !== "undefined" && input instanceof Request;
+}
+
 /** The URL a `fetch` call is aimed at, as a string. */
 function urlOf(input: unknown): string {
   if (typeof input === "string") {
@@ -38,8 +45,10 @@ function urlOf(input: unknown): string {
   if (input instanceof URL) {
     return input.href;
   }
+  if (isRequest(input)) {
+    return input.url;
+  }
   if (isPlainObject(input) && typeof input["url"] === "string") {
-    // A `Request` object.
     return input["url"] as string;
   }
   return String(input);
@@ -60,14 +69,26 @@ function plainHeaders(value: unknown): Record<string, string> | undefined {
   return undefined;
 }
 
-/** The policy-visible slice of a `fetch` call. */
+/**
+ * The policy-visible slice of a `fetch` call.
+ *
+ * A `Request` input contributes its `url`, `method` and flattened `headers`; an
+ * explicit `init` overrides any of them, exactly as it does for the real call.
+ * Its body is deliberately not read: inspecting it would consume the stream the
+ * caller still means to send.
+ */
 function fetchArgs(input: unknown, init: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = { url: urlOf(input) };
   const bag = isPlainObject(init) ? init : {};
-  if (typeof bag["method"] === "string") {
-    out["method"] = bag["method"];
+  const request = isRequest(input) ? input : undefined;
+  const method =
+    typeof bag["method"] === "string" ? bag["method"] : request?.method;
+  if (typeof method === "string") {
+    out["method"] = method;
   }
-  const headers = plainHeaders(bag["headers"]);
+  const headers = plainHeaders(
+    bag["headers"] !== undefined ? bag["headers"] : request?.headers,
+  );
   if (headers !== undefined) {
     out["headers"] = headers;
   }
@@ -103,17 +124,36 @@ export function patchFetch(options: EnforceOptions): FetchPatch {
     init?: FetchInit,
   ): Promise<Response> => {
     const url = urlOf(input);
-    const safe = await enforceToolCall("http.fetch", fetchArgs(input, init), options);
+    const projected = fetchArgs(input, init);
+    const safe = await enforceToolCall("http.fetch", projected, options);
 
     // Copy the original init so unprojected fields (signal, credentials, ...)
-    // survive, then write back only what the policy saw fit to rewrite.
+    // survive, then write back only what the policy actually changed - a value
+    // identical to the projected view is the caller's own, not a rewrite.
     const next: Record<string, unknown> = isPlainObject(init) ? { ...init } : {};
     for (const key of ["method", "headers", "body"]) {
-      if (Object.prototype.hasOwnProperty.call(safe, key)) {
+      if (
+        Object.prototype.hasOwnProperty.call(safe, key) &&
+        !Object.is(safe[key], projected[key])
+      ) {
         next[key] = safe[key];
       }
     }
-    const target: unknown = safe["url"] !== url ? safe["url"] : input;
+
+    // A rewritten url changes what must be fetched. For a Request input the
+    // original carries method, headers and signal, so rebuild around a *clone*:
+    // passing the Request itself as `init` transfers its body, which marks the
+    // caller's Request used as soon as the rebuilt request is read. The clone
+    // shares the body source but leaves the original untouched, so the body is
+    // forwarded rather than inspected. A body already used or locked cannot be
+    // cloned (and could not have been fetched either), so that rejects rather
+    // than silently sending an empty body - fail-closed, and documented.
+    let target: unknown = input;
+    if (safe["url"] !== url) {
+      target = isRequest(input)
+        ? new Request(safe["url"] as string, input.clone())
+        : safe["url"];
+    }
     return original(target as FetchInput, next as FetchInit);
   };
 

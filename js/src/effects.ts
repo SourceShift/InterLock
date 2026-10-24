@@ -23,8 +23,51 @@
  * guarded" section states the consequence.
  */
 
+import { fileURLToPath } from "node:url";
+
 import type { EnforceOptions } from "./mcp.js";
 import { enforceToolCall } from "./mcp.js";
+
+/**
+ * The argument names that carry a path. Only these are projected: a `data`
+ * payload on `writeFile` is bytes the file's contents actually are, and turning
+ * it into text would corrupt it.
+ */
+const PATH_FIELDS: ReadonlySet<string> = new Set(["path", "dest", "target", "file"]);
+
+/**
+ * The `util.promisify` hook. Node consults this symbol on the function it is
+ * asked to promisify; a wrapper that drops it changes the shape of the resolved
+ * value (`exec` would resolve a bare string instead of `{stdout, stderr}`).
+ */
+const PROMISIFY_CUSTOM = Symbol.for("nodejs.util.promisify.custom");
+
+/**
+ * Project one path value into the text a rule matches on.
+ *
+ * A `Buffer`/`Uint8Array` path becomes its UTF-8 string (spec: the bytes of a
+ * path ARE the filename, encoded in UTF-8 - the conversion is lossy only for
+ * byte sequences that are not valid UTF-8, which is stated in `js/README.md`).
+ * A `file:` URL becomes its filesystem path; any other URL keeps its `href`
+ * rather than throwing, since a path field can legitimately hold one.
+ */
+function projectPath(value: unknown): unknown {
+  if (value instanceof Uint8Array) {
+    // Buffer is a Uint8Array subclass, so this covers both.
+    return Buffer.from(value).toString("utf8");
+  }
+  if (value instanceof URL) {
+    if (value.protocol === "file:") {
+      try {
+        return fileURLToPath(value);
+      } catch {
+        return value.href;
+      }
+    }
+    return value.href;
+  }
+  return value;
+}
 
 /** One policy-visible field, named for the policy, at a call position. */
 export interface FieldSpec {
@@ -73,16 +116,25 @@ export function projectArgs(
     if (value === undefined || typeof value === "function") {
       continue;
     }
-    out[field.name] = value;
+    out[field.name] = PATH_FIELDS.has(field.name) ? projectPath(value) : value;
   }
   return out;
 }
 
-/** Write the (possibly rewritten) fields back into a fresh argument list. */
+/**
+ * Write the (possibly rewritten) fields back into a fresh argument list.
+ *
+ * `projected` is the view `projectArgs` produced. A field whose policy value is
+ * that same projected value is *not* written back: projection is for the event
+ * only, so an ALLOW leaves the caller's original `Buffer`/`URL` argument (or
+ * any other projected form) exactly where it was. Only a value the policy
+ * actually changed reaches the call.
+ */
 export function applyMods(
   args: readonly unknown[],
   fields: readonly FieldSpec[],
   safe: Record<string, unknown>,
+  projected?: Record<string, unknown>,
 ): unknown[] {
   const out = [...args];
   for (const field of fields) {
@@ -90,7 +142,11 @@ export function applyMods(
       field.index < out.length &&
       Object.prototype.hasOwnProperty.call(safe, field.name)
     ) {
-      out[field.index] = safe[field.name];
+      const value = safe[field.name];
+      if (projected !== undefined && Object.is(value, projected[field.name])) {
+        continue;
+      }
+      out[field.index] = value;
     }
   }
   return out;
@@ -108,9 +164,17 @@ export function applyMods(
  *
  * What that trades away is the *return value*: it becomes a `Promise` where the
  * original returned one synchronously. That is why the members whose caller
- * depends on the return value - a `ChildProcess`, a `ClientRequest`, a
- * `FileHandle` - are not in any spec table: they cannot be awaited into
- * existence.
+ * depends on a synchronous return value - a `ChildProcess`, a `ClientRequest` -
+ * are not in any spec table: they cannot be awaited into existence. `fs.open`
+ * and `fs.opendir` *are* guarded, because their promise surfaces already return
+ * a `Promise<FileHandle>` / `Promise<Dir>` and their callback surfaces report
+ * through the callback.
+ *
+ * `util.promisify` reads a function's `Symbol.for("nodejs.util.promisify.custom")`.
+ * When the original carries one (`exec`/`execFile` do), it is copied onto the
+ * wrapper - itself wrapped so the decision still comes first and a rewrite still
+ * applies - or `util.promisify` would resolve the custom implementation's raw
+ * shape instead of the documented one.
  */
 export function guardCall(
   action: string,
@@ -118,12 +182,15 @@ export function guardCall(
   fields: readonly FieldSpec[],
   options: EnforceOptions,
 ): AnyFn {
+  const decide = async (args: readonly unknown[], invoke: AnyFn): Promise<unknown> => {
+    const projected = projectArgs(args, fields);
+    const safe = await enforceToolCall(action, projected, options);
+    return invoke(...applyMods(args, fields, safe, projected));
+  };
+
   const wrapper = (...args: unknown[]): unknown => {
     const callback = args.length > 0 ? args[args.length - 1] : undefined;
-    const pending = (async (): Promise<unknown> => {
-      const safe = await enforceToolCall(action, projectArgs(args, fields), options);
-      return original(...applyMods(args, fields, safe));
-    })();
+    const pending = decide(args, original);
     if (typeof callback !== "function") {
       return pending;
     }
@@ -133,6 +200,15 @@ export function guardCall(
     return undefined;
   };
   (wrapper as unknown as Record<symbol, unknown>)[GUARDED] = action;
+
+  const custom = (original as unknown as Record<symbol, unknown>)[PROMISIFY_CUSTOM];
+  if (typeof custom === "function") {
+    // The custom implementation always returns a promise and never takes a
+    // callback, so it gets the decision-first path without callback routing.
+    (wrapper as unknown as Record<symbol, unknown>)[PROMISIFY_CUSTOM] = (
+      ...args: unknown[]
+    ): Promise<unknown> => decide(args, custom as AnyFn);
+  }
   return wrapper;
 }
 

@@ -11,18 +11,60 @@
  * 5. `uninstall` puts every original function back;
  * 6. the documented ESM hole, as an executable fact: a *named* import and the
  *    namespace's own function binding bypass the guard, while
- *    `ns.promises.readFile` (a member of the live object) does not.
+ *    `ns.promises.readFile` (a member of the live object) does not;
+ * 7. path shapes are projected as text - a `Buffer` path and a `file://` `URL`
+ *    reach a path rule as the path string, so the rule can match;
+ * 8. `open` and `opendir` are decided in both the callback and promise shapes,
+ *    and a benign open still returns a usable handle.
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import * as fsNs from "node:fs";
 import { readFile as namedReadFile } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { tmpdir } from "node:os";
 import test from "node:test";
 
-import { BlockedError } from "../src/enforce.js";
+import { BlockedError, Decision } from "../src/enforce.js";
 import { patchFs } from "../src/fs.js";
+import type { Engine } from "../src/mcp.js";
 import { EFFECT_RULES, withEngine } from "./harness.js";
+
+/**
+ * An in-process engine for the `open`/`opendir` cases. `EFFECT_ENGINE` has no
+ * rule for those actions (it is Python and out of scope), so this returns BLOCK
+ * for a sensitive path and ALLOW otherwise. The interceptor under test is the
+ * real one.
+ */
+function handleEngine(): Engine {
+  return {
+    async evaluate(event) {
+      if (
+        (event.action === "fs.open" || event.action === "fs.opendir") &&
+        String(event.args["path"] ?? "").includes("blockme")
+      ) {
+        return Decision.block("sensitive path", "p.shape", "path");
+      }
+      return Decision.allow();
+    },
+  };
+}
+
+/** Drive a callback-style open as a promise, so `await` can observe it. */
+function openWith(
+  fn: (...args: any[]) => any,
+  path: string,
+  flags: string,
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    fn(path, flags, (err: Error | null, handle: unknown) =>
+      err ? reject(err) : resolve(handle),
+    );
+  });
+}
+
 
 type Callback = (err: Error | null, data: Buffer) => void;
 
@@ -122,4 +164,134 @@ test("fs: the ESM hole - named imports bypass, ns.promises does not", async () =
       patch.uninstall();
     }
   });
+});
+
+test("fs: a Buffer path is projected as text, so a path rule matches", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine, dir }) => {
+    const target = join(dir, "blockme-buffer.txt");
+    fs.writeFileSync(target, "REAL CONTENT");
+    const patch = patchFs({ engine });
+    try {
+      // The rule matches the token "blockme" in the path *string*: a raw Buffer
+      // would reach it as a bytes envelope and match nothing.
+      await assert.rejects(fs.promises.readFile(Buffer.from(target), "utf8"), BlockedError);
+      assert.equal(fs.readFileSync(target, "utf8"), "REAL CONTENT");
+    } finally {
+      patch.uninstall();
+    }
+  });
+});
+
+test("fs: a file:// URL path is projected as text", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine, dir }) => {
+    const target = join(dir, "blockme-url.txt");
+    fs.writeFileSync(target, "REAL CONTENT");
+    const patch = patchFs({ engine });
+    try {
+      await assert.rejects(
+        fs.promises.readFile(pathToFileURL(target), "utf8"),
+        BlockedError,
+      );
+    } finally {
+      patch.uninstall();
+    }
+  });
+});
+
+test("fs: a benign Buffer path still reads, and the caller's Buffer is not replaced", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine, dir }) => {
+    fs.writeFileSync(join(dir, "ok.txt"), "hello");
+    const pathBuffer = Buffer.from(join(dir, "ok.txt"));
+    const patch = patchFs({ engine });
+    try {
+      assert.equal(await fs.promises.readFile(pathBuffer, "utf8"), "hello");
+      // The original argument list was used as-is; projection is event-only.
+      assert.equal(pathBuffer.toString("utf8"), join(dir, "ok.txt"));
+      assert.ok(Buffer.isBuffer(pathBuffer));
+    } finally {
+      patch.uninstall();
+    }
+  });
+});
+
+test("fs: fs.promises.open decides before the handle exists", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "il-open-"));
+  try {
+    const blocked = join(dir, "blockme.txt");
+    const allowed = join(dir, "ok.txt");
+    fs.writeFileSync(blocked, "REAL CONTENT");
+    fs.writeFileSync(allowed, "hello");
+    const patch = patchFs({ engine: handleEngine() });
+    try {
+      assert.ok(patch.covered.includes("fs.open"));
+      assert.ok(patch.covered.includes("fs.opendir"));
+
+      await assert.rejects(fs.promises.open(blocked, "r"), BlockedError);
+
+      const handle = await fs.promises.open(allowed, "r");
+      try {
+        assert.equal(await handle.readFile("utf8"), "hello");
+      } finally {
+        await handle.close();
+      }
+
+      // The blocked file is still readable through the sync API, which is not
+      // guarded - proof the refusal above was the guard, not the disk.
+      assert.equal(fs.readFileSync(blocked, "utf8"), "REAL CONTENT");
+    } finally {
+      patch.uninstall();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("fs: callback-style open receives the refusal in its callback and a handle otherwise", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "il-open-cb-"));
+  try {
+    const blocked = join(dir, "blockme.txt");
+    const allowed = join(dir, "ok.txt");
+    fs.writeFileSync(blocked, "REAL CONTENT");
+    fs.writeFileSync(allowed, "hello");
+    const patch = patchFs({ engine: handleEngine() });
+    try {
+      await assert.rejects(openWith(fs.open, blocked, "r"), BlockedError);
+      // The callback surface reports a numeric file descriptor, not a
+      // `FileHandle`; the promise surface (above) hands back the handle.
+      const fd = await openWith(fs.open, allowed, "r");
+      assert.equal(typeof fd, "number");
+      assert.ok(fd >= 0);
+      fs.closeSync(fd);
+    } finally {
+      patch.uninstall();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("fs: opendir decides before the directory is listed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "il-opendir-"));
+  try {
+    const blocked = join(dir, "blockme");
+    const allowed = join(dir, "ok");
+    fs.mkdirSync(blocked);
+    fs.mkdirSync(allowed);
+    fs.writeFileSync(join(allowed, "a.txt"), "a");
+    const patch = patchFs({ engine: handleEngine() });
+    try {
+      await assert.rejects(fs.promises.opendir(blocked), BlockedError);
+      const listing = await fs.promises.opendir(allowed);
+      const names: string[] = [];
+      // `for await` closes the `Dir` when the iteration finishes.
+      for await (const entry of listing) {
+        names.push(entry.name);
+      }
+      assert.deepEqual(names, ["a.txt"]);
+    } finally {
+      patch.uninstall();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

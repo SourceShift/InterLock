@@ -18,7 +18,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { BlockedError } from "../src/enforce.js";
-import { installInterceptors } from "../src/install.js";
+import { installInterceptors, UNGUARDABLE } from "../src/install.js";
 import type { Engine } from "../src/mcp.js";
 import { EFFECT_RULES, withEngine } from "./harness.js";
 
@@ -36,6 +36,32 @@ test("install: the coverage report names what is and is not guarded", async () =
       ]) {
         assert.ok(interceptors.uncovered.includes(action), `uncovered: ${action}`);
       }
+    } finally {
+      interceptors.uninstall();
+    }
+  });
+});
+
+test("install: open and opendir are guarded, and no action is both covered and uncovered", async () => {
+  await withEngine(EFFECT_RULES, async ({ engine }) => {
+    const interceptors = installInterceptors({ engine });
+    try {
+      for (const action of ["fs.open", "fs.opendir"]) {
+        assert.ok(interceptors.covered.includes(action), `covered: ${action}`);
+        assert.ok(
+          !interceptors.uncovered.includes(action),
+          `uncovered must not name a guarded action: ${action}`,
+        );
+      }
+      const overlap = interceptors.covered.filter((action) =>
+        interceptors.uncovered.includes(action),
+      );
+      assert.deepEqual(overlap, [], "covered and uncovered must be disjoint");
+      assert.deepEqual(
+        interceptors.uncovered,
+        [...UNGUARDABLE],
+        "the report names exactly the exported unguardable list",
+      );
     } finally {
       interceptors.uninstall();
     }
