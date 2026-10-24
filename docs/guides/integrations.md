@@ -57,9 +57,19 @@ accepts `engine=`, `enforcement=`, and `principal=`.
 
 The official SDK's `CallToolResult` is understood: its text content is what your
 result rules read. `origin=` tells the MCP trust detectors which server the
-session talks to; a server label the model slips into the arguments is dropped.
-Checking *which servers* you connect to and whether their tools changed takes a
-few more lines. The [MCP guide](mcp.md) covers that.
+session talks to. Labels are trust facts, so the session puts them on the
+event's trusted `labels` channel rather than in its arguments, and the detectors
+read them there.
+
+Reserved `__*__` keys (`__origin__`, `__schema__`, `__attestation__`,
+`__tools__`) in model-produced arguments are stripped at every boundary before
+an event is built: an agent hook payload, a sidecar frame, `@guard`'s
+`**kwargs`, an `enforce_tool_call` argument dict, and a result payload. A model
+that emits `{"__origin__": "github"}` therefore cannot claim a trusted server.
+Only an integration that knows the fact - `guard_mcp_session(origin=...,
+schemas=...)` - can set it, and the label is never sent to the server. Checking
+*which servers* you connect to and whether their tools changed takes a few more
+lines. The [MCP guide](mcp.md) covers that.
 
 ## LangChain tools
 

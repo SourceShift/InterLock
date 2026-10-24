@@ -13,7 +13,7 @@ from typing import Iterable, Optional
 
 from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
-from ..event import SensorEvent
+from ..event import SensorEvent, trust_label, trust_label_source
 from ..policy.engine import Rule
 
 POLICY_ID = "mcp_elicitation"
@@ -28,12 +28,15 @@ def mcp_elicitation_guard(allow_servers: Iterable[str] = ()) -> Rule:
     def rule(event: SensorEvent) -> Optional[Decision]:
         if not action_matches(event.action, _elicitation_actions):
             return None
-        args = event.args if isinstance(event.args, dict) else {}
-        origin = args.get("__origin__")
+        origin = trust_label(event, "__origin__")
         if isinstance(origin, str) and origin in allowed:
             return None
         return Decision.block("mcp_elicitation: server {} may not ask the user for input".format(
             origin if isinstance(origin, str) else "(unlabelled)"), POLICY_ID,
-            attributed_to="__origin__")
+            attributed_to=(
+                None
+                if trust_label_source(event, "__origin__") == "labels"
+                else "__origin__"
+            ))
 
     return rule

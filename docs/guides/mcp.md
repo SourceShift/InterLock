@@ -184,8 +184,9 @@ What the session wrapper does with labels:
   # -> Blocked: blocked action 'paste': mcp_trust_registry: untrusted origin <unknown>
   ```
 
-- `origin="github"` adds `__origin__` to every call, and `schemas={tool: schema}`
-  adds `__schema__` for the tools you list.
+- `origin="github"` sets the `__origin__` label on every call, and
+  `schemas={tool: schema}` sets `__schema__` for the tools you list. They ride
+  the event's trusted `labels` channel, out of band from the arguments.
 - The labels exist only for the policy check. They're removed before the request
   goes to the server, as the echoes above show.
 

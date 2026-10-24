@@ -1,14 +1,14 @@
 """MCP tool surface baseline: a listing that changed is a new admission.
 
 ``mcp_tool_pinning`` owns per-tool, call-time identity: a tool the operator
-*pinned*, checked only when a *call* presents its declared schema under
-``args["__schema__"]``. It has no opinion about a tool nobody pinned, and it
+*pinned*, checked only when a *call* presents its declared schema under the
+``__schema__`` label. It has no opinion about a tool nobody pinned, and it
 never looks at the server's listing as a whole. This Rule is the complementary
 axis: the **surface** - the whole tool listing - at **admission/listing**
 time. It fires on listing events (``tools/list``) where the pin rule fires on
-call events, and it reads the listing payload (``args["__tools__"]``) where
-the pin rule reads ``args["__schema__"]``, so the two cannot both fire on one
-event and the engine's first-non-ALLOW order cannot make them race.
+call events, and it reads the listing payload (``__tools__``) where the pin
+rule reads ``__schema__``, so the two cannot both fire on one event and the
+engine's first-non-ALLOW order cannot make them race.
 
 Division of labour with ``mcp_server_attestation`` (R6b): that rule binds an
 *identity* to the listing digest the server itself *presents* - self-
@@ -64,8 +64,10 @@ fresh baseline. Without a registry the rule still detects drift; only the
 revocation is absent.
 
 The listing event shape is fixed: action ``tools/list`` (the MCP protocol
-method for a listing) with the listing under ``args["__tools__"]`` and the
-server under ``args["__origin__"]``. A listing event has no tool name to mine
+method for a listing) with the listing under the ``__tools__`` label and the
+server under the ``__origin__`` label. Both are read from the event's trusted
+``labels`` channel first, with ``args`` as the documented fallback for an
+event an integration built by hand. A listing event has no tool name to mine
 a server prefix from - unlike a call's dotted action name - so an unlabelled
 listing is out of scope (``mcp_trust_registry`` is the rule that refuses
 unlabelled traffic), as is any event with another action: calls are the pin
@@ -82,7 +84,7 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from ..enforce import Decision
-from ..event import SensorEvent
+from ..event import SensorEvent, trust_label, trust_label_source
 from ..policy.engine import Rule
 from .mcp_capability_lease import LeaseRegistry
 from .mcp_server_attestation import _ORIGIN_KEY, _TOOLS_KEY, listing_digest
@@ -95,19 +97,17 @@ POLICY_ID = "mcp_surface_baseline"
 _LISTING_ACTION = "tools/list"
 
 
-def _listing_server(args: object) -> Optional[str]:
+def _listing_server(event: SensorEvent) -> Optional[str]:
     """Resolve the server a listing event belongs to: the explicit label.
 
     A listing event's action is the protocol method (``tools/list``), not a
     server-qualified tool name, so there is no dotted prefix to fall back to -
-    unlike a call event. Args are attacker-influenced and may be anything; a
-    non-mapping args or a blank/non-str label means "no server named", which
-    the caller treats as out of scope rather than refusing on the label's
-    behalf (mcp_trust_registry owns that refusal).
+    unlike a call event. The trusted ``labels`` channel wins; ``args`` is the
+    hand-built-event fallback, and a blank/non-str value means "no server
+    named", which the caller treats as out of scope rather than refusing on
+    the label's behalf (mcp_trust_registry owns that refusal).
     """
-    if not isinstance(args, dict):
-        return None
-    origin = args.get(_ORIGIN_KEY)
+    origin = trust_label(event, _ORIGIN_KEY)
     if isinstance(origin, str) and origin.strip():
         return origin
     return None
@@ -130,10 +130,10 @@ def mcp_surface_baseline(leases: Optional[LeaseRegistry] = None) -> Rule:
     def rule(event: SensorEvent) -> Optional[Decision]:
         if event.action != _LISTING_ACTION:
             return None
-        server = _listing_server(event.args)
+        server = _listing_server(event)
         if server is None:
             return None
-        tools = event.args.get(_TOOLS_KEY) if isinstance(event.args, dict) else None
+        tools = trust_label(event, _TOOLS_KEY)
         fingerprint = listing_digest(tools)
         baseline = baselines.get(server)
         if fingerprint is None:
@@ -147,7 +147,11 @@ def mcp_surface_baseline(leases: Optional[LeaseRegistry] = None) -> Rule:
                 "{}: unusable tool listing for {} (admitted surface not"
                 " verifiable)".format(POLICY_ID, server),
                 policy_id=POLICY_ID,
-                attributed_to=_TOOLS_KEY,
+                attributed_to=(
+                    None
+                    if trust_label_source(event, _TOOLS_KEY) == "labels"
+                    else _TOOLS_KEY
+                ),
             )
         if baseline is None:
             baselines[server] = fingerprint
@@ -161,7 +165,11 @@ def mcp_surface_baseline(leases: Optional[LeaseRegistry] = None) -> Rule:
                 POLICY_ID, server
             ),
             policy_id=POLICY_ID,
-            attributed_to=_TOOLS_KEY,
+            attributed_to=(
+                None
+                if trust_label_source(event, _TOOLS_KEY) == "labels"
+                else _TOOLS_KEY
+            ),
         )
 
     return rule

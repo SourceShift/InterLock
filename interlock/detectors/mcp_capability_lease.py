@@ -23,12 +23,12 @@ not "let it through".
 
 Semantics:
 
-- subject: resolved the way ``mcp_trust_registry`` resolves an origin - an
-  explicit ``args["__origin__"]`` label first (per-call, and not chosen by
-  the untrusted server), else the prefix of a dotted action name
-  (``"github.create_issue"`` -> ``"github"``). An event that names no
-  subject at all is out of scope: this rule leases servers, and a call that
-  cannot name one is left to the rules that police that failure.
+- subject: resolved the way ``mcp_trust_registry`` resolves an origin - the
+  ``__origin__`` label first (from the event's trusted ``labels`` channel,
+  with ``args`` as the hand-built-event fallback), else the prefix of a
+  dotted action name (``"github.create_issue"`` -> ``"github"``). An event
+  that names no subject at all is out of scope: this rule leases servers, and
+  a call that cannot name one is left to the rules that police that failure.
 - capability: the event's full action name. A lease covers an event when the
   subjects are equal and the lease's capability is that action name, or
   :data:`ANY_CAPABILITY` - a grant over every capability on the subject.
@@ -69,7 +69,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
-from ..event import SensorEvent
+from ..event import SensorEvent, trust_label, trust_label_source
 from ..policy.engine import Rule
 
 POLICY_ID = "mcp_capability_lease"
@@ -218,16 +218,14 @@ class LeaseRegistry:
         return covering, latest
 
 
-def _origin_from_args(args: Any) -> Optional[str]:
-    """Resolve an explicit ``args["__origin__"]`` label, if it is usable.
+def _origin_from_label(event: SensorEvent) -> Optional[str]:
+    """Resolve the ``__origin__`` label, if it is usable.
 
-    Args are attacker-influenced and may be anything - None, an int, a list.
-    A non-mapping args, a missing key, a non-str or blank label all mean "no
-    label here", so the caller falls through to the dotted-name source.
+    The trusted ``labels`` channel wins; ``args`` is the hand-built-event
+    fallback. A missing key or a non-str/blank value means "no label here", so
+    the caller falls through to the dotted-name source.
     """
-    if not isinstance(args, dict):
-        return None
-    origin = args.get(_ORIGIN_KEY)
+    origin = trust_label(event, _ORIGIN_KEY)
     if isinstance(origin, str) and origin.strip():
         return origin
     return None
@@ -252,14 +250,18 @@ def _origin_from_action(action: Any) -> Optional[str]:
 def _resolve_subject(event: SensorEvent) -> Tuple[Optional[str], Optional[str]]:
     """Resolve the server this event belongs to; return (subject, arg key).
 
-    The arg key is ``__origin__`` when the subject was read from an explicit
-    label, else None when it was inferred from the dotted action name - an
-    inferred subject names no argument, so a denial cannot attribute one.
-    Both None means the event names no subject this rule leases.
+    The arg key is ``__origin__`` when the subject was read from an argument
+    label, else None when it came from the trusted channel or was inferred
+    from the dotted action name - neither names an argument the model could
+    have written. Both None means the event names no subject this rule leases.
     """
-    labelled = _origin_from_args(event.args)
+    labelled = _origin_from_label(event)
     if labelled is not None:
-        return labelled, _ORIGIN_KEY
+        return labelled, (
+            _ORIGIN_KEY
+            if trust_label_source(event, _ORIGIN_KEY) == "args"
+            else None
+        )
     if action_matches(event.action, _protocol_actions):
         return None, None
     return _origin_from_action(event.action), None

@@ -36,7 +36,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..enforce import Decision, Verdict
-from ..event import SensorEvent, result_payload
+from ..event import SensorEvent, result_payload, strip_trust_labels
 from ..policy.engine import epoch_of
 from ..receipt import emit_receipt
 
@@ -209,7 +209,13 @@ def derive_call_id(tool_use_id: Any, session_id: Any, tool_name: str,
 def call_events(agent: str, tool_name: str, args: Dict[str, Any], *,
                 session_id: Optional[str], call_id: str,
                 cwd: Optional[str]) -> List[SensorEvent]:
-    """The call-phase events for one tool call (one per patch target)."""
+    """The call-phase events for one tool call (one per patch target).
+
+    ``args`` came from the agent's hook payload, i.e. from the model, so the
+    reserved trust labels are stripped before any event is built. An adapter
+    that knows a trust fact sets it on :attr:`SensorEvent.labels` instead.
+    """
+    args = strip_trust_labels(args)
     common = dict(principal=agent, span_id=session_id, call_id=call_id, cwd=cwd)
     if tool_name == "apply_patch" and isinstance(args.get("command"), str):
         targets = patch_targets(args["command"], cwd)
@@ -221,7 +227,7 @@ def call_events(agent: str, tool_name: str, args: Dict[str, Any], *,
 
 
 def result_event(call: HookCall) -> SensorEvent:
-    return SensorEvent(action=call.tool_name, args=result_payload(call.result),
+    return SensorEvent(action=call.tool_name, args=strip_trust_labels(result_payload(call.result)),
                        principal=call.agent, span_id=call.session_id,
                        call_id=call.call_id, phase="result", cwd=call.cwd)
 
@@ -294,6 +300,9 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
     effective = dict(call.tool_input)
     if decision.modified_args:
         effective.update(decision.modified_args)
+    # The receipt and any approver see the arguments as the call will run
+    # them, but a reserved trust key still names no fact here.
+    effective = strip_trust_labels(effective)
     primary = SensorEvent(action=call.tool_name, args=effective,
                           principal=call.agent, span_id=call.session_id,
                           call_id=call.call_id, cwd=call.cwd)
@@ -379,6 +388,9 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
 
 def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: str) -> Rendered:
     view, rebuild = adapter.result_view(call)
+    # A result payload is model-influenced: the server's text can carry a
+    # reserved key, which is data, never a trust fact.
+    view = strip_trust_labels(view)
     event = SensorEvent(action=call.tool_name, args=view, principal=call.agent,
                         span_id=call.session_id, call_id=call.call_id, phase="result",
                         cwd=call.cwd)
@@ -414,7 +426,7 @@ _DENIED_SIGNS = ("operation not permitted", "permission denied", "eperm", "eacce
 def _record_failure(call: HookCall, engine: Any) -> None:
     text = (call.error or "").lower()
     enforcer = "os" if any(sign in text for sign in _DENIED_SIGNS) else "tool"
-    event = SensorEvent(action=call.tool_name, args=dict(call.tool_input),
+    event = SensorEvent(action=call.tool_name, args=strip_trust_labels(call.tool_input),
                         principal=call.agent, span_id=call.session_id, call_id=call.call_id)
     emit_receipt(event, Decision(Verdict.ALLOW, "tool failed"), policy_epoch=epoch_of(engine, event),
                  outcome="failed", enforcer=enforcer, phase="outcome")

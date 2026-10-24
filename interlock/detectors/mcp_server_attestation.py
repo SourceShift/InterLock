@@ -39,9 +39,12 @@ all is out of scope for the same reason: this rule judges *presenters*, and
 ``mcp_trust_registry`` is the rule that refuses an unlabelled call.
 
 The subject is resolved the way ``mcp_trust_registry`` resolves an origin:
-an explicit ``args["__origin__"]`` label first (per-call, and not chosen by
-the untrusted server), else the prefix of a dotted action name
-(``"github.create_issue"`` -> ``"github"``).
+the ``__origin__`` label first (from the event's trusted ``labels`` channel
+when the integration set it, else from ``args`` for a hand-built event), else
+the prefix of a dotted action name (``"github.create_issue"`` ->
+``"github"``). The attestation value and tool listing are read the same way -
+trusted channel first, ``args`` fallback - because every model-facing boundary
+strips those reserved keys.
 
 **Identity is bound to the tool surface.** The presented value covers a
 digest of the server's tool listing, not an opaque token alone, so identity
@@ -76,7 +79,7 @@ import json
 from typing import Any, Callable, Dict, Optional
 
 from ..enforce import Decision
-from ..event import SensorEvent
+from ..event import SensorEvent, trust_label, trust_label_source
 from ..policy.engine import Rule
 
 POLICY_ID = "mcp_server_attestation"
@@ -191,17 +194,16 @@ def _as_identity_map(identities: Optional[Dict[str, str]]) -> Dict[str, str]:
     }
 
 
-def _labelled_origin(args: Any) -> Optional[str]:
-    """Resolve an explicit ``args["__origin__"]`` label, if it is usable.
+def _labelled_origin(event: SensorEvent) -> Optional[str]:
+    """Resolve the ``__origin__`` label, if it is usable.
 
-    Args are attacker-influenced and may be anything - None, an int, a list.
-    A non-mapping args, a missing key, or a blank/non-str label all mean "no
-    label here", so the caller falls through to the dotted-name source rather
-    than treating a malformed label as a refusal on its own.
+    The trusted ``labels`` channel wins; ``args`` is the hand-built-event
+    fallback, and every model-facing boundary strips it. A missing key or a
+    blank/non-str value means "no label here", so the caller falls through to
+    the dotted-name source rather than treating a malformed label as a refusal
+    on its own.
     """
-    if not isinstance(args, dict):
-        return None
-    origin = args.get(_ORIGIN_KEY)
+    origin = trust_label(event, _ORIGIN_KEY)
     if isinstance(origin, str) and origin.strip():
         return origin
     return None
@@ -225,36 +227,32 @@ def _dotted_origin(action: Any) -> Optional[str]:
 
 def _server_of(event: SensorEvent) -> Optional[str]:
     """Resolve the server an event belongs to: explicit label, dotted name."""
-    return _labelled_origin(event.args) or _dotted_origin(event.action)
+    return _labelled_origin(event) or _dotted_origin(event.action)
 
 
-def _presented_identity(args: Any) -> Optional[str]:
+def _presented_identity(event: SensorEvent) -> Optional[str]:
     """Return the identity value an event presents, or None if it presents none.
 
-    Args are attacker-influenced and may be anything - None, an int, a list. A
-    non-mapping args, a missing key, or a non-str value all mean "no usable
+    Read from the trusted ``labels`` channel first, else ``args`` for a
+    hand-built event. A missing key or a non-str value means "no usable
     identity here", which the caller blocks for an expected server.
     """
-    if not isinstance(args, dict):
-        return None
-    presented = args.get(_ATTESTATION_KEY)
+    presented = trust_label(event, _ATTESTATION_KEY)
     if isinstance(presented, str):
         return presented
     return None
 
 
-def _presented_surface(args: Any) -> Optional[str]:
+def _presented_surface(event: SensorEvent) -> Optional[str]:
     """Return the canonical digest of the listing an event presents, or None.
 
     The binding covers the tool surface, so the listing travels with the
-    identity value and is canonicalized here. A non-mapping args or a listing
-    that cannot be canonicalized yields None, which the caller blocks for an
-    expected server: a presentation that names no surface has not bound the
-    identity to anything.
+    identity value and is canonicalized here. A listing that cannot be
+    canonicalized yields None, which the caller blocks for an expected server:
+    a presentation that names no surface has not bound the identity to
+    anything.
     """
-    if not isinstance(args, dict):
-        return None
-    return listing_digest(args.get(_TOOLS_KEY))
+    return listing_digest(trust_label(event, _TOOLS_KEY))
 
 
 def mcp_server_attestation(
@@ -281,20 +279,25 @@ def mcp_server_attestation(
         token = expected.get(server)
         if token is None:
             return None
-        presented = _presented_identity(event.args)
-        surface = _presented_surface(event.args)
+        presented = _presented_identity(event)
+        surface = _presented_surface(event)
         if (
             presented is not None
             and surface is not None
             and verifier(presented, token, surface)
         ):
             return None
+        # A trusted-channel attestation names no model-writable argument.
         return Decision.block(
             "{}: unproven identity for {} at {}".format(
                 POLICY_ID, server, _ATTESTATION_KEY
             ),
             policy_id=POLICY_ID,
-            attributed_to=_ATTESTATION_KEY,
+            attributed_to=(
+                None
+                if trust_label_source(event, _ATTESTATION_KEY) == "labels"
+                else _ATTESTATION_KEY
+            ),
         )
 
     return rule

@@ -6,6 +6,60 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+#: Argument keys reserved for facts a trust detector relies on: which server a
+#: call is for (``__origin__``), the tool schema the server declared
+#: (``__schema__``), its attestation (``__attestation__``) and its listing
+#: (``__tools__``). Arguments are model-influenced, so an integration must never
+#: read one of these keys out of them: every model-facing boundary strips them
+#: (:func:`strip_trust_labels`) and an integration that knows the fact sets it
+#: on :attr:`SensorEvent.labels` instead.
+TRUST_LABELS = frozenset({"__origin__", "__schema__", "__attestation__", "__tools__"})
+
+
+def strip_trust_labels(args: Any) -> Dict[str, Any]:
+    """A shallow copy of ``args`` without any :data:`TRUST_LABELS` key.
+
+    A non-mapping yields ``{}``, so a caller can strip unconditionally and
+    still hand a dict to the event. The input is never mutated: the keys a
+    wrapped tool or an MCP server receives are the caller's own.
+    """
+    if not isinstance(args, dict):
+        return {}
+    return {key: value for key, value in args.items() if key not in TRUST_LABELS}
+
+
+def trust_label(event: "SensorEvent", key: str) -> Any:
+    """Read a reserved label from the trusted channel, else the args fallback.
+
+    The trusted channel (:attr:`SensorEvent.labels`, set by interlock's own
+    integration code) wins. Reading ``args`` next is the documented fallback
+    for an event an integration built by hand - the boundary helpers strip
+    those keys from anything a model supplied, so it cannot reach here.
+    """
+    labels = event.labels
+    if isinstance(labels, dict) and key in labels:
+        return labels[key]
+    args = event.args
+    if isinstance(args, dict):
+        return args.get(key)
+    return None
+
+
+def trust_label_source(event: "SensorEvent", key: str) -> Optional[str]:
+    """Where :func:`trust_label` read ``key`` from: ``"labels"``, ``"args"``, or None.
+
+    Detectors use this to decide ``attributed_to``: an argument-sourced label
+    names the argument, while a trusted-channel label names none the model
+    could have written.
+    """
+    labels = event.labels
+    if isinstance(labels, dict) and key in labels:
+        return "labels"
+    args = event.args
+    if isinstance(args, dict) and key in args:
+        return "args"
+    return None
+
 
 @dataclass
 class SensorEvent:
@@ -41,6 +95,13 @@ class SensorEvent:
     # hook's session cwd), so a relative path in a shell command resolves
     # where the command will run. None: the guard's own directory.
     cwd: Optional[str] = None
+    # Trust facts about the action - which server it is for, the schema it
+    # declared, its attestation and listing - under the reserved
+    # :data:`TRUST_LABELS` keys. Set ONLY by interlock's own integration code
+    # (``guard_mcp_session`` and friends); never decoded from a wire frame,
+    # copied from a model's arguments, or taken from an agent hook payload.
+    # A model can shape ``args``; it cannot reach this mapping.
+    labels: Dict[str, Any] = field(default_factory=dict)
 
 
 def new_call_id() -> str:

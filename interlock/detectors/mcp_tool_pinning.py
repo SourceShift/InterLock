@@ -8,8 +8,8 @@ description or input schema - one that steers the model into a harmful call.
 
 Name-based policy cannot see this, because the tool name never changes. This Rule
 closes the gap by binding a tool name to the sha256 of the exact schema string
-that was reviewed. Every later call must present that same string in
-``args["__schema__"]``; the moment the hash differs, the interface changed under
+that was reviewed. Every later call must present that same string under the
+``__schema__`` label; the moment the hash differs, the interface changed under
 the approval and the call is blocked.
 
 The rule has an opinion only about pinned tools:
@@ -35,10 +35,10 @@ pins to enforce.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from ..enforce import Decision
-from ..event import SensorEvent
+from ..event import SensorEvent, trust_label, trust_label_source
 from ..policy.engine import Rule
 
 POLICY_ID = "mcp_tool_pinning"
@@ -73,16 +73,14 @@ def _as_pin_map(pins: Optional[Dict[str, str]]) -> Dict[str, str]:
     }
 
 
-def _declared_schema(args: Any) -> Optional[str]:
+def _declared_schema(event: SensorEvent) -> Optional[str]:
     """Return the schema string an event declares, or None if it declares none.
 
-    Args are attacker-influenced and may be anything - None, an int, a list. A
-    non-mapping args, a missing key, or a non-str value all mean "no usable
-    schema here", which the caller treats as drift for a pinned tool.
+    The trusted ``labels`` channel wins; ``args`` is the hand-built-event
+    fallback. A missing key or a non-str value means "no usable schema here",
+    which the caller treats as drift for a pinned tool.
     """
-    if not isinstance(args, dict):
-        return None
-    schema = args.get(_SCHEMA_KEY)
+    schema = trust_label(event, _SCHEMA_KEY)
     if isinstance(schema, str):
         return schema
     return None
@@ -105,13 +103,17 @@ def mcp_tool_pinning(pins: Dict[str, str]) -> Rule:
         pin = expected.get(action)
         if pin is None:
             return None
-        schema = _declared_schema(event.args)
+        schema = _declared_schema(event)
         if schema is not None and pin_of(schema) == pin:
             return None
         return Decision.block(
             "mcp_tool_pinning: schema drift for {}".format(action),
             policy_id=POLICY_ID,
-            attributed_to=_SCHEMA_KEY,
+            attributed_to=(
+                None
+                if trust_label_source(event, _SCHEMA_KEY) == "labels"
+                else _SCHEMA_KEY
+            ),
         )
 
     return rule

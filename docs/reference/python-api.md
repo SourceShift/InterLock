@@ -238,9 +238,11 @@ positional and keyword arguments to `call_tool` are passed through untouched.
 Labels are facts about a call, so only your code may set them. Before the check,
 the wrapper **drops any `TRUST_LABELS` key from the arguments the caller passed**
 (those usually come from the model, and a model that wrote `"__origin__": "github"`
-could otherwise claim to be a trusted server). It then adds the labels from
-`origin` and `schemas`, and removes every label again before the call goes to the
-server. `TRUST_LABELS` is importable from `interlock.interceptors.mcp`:
+could otherwise claim to be a trusted server). It then sets the `origin` and
+`schemas` facts on the event's trusted
+[`labels`](#sensorevent) channel, and strips every reserved key again before the
+call goes to the server. `TRUST_LABELS` is importable from
+`interlock.interceptors.mcp`:
 `{"__origin__", "__schema__", "__attestation__", "__tools__"}`.
 
 ```python
@@ -304,12 +306,13 @@ these adapters it detected and which surfaces remain uncovered.
 ### `enforce_tool_call`
 
 ```python
-enforce_tool_call(action, arguments, *, engine=None, enforcement="blocking", principal=None, call_id=None) -> Dict[str, Any]
+enforce_tool_call(action, arguments, *, engine=None, enforcement="blocking", principal=None, call_id=None, labels=None) -> Dict[str, Any]
 ```
 
 The core every adapter uses. Checks one call and returns the arguments to use:
 
-- **allow** or monitor mode: a copy of `arguments` (`None` becomes `{}`).
+- **allow** or monitor mode: a copy of `arguments` without any reserved trust
+  key (`None` becomes `{}`).
 - **modify**: that copy with `modified_args` merged in.
 - **block**: raises `Blocked`.
 
@@ -321,10 +324,17 @@ to the matching `enforce_tool_result` call when you drive the phases yourself;
 the interceptors mint one with [`new_call_id`](#new_call_id) and use it on the
 call, result and outcome events and their receipts.
 
+`labels` carries trust facts out of band - the reserved `__origin__`,
+`__schema__`, `__attestation__` and `__tools__` keys the MCP detectors read.
+Only the integration that knows the server sets them; they land on the event's
+trusted `labels` mapping, never in its `args`. Any reserved key in `arguments`
+is stripped first, so a caller forwarding model-produced arguments cannot forge
+one.
+
 ### `enforce_tool_result`
 
 ```python
-enforce_tool_result(action, result, *, engine=None, enforcement="blocking", principal=None, call_id=None) -> Any
+enforce_tool_result(action, result, *, engine=None, enforcement="blocking", principal=None, call_id=None, labels=None) -> Any
 ```
 
 Checks what a tool returned, as a `phase="result"` event whose `args` is

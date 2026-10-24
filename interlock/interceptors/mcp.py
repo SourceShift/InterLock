@@ -30,7 +30,13 @@ from .._runtime import get_engine
 from ..context import current_parent_principal, current_principal, current_span
 from ..credentials import scrub, substitute_call
 from ..enforce import Verdict
-from ..event import SensorEvent, new_call_id, result_payload
+from ..event import TRUST_LABELS as TRUST_LABELS  # re-exported for integrations
+from ..event import (
+    SensorEvent,
+    new_call_id,
+    result_payload,
+    strip_trust_labels,
+)
 from ..policy.engine import PolicyEngine
 from ._settle import record_failure, settle
 
@@ -45,6 +51,7 @@ def enforce_tool_call(
     enforcement: str = "blocking",
     principal: Optional[str] = None,
     call_id: Optional[str] = None,
+    labels: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Decide on one tool call and enforce the verdict before it runs.
 
@@ -57,10 +64,17 @@ def enforce_tool_call(
 
     ``call_id`` links this call's receipt to its result's: pass the same value
     to :func:`enforce_tool_result` (the guarded wrappers do this for you).
+
+    ``labels`` are trust facts set by the integration that knows them (see
+    :attr:`interlock.event.SensorEvent.labels`), never read from ``arguments``.
+    Any :data:`TRUST_LABELS` key in ``arguments`` is stripped before the event
+    is built, so a caller that forwards model-produced arguments cannot forge
+    one.
     """
-    args: Dict[str, Any] = dict(arguments or {})
-    # The event gets its own copy: a rule that edits event.args in place must not
-    # change the arguments the tool is called with. Only a MODIFY verdict can.
+    # Arguments are model-influenced: a reserved trust key in them is never a
+    # fact. Strip first, then take a copy - the event gets its own dict, so a
+    # rule that edits event.args in place cannot change what the tool receives.
+    args: Dict[str, Any] = strip_trust_labels(arguments)
     event = SensorEvent(
         action=action,
         args=dict(args),
@@ -68,6 +82,7 @@ def enforce_tool_call(
         span_id=current_span(),
         parent_principal=current_parent_principal(),
         call_id=call_id,
+        labels=dict(labels or {}),
     )
     active = engine or get_engine()
     started = time.perf_counter()
@@ -91,6 +106,7 @@ def enforce_tool_result(
     enforcement: str = "blocking",
     principal: Optional[str] = None,
     call_id: Optional[str] = None,
+    labels: Optional[Mapping[str, Any]] = None,
 ) -> Any:
     """Decide on one tool result and enforce the verdict before it is returned.
 
@@ -113,7 +129,7 @@ def enforce_tool_result(
     what the tool said.
     """
     return _enforce_result(action, result, engine, enforcement, principal, None,
-                           call_id=call_id)
+                           call_id=call_id, labels=labels)
 
 
 def _enforce_result(
@@ -125,6 +141,7 @@ def _enforce_result(
     default_policy_id: Optional[str],
     *,
     call_id: Optional[str] = None,
+    labels: Optional[Mapping[str, Any]] = None,
 ) -> Any:
     """The body of :func:`enforce_tool_result`; ``default_policy_id`` labels a
     decision that names no policy (``@guard(policy_id=...)`` passes its own)."""
@@ -132,12 +149,15 @@ def _enforce_result(
     result = scrub(result)
     event = SensorEvent(
         action=action,
-        args=result_payload(result),
+        # A result payload is model-influenced too: a reserved key in it is
+        # data the server echoed, not a trust fact.
+        args=strip_trust_labels(result_payload(result)),
         principal=principal or current_principal(),
         span_id=current_span(),
         parent_principal=current_parent_principal(),
         phase="result",
         call_id=call_id,
+        labels=dict(labels or {}),
     )
     active = engine or get_engine()
     started = time.perf_counter()
@@ -152,11 +172,9 @@ def _enforce_result(
     return result
 
 
-#: Argument keys the MCP trust detectors read as facts about a call: which
-#: server it is for (``__origin__``), the tool schema the server declared
-#: (``__schema__``), its attestation (``__attestation__``) and listing
-#: (``__tools__``). Only your own code may set them, never the model.
-TRUST_LABELS = frozenset({"__origin__", "__schema__", "__attestation__", "__tools__"})
+# ``TRUST_LABELS`` and ``strip_trust_labels`` live in :mod:`interlock.event`,
+# where every boundary can import them without a cycle; they are re-exported
+# here because this module is where integrations have always found them.
 
 
 def guard_mcp_session(
@@ -180,37 +198,41 @@ def guard_mcp_session(
 
     ``origin`` names the server this session talks to, and ``schemas`` maps a
     tool name to the schema string that server declared for it. They become the
-    ``__origin__`` and ``__schema__`` labels the MCP trust detectors read
-    (``mcp_trust_registry``, ``mcp_capability_lease``, ``mcp_tool_pinning``,
-    ...). Any :data:`TRUST_LABELS` key in the arguments the caller passes is
-    dropped first - those arguments usually come from the model, and a label it
-    wrote would let it claim to be a trusted server. Labels are added only for
-    the policy check and are never sent to the server.
+    ``__origin__`` and ``__schema__`` entries of the event's trusted
+    :attr:`~interlock.event.SensorEvent.labels` mapping, which the MCP trust
+    detectors read (``mcp_trust_registry``, ``mcp_capability_lease``,
+    ``mcp_tool_pinning``, ...). Any :data:`TRUST_LABELS` key in the arguments
+    the caller passes is dropped first - those arguments usually come from the
+    model, and a label it wrote would let it claim to be a trusted server.
+    Labels are added only for the policy check and are never sent to the server.
     """
     original: Callable[..., Any] = session.call_tool
     schema_map: Dict[str, str] = dict(schemas or {})
     from .decorator import register_mode  # local: decorator imports this module
     register_mode("mcp_session:{}".format(origin or type(session).__name__), enforcement)
 
-    def labelled(name: str, arguments: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        args = {k: v for k, v in (arguments or {}).items() if k not in TRUST_LABELS}
+    def labels_for(name: str) -> Dict[str, Any]:
+        """The trust facts this session knows, out of band from the arguments."""
+        labels: Dict[str, Any] = {}
         if origin is not None:
-            args["__origin__"] = origin
+            labels["__origin__"] = origin
         if name in schema_map:
-            args["__schema__"] = schema_map[name]
-        return args
+            labels["__schema__"] = schema_map[name]
+        return labels
 
     def check(name: str, arguments: Optional[Dict[str, Any]], call_id: str) -> Dict[str, Any]:
         safe = enforce_tool_call(
-            name, labelled(name, arguments), engine=engine,
-            enforcement=enforcement, principal=principal, call_id=call_id,
+            name, arguments, engine=engine, enforcement=enforcement,
+            principal=principal, call_id=call_id, labels=labels_for(name),
         )
-        return {k: v for k, v in safe.items() if k not in TRUST_LABELS}
+        # A MODIFY rewrite is trusted code, but the server must never receive a
+        # reserved key: strip again on the way out.
+        return strip_trust_labels(safe)
 
     def failed(name: str, arguments: Optional[Dict[str, Any]], call_id: str,
                exc: BaseException) -> None:
         record_failure(
-            SensorEvent(action=name, args=dict(arguments or {}),
+            SensorEvent(action=name, args=strip_trust_labels(arguments),
                         principal=principal or current_principal(),
                         span_id=current_span(), call_id=call_id),
             exc, engine=engine or get_engine(),
@@ -229,6 +251,7 @@ def guard_mcp_session(
         return enforce_tool_result(
             name, out, engine=engine,
             enforcement=enforcement, principal=principal, call_id=call_id,
+            labels=labels_for(name),
         )
 
     @functools.wraps(original)
@@ -244,6 +267,7 @@ def guard_mcp_session(
         return enforce_tool_result(
             name, out, engine=engine,
             enforcement=enforcement, principal=principal, call_id=call_id,
+            labels=labels_for(name),
         )
 
     session.call_tool = (

@@ -51,7 +51,7 @@ import time
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .enforce import Decision, Verdict
-from .event import SensorEvent
+from .event import SensorEvent, strip_trust_labels
 
 PROTOCOL_VERSION = 1
 
@@ -394,6 +394,11 @@ def parse_request(frame: Dict[str, Any]) -> Tuple[str, SensorEvent]:
     than defaulted to ``{}``: an engine shown an empty argument dict finds no
     opinion and allows, so defaulting here would quietly convert a client bug
     into a bypass.
+
+    The decoded arguments cross a process boundary and are model-influenced, so
+    the reserved :data:`~interlock.event.TRUST_LABELS` keys are stripped here.
+    The wire carries no trusted-label channel: the far end can never set a
+    trust fact, only the daemon's own integrations can.
     """
     _check_keys(frame, _REQUEST_KEYS, "request")
     parse_scope(frame)
@@ -438,7 +443,7 @@ def parse_request(frame: Dict[str, Any]) -> Tuple[str, SensorEvent]:
         kwargs["ts"] = float(ts)
     return op_id, SensorEvent(
         action=action,
-        args=decode_value(args),
+        args=strip_trust_labels(decode_value(args)),
         principal=principal,
         span_id=span_id,
         parent_principal=parent_principal,

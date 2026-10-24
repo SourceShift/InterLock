@@ -7,9 +7,12 @@ and checks that origin against a fixed registry of trusted servers.
 
 An origin is resolved from two sources, most explicit first:
 
-1. ``args["__origin__"]`` - the sensor or adapter labelled the call with the
-   server it came from. An explicit label wins because it is per-call and cannot
-   be inferred from a name the untrusted server itself chose.
+1. the ``__origin__`` label - the integration that knows the server set it on
+   ``event.labels`` (the trusted channel). For an event built by hand, it is
+   read from ``args["__origin__"]`` instead; every model-facing boundary strips
+   that key, so a model cannot reach this source. An explicit label wins
+   because it is per-call and cannot be inferred from a name the untrusted
+   server itself chose.
 2. the prefix of a dotted action name - ``"github.create_issue"`` resolves to
    ``"github"``. This is the fallback for transports that encode the origin in
    the tool name (the common MCP spelling) and did not attach a label.
@@ -28,7 +31,7 @@ from __future__ import annotations
 from typing import Any, FrozenSet, Iterable, Optional
 
 from ..enforce import Decision
-from ..event import SensorEvent
+from ..event import SensorEvent, trust_label, trust_label_source
 from ..policy.engine import Rule
 
 POLICY_ID = "mcp_trust_registry"
@@ -66,17 +69,17 @@ def _as_origin_frozenset(trusted: Optional[Iterable[str]]) -> FrozenSet[str]:
     return frozenset(name for name in items if isinstance(name, str))
 
 
-def _origin_from_args(args: Any) -> Optional[str]:
-    """Resolve an explicit ``args["__origin__"]`` label, if it is usable.
+def _origin_from_label(event: SensorEvent) -> Optional[str]:
+    """Resolve the ``__origin__`` label, if it is usable.
 
-    Args are attacker-influenced and may be anything - None, an int, a list.
-    A non-mapping args, a missing key, or a blank/non-str label all mean "no
-    label here", so the caller falls through to the dotted-name source rather
-    than treating a malformed label as a refusal on its own.
+    The label comes from the event's trusted ``labels`` channel when the
+    integration that knows the server set it, else from ``args`` for a
+    hand-built event. Values are untrusted in shape either way, so a missing
+    key or a blank/non-str value means "no label here", and the caller falls
+    through to the dotted-name source rather than treating a malformed label
+    as a refusal on its own.
     """
-    if not isinstance(args, dict):
-        return None
-    origin = args.get(_ORIGIN_KEY)
+    origin = trust_label(event, _ORIGIN_KEY)
     if isinstance(origin, str) and origin.strip():
         return origin
     return None
@@ -100,7 +103,7 @@ def _origin_from_action(action: Any) -> Optional[str]:
 
 def _resolve_origin(event: SensorEvent) -> Optional[str]:
     """Resolve an event's origin, explicit label first, dotted name second."""
-    return _origin_from_args(event.args) or _origin_from_action(event.action)
+    return _origin_from_label(event) or _origin_from_action(event.action)
 
 
 def mcp_trust_registry(trusted: Iterable[str]) -> Rule:
@@ -118,20 +121,25 @@ def mcp_trust_registry(trusted: Iterable[str]) -> Rule:
         # Exact membership, as before: canonical folding here would exempt the
         # snake_case spelling of a protocol method that the pre-change rule
         # denied, widening the hole it exists to close.
-        if event.action in PROTOCOL_ACTIONS and _origin_from_args(event.args) is None:
+        labelled = _origin_from_label(event)
+        if event.action in PROTOCOL_ACTIONS and labelled is None:
             return None
         origin = _resolve_origin(event)
         if origin is not None and origin in registry:
             return None
-        # Only an explicit origin label names a triggering argument; an
-        # origin inferred from the dotted action name has none to attribute.
+        # Only an argument-sourced label names a triggering argument; one read
+        # from the trusted channel, or an origin inferred from the dotted
+        # action name, names none the model could have written.
         return Decision.block(
             "mcp_trust_registry: untrusted origin {}".format(
                 origin if origin is not None else _UNRESOLVED
             ),
             policy_id=POLICY_ID,
             attributed_to=(
-                _ORIGIN_KEY if _origin_from_args(event.args) is not None else None
+                _ORIGIN_KEY
+                if labelled is not None
+                and trust_label_source(event, _ORIGIN_KEY) == "args"
+                else None
             ),
         )
 

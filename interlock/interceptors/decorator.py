@@ -20,7 +20,7 @@ from .._runtime import get_engine
 from ..context import current_parent_principal, current_principal, current_span
 from ..credentials import get_store, substitute_call
 from ..enforce import Decision, Verdict
-from ..event import SensorEvent, new_call_id
+from ..event import SensorEvent, new_call_id, strip_trust_labels
 from ..receipt import emit_receipt
 from ._settle import record_failure, settle
 from .mcp import _enforce_result
@@ -125,7 +125,10 @@ def _event_for(
         arg_map = dict(kwargs)
     return SensorEvent(
         action=getattr(func, "__name__", "unknown"),
-        args=arg_map,
+        # The caller's arguments may be model-produced; a reserved trust key in
+        # them is stripped from the event only. The wrapped function still
+        # receives exactly what the caller passed.
+        args=strip_trust_labels(arg_map),
         principal=principal or current_principal(),
         span_id=current_span(),
         parent_principal=current_parent_principal(),
