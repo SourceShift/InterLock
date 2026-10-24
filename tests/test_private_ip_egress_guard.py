@@ -43,6 +43,43 @@ def test_link_local_metadata_endpoint_blocks():
     assert decision.policy_id == POLICY_ID
 
 
+def test_every_special_scheme_spelling_blocks_the_metadata_literal():
+    # WHATWG skips any run of / and \ after a special scheme; each spelling
+    # reaches 169.254.169.254 in a client, so each must reach this guard as
+    # the literal rather than as a bare host:port or an empty value.
+    detector = private_ip_egress_guard()
+    for url in (
+        r"http:/\169.254.169.254/",
+        r"http:\169.254.169.254",
+        "http:///169.254.169.254/",
+        r"https:\\169.254.169.254/",
+        "http:169.254.169.254",
+        "HTTP://169.254.169.254/",
+        "ws://169.254.169.254/",
+        "wss://169.254.169.254/",
+        "ftp://169.254.169.254/",
+        "http://user@169.254.169.254/",
+        "http:user@169.254.169.254",
+    ):
+        decision = detector(_event(args={"url": url}))
+        assert decision is not None, url
+        assert decision.verdict is Verdict.BLOCK, url
+
+
+def test_legacy_and_mapped_literal_spellings_block():
+    # These already reached ip_literal; the new parse must keep them intact.
+    detector = private_ip_egress_guard()
+    for url in (
+        "http://0x7f.1/",
+        "http:2130706433",
+        "http://0177.0.0.1/",
+        "http://[::ffff:169.254.169.254]/",
+    ):
+        decision = detector(_event(args={"url": url}))
+        assert decision is not None, url
+        assert decision.verdict is Verdict.BLOCK, url
+
+
 def test_ipv6_loopback_blocks():
     detector = private_ip_egress_guard()
     decision = detector(_event(args={"url": "http://[::1]:8080/"}))
@@ -108,6 +145,27 @@ def test_benign_backslash_counterpart_returns_none():
     assert detector(
         _event(args={"url": r"http://api.example.com\@169.254.169.254/x"})
     ) is None
+
+
+def test_forbidden_host_code_points_and_out_of_range_port_return_none():
+    # WHATWG rejects these, so there is no literal for this guard to classify
+    # and it must not guess at one.
+    detector = private_ip_egress_guard()
+    for url in (
+        "http://169.254.169.254:70000/",
+        "http://[::ffff:169.254.169.254]:70000/",
+        "http://169.254.169.254<.example/",
+        "http://169.254.169.254^/",
+        "http://169.254.169.254|/",
+    ):
+        assert detector(_event(args={"url": url})) is None, url
+
+
+def test_file_path_is_not_a_network_authority():
+    # file: is not a special scheme: `file:169.254.169.254` is a path, not an
+    # authority, so the special-scheme skip must not overreach into a block.
+    detector = private_ip_egress_guard()
+    assert detector(_event(args={"url": "file:169.254.169.254"})) is None
 
 
 def test_non_egress_action_returns_none_even_with_blocked_url():

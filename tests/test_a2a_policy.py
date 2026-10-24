@@ -55,11 +55,13 @@ def test_peer_host_rejects_unusable_values():
         assert peer_host(value) is None
 
 
-def test_peer_host_follows_the_runtime_backslash_authority():
-    # urlparse would name trusted.example; a runtime ends the authority at the
-    # backslash, so the peer is evil.example.
-    assert peer_host(r"peer://evil.example\@trusted.example") == "evil.example"
-    assert peer_host(r"peer://trusted.example\@evil.example") == "trusted.example"
+def test_peer_host_does_not_end_a_non_special_authority_at_a_backslash():
+    # peer: is not a special scheme, so the WHATWG backslash-delimiter rule
+    # does not apply: the backslash stays in the authority and the last @ is
+    # the userinfo separator. A backslash in the host itself is un-vettable.
+    assert peer_host(r"peer://evil.example\@trusted.example") == "trusted.example"
+    assert peer_host(r"peer://trusted.example\@evil.example") == "evil.example"
+    assert peer_host(r"peer://host\evil") is None
 
 
 # --- allow: send to an allowlisted peer -------------------------------------
@@ -98,9 +100,13 @@ def test_host_match_is_case_insensitive():
     assert guard(_send("peer://trusted.example")) is None
 
 
-def test_benign_backslash_counterpart_is_allowed():
+def test_backslash_in_userinfo_follows_the_last_at_rule():
+    # peer: is not a special scheme, so a backslash does not end the
+    # authority; the last @ still separates userinfo from the host. Each
+    # spelling therefore names the host after the final @.
     guard = a2a_peer_allowlist(allowed=["peer://trusted.example"])
-    assert guard(_send(r"peer://trusted.example\@evil.example")) is None
+    assert guard(_send(r"peer://trusted.example\@evil.example")) is not None
+    assert guard(_send(r"peer://evil.example\@trusted.example")) is None
 
 
 def test_adding_a_peer_flips_block_to_permit():
@@ -146,12 +152,15 @@ def test_exact_host_only_a_lookalike_peer_is_not_admitted():
     assert guard(_send("peer://evil.example")) is not None
 
 
-def test_backslash_differential_does_not_spoof_the_peer():
-    # urlparse names trusted.example; the runtime reaches evil.example.
-    guard = a2a_peer_allowlist(allowed=["peer://trusted.example"])
-    decision = guard(_send(r"peer://evil.example\@trusted.example"))
+def test_backslash_in_the_host_is_un_vettable():
+    # A non-special authority does not end at a backslash: it stays in the
+    # host and is rejected, so the guard never reads the misleading prefix as
+    # the peer even when that prefix would be allowlisted.
+    guard = a2a_peer_allowlist(allowed=["peer://host"])
+    decision = guard(_send(r"peer://host\evil"))
     assert decision is not None
     assert decision.verdict is Verdict.BLOCK
+    assert "<unknown>" in decision.reason
     assert decision.attributed_to == "peer"
 
 

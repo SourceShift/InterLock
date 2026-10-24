@@ -196,15 +196,35 @@ The five destination guards — `network_egress_guard`,
 `private_ip_egress_guard`, `raw_ip_egress_guard`, `mcp_server_allowlist`, and
 `a2a_peer_allowlist` — share one canonical parser. It reads the authority the
 way the HTTP runtime the agent calls does, not the way `urllib.parse.urlparse`
-does: a backslash ends a special-scheme authority, the userinfo separator is
-the last `@` after that rule, the host is percent-decoded once, lowercased, and
-stripped of one trailing dot. A destination that still contains a percent sign,
-a host delimiter, whitespace, a control character, or non-ASCII after that
-decode is un-vettable: the three allowlists treat it as denied
-(`mcp_server_allowlist` and `a2a_peer_allowlist` block; the network allowlist
-denies), while the two IP guards return no opinion, because their job is to
-recognise an IP literal they can classify, not to vet every destination.
-Bracketed IPv6 is handed on in the form `ipaddress` accepts.
+does. For the special schemes `http`, `https`, `ws`, `wss`, and `ftp` it
+follows the WHATWG special-scheme authority state: the parser skips any run of
+`/` and `\` after the scheme — including none — so `http:host`, `http:/host`,
+`http://host`, `http:///host`, and `http:\host` all name the same authority, and
+a backslash then ends that authority. `file` is deliberately not special:
+`file:relative/path` is a path with no network host, while `file://server/share`
+still yields `server` through the ordinary `//` path. Any other scheme requires
+`//` before an authority, and a backslash there is *not* a delimiter — it stays
+in the authority and is rejected, so a peer such as `peer://host\evil` is
+un-vettable rather than being read as `host`.
+
+The userinfo separator is the last `@` after those rules, and the host is
+percent-decoded once, lowercased, and stripped of one trailing dot. A
+destination that still contains a percent sign, whitespace, a control
+character, non-ASCII, or one of the forbidden host code points `/ \ @ ? # [ ]
+< > ^ |` after that decode is un-vettable, as is an out-of-range port (numeric
+but above 65535; an empty port is valid). The three allowlists treat an
+un-vettable destination as denied (`mcp_server_allowlist` and
+`a2a_peer_allowlist` block; the network allowlist denies), while the two IP
+guards return no opinion, because their job is to recognise an IP literal they
+can classify, not to vet every destination. Because every special-scheme
+spelling of an authority is parsed, every spelling of an IPv4 or IPv6 literal
+that a client dials — including legacies such as `0x7f.1` and `2130706433` and
+mapped forms such as `::ffff:169.254.169.254` — reaches the IP guards as that
+literal. Bracketed IPv6 is handed on in the form `ipaddress` accepts.
+
+The honest limit is IDN: a non-ASCII host is un-vettable here rather than
+punycode-normalized, so the allowlists deny it and the IP guards leave it to
+them — a name is not a literal.
 
 `network_egress_guard` vets every destination it finds under `url`, `endpoint`,
 `uri`, `href`, `host`, `hostname`, `address`, `addr`, `to`, `recipient`,

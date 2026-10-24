@@ -37,6 +37,29 @@ def test_private_ip_literal_blocks_too():
         assert decision.verdict is Verdict.BLOCK
 
 
+def test_every_special_scheme_spelling_blocks_the_literal():
+    # WHATWG skips any run of / and \ after a special scheme; each spelling
+    # reaches the literal in a client, so each must reach this guard as the
+    # literal rather than as a bare host:port or an empty value.
+    detector = raw_ip_egress_guard()
+    for url in (
+        r"http:/\93.184.216.34/",
+        r"http:\93.184.216.34",
+        "http:///93.184.216.34/",
+        r"https:\\93.184.216.34/",
+        "http:93.184.216.34",
+        "HTTP://93.184.216.34/",
+        "ws://93.184.216.34/",
+        "wss://93.184.216.34/",
+        "ftp://93.184.216.34/",
+        "http://user@93.184.216.34/",
+        "http:user@93.184.216.34",
+    ):
+        decision = detector(_event(args={"url": url}))
+        assert decision is not None, url
+        assert decision.verdict is Verdict.BLOCK, url
+
+
 def test_ipv6_literal_blocks():
     detector = raw_ip_egress_guard()
     decision = detector(_event(args={"url": "http://[2001:db8::1]:8080/x"}))
@@ -103,6 +126,26 @@ def test_benign_backslash_counterpart_returns_none():
     assert detector(
         _event(args={"url": r"https://api.example.com\@93.184.216.34/collect"})
     ) is None
+
+
+def test_forbidden_host_code_points_and_out_of_range_port_return_none():
+    # WHATWG rejects these, so there is no literal for this guard to classify
+    # and it must not guess at one.
+    detector = raw_ip_egress_guard()
+    for url in (
+        "http://93.184.216.34:70000/",
+        "http://93.184.216.34<.example/",
+        "http://93.184.216.34^/",
+        "http://93.184.216.34|/",
+    ):
+        assert detector(_event(args={"url": url})) is None, url
+
+
+def test_file_path_is_not_a_network_authority():
+    # file: is not a special scheme: `file:93.184.216.34` is a path, not an
+    # authority, so the special-scheme skip must not overreach into a block.
+    detector = raw_ip_egress_guard()
+    assert detector(_event(args={"url": "file:93.184.216.34"})) is None
 
 
 def test_non_egress_action_returns_none_even_with_blocked_url():
