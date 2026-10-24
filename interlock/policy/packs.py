@@ -27,7 +27,6 @@ that extends this pack.
 from __future__ import annotations
 
 import os
-import re
 from typing import Any, Callable, Dict, List, Tuple
 
 from .declarative import register_tool_schema
