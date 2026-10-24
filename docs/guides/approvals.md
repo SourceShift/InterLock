@@ -32,14 +32,23 @@ subclass of `Blocked`, so code that handles blocks already handles it.
 An approval is bound to one exact request:
 
 - the action and phase
-- a digest of the arguments
+- a digest of the arguments **that will run** (the call after any rewrite)
 - the principal
+- the working directory the call runs in
 - the policy that decided (its [epoch](policies.md#the-policy-epoch))
 - the rule
 - the reason shown to the approver
 
-Approving `pay(amount=5000)` doesn't approve `pay(amount=9000)`, and reinstalling
-or reloading the policy voids every grant made under the old one.
+The approver decides on the effective arguments, not the pre-rewrite ones: when
+another rule rewrites the call and then it escalates, the request carries the
+merged `modified_args`, the terminal prompt previews them, and the receipt's
+`args_digest` is the digest of what will actually run. Changing the rewrite
+changes the binding, so an approval cannot be replayed against a different
+call.
+
+Approving `pay(amount=5000)` doesn't approve `pay(amount=9000)`; approving a
+call in one directory does not approve the identical call from another, and
+reinstalling or reloading the policy voids every grant made under the old one.
 
 An approver returns one of:
 
@@ -87,7 +96,9 @@ declines when there is no terminal.
 
 Grants wider than one use are kept in `interlock.approval.grants()`. Call
 `grants().active()` to list them, and `grants().revoke(action=..., principal=...)`
-or `grants().clear()` to withdraw them.
+or `grants().clear()` to withdraw them. Expired and revoked grants are pruned as
+the store is used, and a long-lived store keeps at most 1024 live grants
+(dropping the oldest first), so it does not grow without bound.
 
 ## Receipts
 

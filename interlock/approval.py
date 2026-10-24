@@ -4,10 +4,11 @@ An ESCALATE says "this call is legal, but a person must decide". Approval is
 where hand-rolled guards usually go wrong, so this module fixes the rules:
 
 - **An approval covers one exact request.** The request is bound to the action,
-  the phase, a digest of the arguments, the principal, the policy that decided
-  (its epoch) and the reason shown to the approver. Approving ``rm -rf build``
-  does not approve ``rm -rf src``; a reload of the policy invalidates every
-  grant issued under the old one.
+  the phase, a digest of the arguments that will run, the principal, the
+  working directory, the policy that decided (its epoch) and the reason shown
+  to the approver. Approving ``rm -rf build`` does not approve ``rm -rf src``,
+  nor the same call from another directory; a reload of the policy invalidates
+  every grant issued under the old one.
 - **One use by default.** A plain ``True`` from the approver runs this call
   once. Wider scopes are explicit and closed: :func:`approve_for_session`
   (the rest of this span) or :func:`approve_for` (a number of seconds). Either
@@ -32,6 +33,7 @@ hook adapters hand ESCALATE to the agent's native approval prompt.
 """
 from __future__ import annotations
 
+import copy
 import secrets
 import threading
 import time
@@ -47,6 +49,9 @@ MAX_REASON_BYTES = 512
 
 #: Grant scopes.
 ONCE, SESSION, TTL = "once", "session", "ttl"
+
+#: Most grants a :class:`GrantStore` keeps; beyond this the oldest go first.
+MAX_GRANTS = 1024
 
 
 def bound_reason(reason: str) -> str:
@@ -79,14 +84,19 @@ class ApprovalRequest:
     policy_id: Optional[str] = None
     attributed_to: Optional[str] = None
     policy_epoch: Optional[str] = None
+    cwd: Optional[str] = None
     created: float = 0.0
     event: Optional[SensorEvent] = field(default=None, repr=False, compare=False)
 
     @property
     def binding(self) -> Tuple[object, ...]:
-        """The fields an approval is bound to."""
+        """The fields an approval is bound to.
+
+        ``cwd`` is last so a grant approved for "publish in this directory"
+        cannot be reused for the identical call made from another one.
+        """
         return (self.action, self.phase, self.args_digest, self.principal,
-                self.policy_epoch, self.policy_id, self.reason)
+                self.policy_epoch, self.policy_id, self.reason, self.cwd)
 
 
 @dataclass(frozen=True)
@@ -154,11 +164,9 @@ class GrantStore:
     def match(self, request: ApprovalRequest, now: Optional[float] = None) -> Optional[Grant]:
         now = time.time() if now is None else now
         with self._lock:
+            self._prune_locked(now)
             for grant in self._grants:
                 if grant.state != "active":
-                    continue
-                if grant.expires is not None and now >= grant.expires:
-                    grant.state = "expired"
                     continue
                 if grant.binding != request.binding:
                     continue
@@ -173,6 +181,28 @@ class GrantStore:
     def add(self, grant: Grant) -> None:
         with self._lock:
             self._grants.append(grant)
+            self._prune_locked(time.time())
+
+    def prune(self, now: Optional[float] = None) -> None:
+        """Drop expired and revoked grants, then the oldest above :data:`MAX_GRANTS`."""
+        now = time.time() if now is None else now
+        with self._lock:
+            self._prune_locked(now)
+
+    def _prune_locked(self, now: float) -> None:
+        """The body of :meth:`prune`; the caller holds ``self._lock``."""
+        live: List[Grant] = []
+        for grant in self._grants:
+            if grant.state in ("expired", "revoked"):
+                continue
+            if grant.expires is not None and now >= grant.expires:
+                grant.state = "expired"
+                continue
+            live.append(grant)
+        if len(live) > MAX_GRANTS:
+            live.sort(key=lambda grant: grant.created)
+            live = live[-MAX_GRANTS:]
+        self._grants = live
 
     def revoke(self, *, action: Optional[str] = None,
                principal: Optional[str] = None,
@@ -196,9 +226,7 @@ class GrantStore:
     def active(self) -> List[Grant]:
         now = time.time()
         with self._lock:
-            for grant in self._grants:
-                if grant.state == "active" and grant.expires is not None and now >= grant.expires:
-                    grant.state = "expired"
+            self._prune_locked(now)
             return [replace(g) for g in self._grants if g.state == "active"]
 
     def clear(self) -> None:
@@ -225,13 +253,36 @@ def grants() -> GrantStore:
     return _store
 
 
-def make_request(event: SensorEvent, decision: Decision,
-                 epoch: Optional[str]) -> ApprovalRequest:
+def merged_args(event: SensorEvent, decision: Decision) -> dict:
+    """The arguments the call will run with: the event's args with the
+    decision's rewrites applied (a ``modified_args`` key wins)."""
+    args = dict(getattr(event, "args", None) or {})
+    if decision.modified_args:
+        args.update(decision.modified_args)
+    return args
+
+
+def make_request(event: SensorEvent, decision: Decision, epoch: Optional[str],
+                 *, effective_args: Optional[dict] = None) -> ApprovalRequest:
+    """Bind an approval to the arguments the call will actually run.
+
+    With ``effective_args`` omitted the event's args and the decision's
+    rewrites are merged here, so an approver shown this request sees the
+    rewritten call rather than the pre-rewrite one.
+    """
+    args = dict(effective_args) if effective_args is not None else merged_args(event, decision)
+    if args == getattr(event, "args", None):
+        shown = event
+    else:
+        # A shallow copy keeps attributes a rule stamped on the event (the
+        # token estimate, say) that ``dataclasses.replace`` would drop.
+        shown = copy.copy(event)
+        shown.args = args
     return ApprovalRequest(
         request_id=secrets.token_hex(8),
         action=event.action,
         phase=getattr(event, "phase", "call"),
-        args_digest=digest_args(event.args),
+        args_digest=digest_args(args),
         reason=bound_reason(decision.reason),
         principal=event.principal,
         span_id=event.span_id,
@@ -239,8 +290,9 @@ def make_request(event: SensorEvent, decision: Decision,
         policy_id=decision.policy_id,
         attributed_to=decision.attributed_to,
         policy_epoch=epoch,
+        cwd=getattr(event, "cwd", None),
         created=time.time(),
-        event=event,
+        event=shown,
     )
 
 
@@ -261,10 +313,11 @@ def settle_escalation(
     """
     request = make_request(event, decision, epoch)
     proceed = _proceed(decision)
+    effective_event = request.event or event
 
     def record(verdict_decision: Decision, how: str) -> None:
         emit_receipt(
-            event, verdict_decision, policy_epoch=epoch, policy_verdict="ESCALATE",
+            effective_event, verdict_decision, policy_epoch=epoch, policy_verdict="ESCALATE",
             approval=how, elapsed_us=elapsed_us,
         )
 

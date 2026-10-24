@@ -32,9 +32,16 @@ interlock.install(rules=[...], approver=queue_approver(queue))
 
 The first escalation raises `NotApproved`: "review r-1a2b3c4d is pending; a
 human must run `interlock reviews approve r-1a2b3c4d`, then retry this identical
-call". After the approval, the same call (same tool, same arguments, same agent,
-same rule) runs **once**. Two concurrent retries can't both run: the claim is a
-single conditional update. A different call files its own review.
+call". After the approval, the same call (same tool, same effective arguments,
+same agent, same working directory, same rule) runs **once**. Two concurrent
+retries can't both run: the claim is a single conditional update. A different
+call files its own review.
+
+A review is filed for, and previews, the arguments **that will run**: when a
+rule rewrites the call before it escalates, the preview shows the merged
+`modified_args` and the digest binds that rewrite. An approved retry runs the
+rewrite. If the agent's hooks cannot apply a rewrite, the retry is refused
+rather than running the original arguments.
 
 `queue_approver(queue, wait=60)` holds the call for up to 60 seconds first, for
 callers that can afford to wait.
@@ -72,6 +79,15 @@ ReviewQueue(path=None, pending_ttl=3600, approval_ttl=900,
 | `approval_ttl` | Seconds to *use* an approval, counted from when it was granted |
 | `min_approvals` | Distinct approvers needed (four-eyes: `2`) |
 | `allow_self_approval` | `False` refuses an approval by the account that filed the review |
+
+Each review row stores the `allow_self_approval`, `min_approvals` and
+`approval_ttl` in force when it was filed. The database also records the
+strictest policy it has ever been opened with: `allow_self_approval` ratchets to
+false, `min_approvals` ratchets up and `approval_ttl` ratchets down. A decision
+obeys the stricter of the row and that record, so a CLI or console process that
+opens the queue with defaults cannot weaken the rules the review was filed
+under (a console started with `--four-eyes` keeps applying it). Nothing loosens
+the record implicitly; deleting the database resets it.
 
 Statuses are `pending`, `approved`, `rejected`, `revoked`, `expired` and
 `executed` (an approval that was used).

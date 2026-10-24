@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS reviews (
     executed REAL,
     decided_by TEXT,
     rejection_reason TEXT,
-    min_approvals INTEGER NOT NULL DEFAULT 1
+    min_approvals INTEGER NOT NULL DEFAULT 1,
+    allow_self_approval INTEGER NOT NULL DEFAULT 1,
+    approval_ttl REAL NOT NULL DEFAULT 900
 );
 CREATE INDEX IF NOT EXISTS reviews_binding ON reviews (binding, status);
 CREATE TABLE IF NOT EXISTS approvals (
@@ -72,7 +74,20 @@ CREATE TABLE IF NOT EXISTS approvals (
     ts REAL NOT NULL,
     PRIMARY KEY (review_id, approver)
 );
+CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    allow_self_approval INTEGER NOT NULL,
+    min_approvals INTEGER NOT NULL,
+    approval_ttl REAL NOT NULL
+);
 """
+
+#: Columns added after the first release; ``ALTER TABLE`` needs a default that
+#: keeps an older database's existing rows approveable.
+_MIGRATED_COLUMNS = (
+    ("allow_self_approval", "INTEGER NOT NULL DEFAULT 1"),
+    ("approval_ttl", "REAL NOT NULL DEFAULT 900"),
+)
 
 
 def default_path() -> str:
@@ -100,6 +115,10 @@ class Review:
     rejection_reason: Optional[str]
     min_approvals: int
     approvers: List[str]
+    #: The policy recorded when the review was filed. A decision obeys the
+    #: stricter of this and the database's :class:`settings` row.
+    allow_self_approval: bool = True
+    approval_ttl: float = 900.0
 
     @property
     def next(self) -> str:
@@ -139,10 +158,70 @@ class ReviewQueue:
         os.makedirs(directory, mode=0o700, exist_ok=True)
         with self._db() as db:
             db.executescript(_SCHEMA)
+            self._migrate(db)
+            self._ratchet(db)
         try:
             os.chmod(self.path, 0o600)
         except OSError:
             pass
+
+    @staticmethod
+    def _migrate(db: sqlite3.Connection) -> None:
+        """Add the policy columns to a database written before they existed."""
+        columns = {row[1] for row in db.execute("PRAGMA table_info(reviews)")}
+        for name, declaration in _MIGRATED_COLUMNS:
+            if name not in columns:
+                db.execute("ALTER TABLE reviews ADD COLUMN {} {}".format(name, declaration))
+
+    def _ratchet(self, db: sqlite3.Connection) -> None:
+        """Record the most restrictive policy this database has ever seen.
+
+        Construction only tightens: ``allow_self_approval`` can turn false,
+        ``min_approvals`` can rise and ``approval_ttl`` can shrink. Nothing
+        loosens it implicitly; deleting the database resets it.
+        """
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            row = db.execute(
+                "SELECT allow_self_approval, min_approvals, approval_ttl "
+                "FROM settings WHERE id = 1").fetchone()
+            allow = 1 if self.allow_self_approval else 0
+            if row is None:
+                db.execute(
+                    "INSERT INTO settings (id, allow_self_approval, min_approvals, approval_ttl) "
+                    "VALUES (1, ?, ?, ?)",
+                    (allow, self.min_approvals, self.approval_ttl))
+            else:
+                recorded = (int(row[0]), int(row[1]), float(row[2]))
+                tightened = (min(recorded[0], allow),
+                             max(recorded[1], self.min_approvals),
+                             min(recorded[2], self.approval_ttl))
+                if tightened != recorded:
+                    db.execute(
+                        "UPDATE settings SET allow_self_approval = ?, min_approvals = ?, "
+                        "approval_ttl = ? WHERE id = 1", tightened)
+            db.execute("COMMIT")
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _recorded_policy(db: sqlite3.Connection) -> Optional[tuple]:
+        row = db.execute(
+            "SELECT allow_self_approval, min_approvals, approval_ttl "
+            "FROM settings WHERE id = 1").fetchone()
+        if row is None:
+            return None
+        return bool(row[0]), int(row[1]), float(row[2])
+
+    def _policy(self, db: sqlite3.Connection, row: sqlite3.Row) -> tuple:
+        """The rules a decision on ``row`` must obey: stricter of row and database."""
+        recorded = self._recorded_policy(db)
+        if recorded is None:
+            recorded = (bool(self.allow_self_approval), self.min_approvals, self.approval_ttl)
+        return (bool(row["allow_self_approval"]) and recorded[0],
+                max(int(row["min_approvals"]), recorded[1]),
+                min(float(row["approval_ttl"]), recorded[2]))
 
     @contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
@@ -173,11 +252,12 @@ class ReviewQueue:
                     db.execute(
                         "INSERT INTO reviews (id, binding, status, action, phase, principal, "
                         "requester, policy_id, reason, args_digest, preview, created, "
-                        "pending_until, min_approvals) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, "
-                        "?, ?, ?, ?, ?)",
+                        "pending_until, min_approvals, allow_self_approval, approval_ttl) "
+                        "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (review_id, binding, request.action, request.phase, request.principal,
                          _whoami(), request.policy_id, request.reason, request.args_digest,
-                         _preview(request), now, now + self.pending_ttl, self.min_approvals))
+                         _preview(request), now, now + self.pending_ttl, self.min_approvals,
+                         1 if self.allow_self_approval else 0, self.approval_ttl))
                     row = db.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
                 db.execute("COMMIT")
             except BaseException:
@@ -207,17 +287,18 @@ class ReviewQueue:
                 row = self._row(db, review_id)
                 if row["status"] != "pending":
                     raise ReviewError("review {} is {}, not pending".format(review_id, row["status"]))
-                if not self.allow_self_approval and approver == row["requester"]:
+                allow_self, min_approvals, approval_ttl = self._policy(db, row)
+                if not allow_self and approver == row["requester"]:
                     raise ReviewError("{} filed review {} and may not approve it".format(
                         approver, review_id))
                 db.execute("INSERT OR IGNORE INTO approvals (review_id, approver, ts) VALUES (?, ?, ?)",
                            (review_id, approver, now))
                 count = db.execute("SELECT COUNT(*) FROM approvals WHERE review_id = ?",
                                    (review_id,)).fetchone()[0]
-                if count >= row["min_approvals"]:
+                if count >= min_approvals:
                     db.execute("UPDATE reviews SET status = 'approved', decided = ?, decided_by = ?, "
                                "approval_until = ? WHERE id = ?",
-                               (now, approver, now + self.approval_ttl, review_id))
+                               (now, approver, now + approval_ttl, review_id))
                 db.execute("COMMIT")
             except BaseException:
                 db.execute("ROLLBACK")
@@ -295,6 +376,9 @@ class ReviewQueue:
         approvers = [r[0] for r in db.execute(
             "SELECT approver FROM approvals WHERE review_id = ? ORDER BY ts", (row["id"],))]
         data = {k: row[k] for k in row.keys() if k != "binding"}
+        # SQLite has no boolean type: keep the dataclass' types honest.
+        data["allow_self_approval"] = bool(data.get("allow_self_approval", True))
+        data["approval_ttl"] = float(data.get("approval_ttl", 900.0))
         return Review(approvers=approvers, **data)
 
 
@@ -325,6 +409,7 @@ def binding_hash(request: ApprovalRequest, *, bind_epoch: bool = True) -> str:
              request.policy_id, request.reason]
     if bind_epoch:
         parts.append(request.policy_epoch)
+    parts.append(request.cwd)
     return hashlib.sha256(json.dumps(parts).encode("utf-8")).hexdigest()
 
 

@@ -223,7 +223,7 @@ def call_events(agent: str, tool_name: str, args: Dict[str, Any], *,
 def result_event(call: HookCall) -> SensorEvent:
     return SensorEvent(action=call.tool_name, args=result_payload(call.result),
                        principal=call.agent, span_id=call.session_id,
-                       call_id=call.call_id, phase="result")
+                       call_id=call.call_id, phase="result", cwd=call.cwd)
 
 
 # --- the decision path ----------------------------------------------------------
@@ -288,8 +288,15 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
     decisions = [engine.evaluate(event) for event in call.events]
     elapsed = int((time.perf_counter() - started) * 1_000_000)
     decision = combine(decisions)
-    primary = SensorEvent(action=call.tool_name, args=dict(call.tool_input),
-                          principal=call.agent, span_id=call.session_id, call_id=call.call_id)
+    # The primary event is what the receipt digests and what an approver is
+    # asked about, so it carries the arguments the call will run with - the
+    # tool input plus any rewrite the decision carries.
+    effective = dict(call.tool_input)
+    if decision.modified_args:
+        effective.update(decision.modified_args)
+    primary = SensorEvent(action=call.tool_name, args=effective,
+                          principal=call.agent, span_id=call.session_id,
+                          call_id=call.call_id, cwd=call.cwd)
     epoch = epoch_of(engine, primary)
     policy = decision.verdict if decision.verdict in tuple(Verdict) else Verdict.BLOCK
 
@@ -310,15 +317,37 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
         from ..approval import make_request
         from ..reviews import binding_hash, pending_message
 
-        request = make_request(primary, decision, epoch)
+        request = make_request(primary, decision, epoch, effective_args=effective)
         review = reviews.lookup_or_file(
             binding_hash(request, bind_epoch=bool(getattr(engine, "epoch_is_stable", False))),
             request)
         if review.status == "approved" and reviews.claim(review.id):
+            note = "approved:review " + review.id
+            if decision.modified_args:
+                # The human saw and approved the rewritten call. Run that
+                # rewrite - never the pre-rewrite arguments - or refuse.
+                if not call.can_rewrite:
+                    reason = (
+                        "{} - the approval covers a rewritten call, and {}'s hooks cannot "
+                        "apply a rewrite, so it is refused".format(decision.reason, adapter.title))
+                    emit_receipt(primary, Decision(Verdict.BLOCK, reason, decision.policy_id,
+                                                   attributed_to=decision.attributed_to),
+                                 policy_epoch=epoch, elapsed_us=elapsed,
+                                 policy_verdict="ESCALATE", approval=note)
+                    return adapter.render(call, HookOutcome(
+                        Verdict.BLOCK, reason, decision.policy_id, Verdict.ESCALATE))
+                emit_receipt(primary, Decision(Verdict.MODIFY, decision.reason,
+                                               decision.policy_id, decision.modified_args,
+                                               attributed_to=decision.attributed_to),
+                             policy_epoch=epoch, elapsed_us=elapsed,
+                             policy_verdict="ESCALATE", approval=note)
+                return adapter.render(call, HookOutcome(
+                    Verdict.MODIFY, decision.reason, decision.policy_id, Verdict.ESCALATE,
+                    modified_args=decision.modified_args))
             emit_receipt(primary, Decision(Verdict.ALLOW, decision.reason, decision.policy_id,
                                            attributed_to=decision.attributed_to),
                          policy_epoch=epoch, elapsed_us=elapsed, policy_verdict="ESCALATE",
-                         approval="approved:review " + review.id)
+                         approval=note)
             return adapter.render(call, HookOutcome(Verdict.ALLOW))
         outcome = replace(outcome, verdict=Verdict.BLOCK, reason="{} - {}".format(
             decision.reason, pending_message(review)))
@@ -351,7 +380,8 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
 def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: str) -> Rendered:
     view, rebuild = adapter.result_view(call)
     event = SensorEvent(action=call.tool_name, args=view, principal=call.agent,
-                        span_id=call.session_id, call_id=call.call_id, phase="result")
+                        span_id=call.session_id, call_id=call.call_id, phase="result",
+                        cwd=call.cwd)
     started = time.perf_counter()
     decision = engine.evaluate(event)
     elapsed = int((time.perf_counter() - started) * 1_000_000)
