@@ -190,6 +190,35 @@ If the agent should only reach known sites, add
 `network_egress_guard(allowed_hosts=[...])` first. An allowlist doesn't depend on
 spotting an attack, so it's the strongest rule here.
 
+#### How destinations are parsed
+
+The five destination guards — `network_egress_guard`,
+`private_ip_egress_guard`, `raw_ip_egress_guard`, `mcp_server_allowlist`, and
+`a2a_peer_allowlist` — share one canonical parser. It reads the authority the
+way the HTTP runtime the agent calls does, not the way `urllib.parse.urlparse`
+does: a backslash ends a special-scheme authority, the userinfo separator is
+the last `@` after that rule, the host is percent-decoded once, lowercased, and
+stripped of one trailing dot. A destination that still contains a percent sign,
+a host delimiter, whitespace, a control character, or non-ASCII after that
+decode is un-vettable: the three allowlists treat it as denied
+(`mcp_server_allowlist` and `a2a_peer_allowlist` block; the network allowlist
+denies), while the two IP guards return no opinion, because their job is to
+recognise an IP literal they can classify, not to vet every destination.
+Bracketed IPv6 is handed on in the form `ipaddress` accepts.
+
+`network_egress_guard` vets every destination it finds under `url`, `endpoint`,
+`uri`, `href`, `host`, `hostname`, `address`, `addr`, `to`, `recipient`,
+`recipients`, `email`, `dest`, `destination`, `target`, `server`,
+`webhook_url`, `cc`, `bcc`, `proxy`, `url_list`, `urls`, and `endpoints` — a
+key may hold one value or a list, and one bad recipient, blind copy, proxy, or
+URL in a list is enough to deny. Its action match is case-insensitive, so
+`HTTP_POST` and `http_patch` are covered alongside the lowercase names; a
+custom `egress_actions=` entry matches case-insensitively too.
+
+`private_ip_egress_guard` also refuses `100.64.0.0/10` (carrier-grade NAT),
+which reaches cloud metadata services, in addition to the private, loopback,
+link-local, and reserved ranges.
+
 ### An agent that works with business data
 
 ```python

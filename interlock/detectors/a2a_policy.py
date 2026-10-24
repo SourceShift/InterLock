@@ -18,8 +18,10 @@ under ``args["peer"]`` (a ``scheme://host`` authority, as in
 ``mcp_server_allowlist``'s contract exactly: a peer whose host is allowlisted
 is left alone, an unlisted host is blocked, and an a2a event that cannot
 present a usable peer - a missing key, a non-str value, a non-dict args, a
-value ``urlparse`` cannot split - is blocked rather than waved through. A
-malformed allowlist admits nothing.
+malformed ``scheme://`` authority - is blocked rather than waved through. A
+malformed allowlist admits nothing. The host is read by the shared canonical
+parser, so a backslash or a percent-encoded host is read the way the runtime
+reads it rather than the way ``urlparse`` does.
 
 ``a2a_card_guard`` follows ``mcp_surface_baseline``: the first card a peer
 advertises is admitted and recorded, a later card with the same reviewed
@@ -34,8 +36,8 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Dict, FrozenSet, Iterable, Mapping, Optional
-from urllib.parse import urlparse
 
+from .._url import peer_host as _canonical_peer_host
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -65,27 +67,17 @@ def peer_host(value: Any) -> Optional[str]:
 
     A peer is a ``scheme://host`` authority, but an operator may write either
     the full ``"peer://trusted.example"`` or the bare ``"trusted.example"``.
-    Both are normalised through the same parse - the lowercase hostname - so
-    the two spellings name the same peer and the port, path, and userinfo of an
+    The authority form is parsed by the shared canonical parser
+    (:func:`interlock._url.peer_host`) - the lowercase hostname - so the two
+    spellings name the same peer and the port, path, and userinfo of an
     approved peer do not read as a different one, exactly as
-    ``mcp_server_allowlist`` treats a reviewed host. ``urlparse`` raises on
-    some malformed inputs (an unterminated IPv6 literal); that, a non-str
-    value, and a blank string all yield None, which a caller treats as
-    unusable.
+    ``mcp_server_allowlist`` treats a reviewed host. A bare peer keeps its
+    historical contract and is returned as its whole lowercased text, so a
+    bare ``user@host`` is not silently reduced to an allowlisted domain. A
+    malformed authority (an unterminated IPv6 literal), a non-str value, and
+    a blank string all yield None, which a caller treats as unusable.
     """
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    try:
-        host = urlparse(text).hostname
-    except ValueError:
-        return None
-    if host:
-        return host.lower()
-    # No scheme: a bare authority like "trusted.example" is its own host.
-    return text.lower()
+    return _canonical_peer_host(value)
 
 
 def card_digest(card: Any) -> Optional[str]:

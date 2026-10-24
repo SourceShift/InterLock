@@ -17,15 +17,21 @@ never raises on odd input.
 """
 from __future__ import annotations
 
+import ipaddress
 from typing import Any, Optional, Tuple
-from urllib.parse import urlparse
 
+from .._net import ip_literal
+from .._url import destination_host
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
-from .._net import ip_literal
 
 POLICY_ID = "private_ip_egress"
+
+# Carrier-grade NAT (RFC 6598). On the oldest supported interpreter its
+# addresses do not report ``is_private``, but they reach cloud metadata
+# services, so membership is tested explicitly rather than inferred.
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 # The egress action names this guard recognises. Kept to unambiguous transport
 # verbs so a same-named in-house tool is not shadowed.
@@ -53,36 +59,6 @@ def _destination(args: Any) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _host_of(destination: str) -> Optional[str]:
-    """Hostname for an IP-literal destination, else None.
-
-    A URL is parsed to its hostname. A bare ``host`` / ``host:port`` / ``host/path``
-    string (no scheme, which urlparse cannot resolve a hostname from) is split
-    by hand so a scheme-less literal is still judged. Anything that will not
-    parse returns None.
-    """
-    try:
-        parsed = urlparse(destination)
-        host = parsed.hostname  # may raise on malformed IPv6 brackets
-    except ValueError:
-        return None
-
-    if host:
-        return host
-
-    if "://" in destination:  # had a scheme but no extractable host
-        return None
-
-    # No scheme: the whole string is authority + path; strip the path then port.
-    bare = destination.split("/", 1)[0]
-    if "@" in bare:  # userinfo@host
-        bare = bare.rsplit("@", 1)[1]
-    if bare.startswith("["):  # [::1]:port
-        end = bare.find("]")
-        return bare[1:end] if end != -1 else None
-    return bare.split(":", 1)[0] or None
-
-
 def _non_public_reason(ip: str, address: Any) -> Optional[str]:
     """Human-readable reason string when *address* is non-public, else None."""
     flags = []
@@ -92,6 +68,8 @@ def _non_public_reason(ip: str, address: Any) -> Optional[str]:
         flags.append("loopback")
     if address.is_link_local:
         flags.append("link-local")
+    if address.version == 4 and address in _CGNAT:
+        flags.append("carrier-grade NAT")
     if address.is_reserved:
         flags.append("reserved")
     if not flags:
@@ -118,7 +96,7 @@ def private_ip_egress_guard() -> Rule:
             return None
         dest_key, destination = dest
 
-        host = _host_of(destination)
+        host = destination_host(destination)
         if not host:
             return None
 

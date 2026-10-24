@@ -45,6 +45,18 @@ def test_ipv6_literal_blocks():
     assert decision.policy_id == POLICY_ID
 
 
+def test_backslash_differential_blocks_the_runtime_host():
+    # urlparse names the allowlisted api.example.com; a runtime ends the
+    # authority at the backslash and dials the raw address.
+    detector = raw_ip_egress_guard()
+    decision = detector(
+        _event(args={"url": r"https://93.184.216.34\@api.example.com/collect"})
+    )
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "url"
+
+
 def test_bare_host_without_scheme_blocks():
     # urlparse cannot resolve a hostname without a scheme; the guard splits by
     # hand so a scheme-less literal is still caught.
@@ -82,6 +94,15 @@ def test_named_host_returns_none():
 def test_named_host_with_port_and_path_returns_none():
     detector = raw_ip_egress_guard()
     assert detector(_event(args={"url": "https://api.example.com:8443/v1/collect"})) is None
+
+
+def test_benign_backslash_counterpart_returns_none():
+    # The runtime host is the named host, so the literal in userinfo is never
+    # dialled and this guard has no opinion.
+    detector = raw_ip_egress_guard()
+    assert detector(
+        _event(args={"url": r"https://api.example.com\@93.184.216.34/collect"})
+    ) is None
 
 
 def test_non_egress_action_returns_none_even_with_blocked_url():

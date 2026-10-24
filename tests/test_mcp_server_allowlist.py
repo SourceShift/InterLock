@@ -48,6 +48,18 @@ def test_host_match_is_case_insensitive():
     assert guard(_connect("https://mcp.trusted.io/sse")) is None
 
 
+def test_canonical_host_uppercase_and_trailing_dot_are_allowed():
+    guard = mcp_server_allowlist(allowed_hosts={"mcp.trusted.io"})
+    assert guard(_connect("https://MCP.TRUSTED.IO./sse")) is None
+
+
+def test_benign_backslash_counterpart_is_allowed():
+    # The runtime host is the reviewed one; the text after the backslash is
+    # path, never an authority.
+    guard = mcp_server_allowlist(allowed_hosts={"mcp.trusted.io"})
+    assert guard(_connect(r"https://mcp.trusted.io\@evil.io/sse")) is None
+
+
 def test_adding_a_host_flips_block_to_permit():
     strict = mcp_server_allowlist(allowed_hosts={"mcp.trusted.io"})
     widened = mcp_server_allowlist(allowed_hosts={"mcp.trusted.io", "mcp.linear.io"})
@@ -85,9 +97,24 @@ def test_host_match_is_exact_subdomain_is_not_admitted():
 
 def test_userinfo_in_uri_does_not_spoof_the_host():
     # A userinfo segment that looks like an approved host must not launder an
-    # unapproved one - urlparse keeps the real host in .hostname.
+    # unapproved one - the canonical parser keeps the real host after the last @.
     guard = mcp_server_allowlist(allowed_hosts={"mcp.trusted.io"})
     assert guard(_connect("https://mcp.trusted.io@evil.io/sse")) is not None
+
+
+def test_backslash_differential_does_not_spoof_the_host():
+    # urlparse names the allowlisted mcp.trusted.io; a runtime ends the
+    # authority at the backslash and reaches evil.io.
+    guard = mcp_server_allowlist(allowed_hosts={"mcp.trusted.io"})
+    decision = guard(_connect(r"https://evil.io\@mcp.trusted.io/sse"))
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+
+
+def test_percent_encoded_host_does_not_resolve_to_a_lookalike():
+    # One decode yields mcp.trusted.io.evil.io, which is not the reviewed host.
+    guard = mcp_server_allowlist(allowed_hosts={"mcp.trusted.io"})
+    assert guard(_connect("https://mcp.trusted.io%2eevil.io/sse")) is not None
 
 
 # --- out of scope: non-connect actions --------------------------------------

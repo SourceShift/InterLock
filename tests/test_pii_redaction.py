@@ -7,6 +7,7 @@ from interlock import SensorEvent, Verdict, enforce_tool_call
 from interlock.detectors.data_egress import (
     PII_REDACTION_POLICY_ID,
     _luhn_ok,
+    network_egress_guard,
     pii_redaction_guard,
 )
 
@@ -173,3 +174,120 @@ def test_engine_merges_the_redacted_field_into_the_call():
     )
     assert safe["url"] == "https://api.internal/x"  # untouched
     assert safe["data"] == "key [REDACTED OPENAI_KEY]"  # merged in
+
+
+# --- network egress destinations (the shared canonical parser) --------------
+
+
+def _egress_guard(allowed=("api.acme.com",), **kwargs):
+    return network_egress_guard(list(allowed), **kwargs)
+
+
+def test_network_egress_allows_the_allowlisted_host():
+    guard = _egress_guard()
+    assert guard(_event("http_post", url="https://api.acme.com/x")) is None
+
+
+def test_network_egress_backslash_differential_blocks():
+    # urlparse names api.acme.com; the runtime reaches evil.example.
+    guard = _egress_guard()
+    decision = guard(_event("http_post", url=r"https://evil.example\@api.acme.com/x"))
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "url"
+
+
+def test_network_egress_benign_backslash_counterpart_is_allowed():
+    guard = _egress_guard()
+    assert guard(_event("http_post", url=r"https://api.acme.com\@evil.example/x")) is None
+
+
+def test_network_egress_denies_an_extra_cc_recipient():
+    guard = _egress_guard()
+    decision = guard(
+        _event("http_post", url="https://api.acme.com/x", cc="b@evil.example")
+    )
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "cc"
+
+
+def test_network_egress_denies_an_extra_bcc_recipient():
+    guard = _egress_guard()
+    decision = guard(
+        _event("send_email", to="a@api.acme.com", bcc="b@evil.example")
+    )
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "bcc"
+
+
+def test_network_egress_denies_a_proxy_destination():
+    guard = _egress_guard()
+    decision = guard(
+        _event("http_post", url="https://api.acme.com/x", proxy="http://evil.example:8080")
+    )
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "proxy"
+
+
+def test_network_egress_denies_any_bad_entry_in_a_url_list():
+    guard = _egress_guard()
+    decision = guard(
+        _event(
+            "http_post",
+            url="https://api.acme.com/x",
+            url_list=["https://api.acme.com/a", "https://evil.example/b"],
+        )
+    )
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "url_list"
+
+
+def test_network_egress_denies_urls_scalar_or_list():
+    guard = _egress_guard()
+    assert guard(_event("http_post", urls="https://evil.example/x")) is not None
+    assert guard(
+        _event("http_post", urls=["https://api.acme.com/a", "https://evil.example/b"])
+    ) is not None
+    assert guard(_event("http_post", urls=["https://api.acme.com/a"])) is None
+
+
+def test_network_egress_denies_endpoints():
+    guard = _egress_guard()
+    decision = guard(_event("http_post", endpoints="https://evil.example/x"))
+    assert decision is not None
+    assert decision.attributed_to == "endpoints"
+
+
+def test_network_egress_action_matching_is_case_insensitive():
+    guard = _egress_guard()
+    assert guard(_event("HTTP_POST", url="https://evil.example/x")) is not None
+    assert guard(_event("HTTP_POST", url="https://api.acme.com/x")) is None
+
+
+def test_network_egress_covers_http_patch_by_default():
+    guard = _egress_guard()
+    assert guard(_event("http_patch", url="https://evil.example/x")) is not None
+
+
+def test_network_egress_custom_action_name_keeps_working():
+    guard = _egress_guard(egress_actions=["Fetch_URL"])
+    assert guard(_event("fetch_url", url="https://evil.example/x")) is not None
+    assert guard(_event("FETCH_URL", url="https://api.acme.com/x")) is None
+    # Only the named action is in scope; a near-miss is left alone.
+    assert guard(_event("fetch_urls", url="https://evil.example/x")) is None
+
+
+def test_network_egress_denies_an_action_with_no_destination():
+    guard = _egress_guard()
+    decision = guard(_event("http_post", note="nothing to vet here"))
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+
+
+def test_network_egress_non_string_action_gets_no_opinion():
+    guard = _egress_guard()
+    assert guard(SensorEvent(action=3, args={"url": "https://evil.example/x"})) is None  # type: ignore[arg-type]

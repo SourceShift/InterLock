@@ -55,6 +55,13 @@ def test_peer_host_rejects_unusable_values():
         assert peer_host(value) is None
 
 
+def test_peer_host_follows_the_runtime_backslash_authority():
+    # urlparse would name trusted.example; a runtime ends the authority at the
+    # backslash, so the peer is evil.example.
+    assert peer_host(r"peer://evil.example\@trusted.example") == "evil.example"
+    assert peer_host(r"peer://trusted.example\@evil.example") == "trusted.example"
+
+
 # --- allow: send to an allowlisted peer -------------------------------------
 
 
@@ -89,6 +96,11 @@ def test_allow_ignores_scheme_path_query_and_port():
 def test_host_match_is_case_insensitive():
     guard = a2a_peer_allowlist(allowed=["peer://TRUSTED.example"])
     assert guard(_send("peer://trusted.example")) is None
+
+
+def test_benign_backslash_counterpart_is_allowed():
+    guard = a2a_peer_allowlist(allowed=["peer://trusted.example"])
+    assert guard(_send(r"peer://trusted.example\@evil.example")) is None
 
 
 def test_adding_a_peer_flips_block_to_permit():
@@ -132,6 +144,20 @@ def test_exact_host_only_a_lookalike_peer_is_not_admitted():
     guard = a2a_peer_allowlist(allowed=["peer://trusted.example"])
     assert guard(_send("peer://trusted.example.evil.example")) is not None
     assert guard(_send("peer://evil.example")) is not None
+
+
+def test_backslash_differential_does_not_spoof_the_peer():
+    # urlparse names trusted.example; the runtime reaches evil.example.
+    guard = a2a_peer_allowlist(allowed=["peer://trusted.example"])
+    decision = guard(_send(r"peer://evil.example\@trusted.example"))
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "peer"
+
+
+def test_percent_encoded_peer_does_not_resolve_to_a_lookalike():
+    guard = a2a_peer_allowlist(allowed=["peer://trusted.example"])
+    assert guard(_send("peer://trusted.example%2eevil.example")) is not None
 
 
 # --- out of scope: non-send actions -----------------------------------------

@@ -13,18 +13,21 @@ The rule has an opinion only about connect events:
 - ``args["uri"]`` whose host is not         -> BLOCK (unlisted server)
 - any non-connect action                     -> None (out of scope)
 
-Host extraction uses ``urllib.parse.urlparse`` and compares only the hostname,
-so the scheme, path, query, and port of an approved server do not need to be
+Host extraction uses the shared canonical parser
+(:func:`interlock._url.url_host`) and compares only the hostname, so the
+scheme, path, query, and port of an approved server do not need to be
 enumerated - ``https://mcp.trusted.io/sse`` and
-``https://mcp.trusted.io:8443/v2/sse`` are the same reviewed host.
+``https://mcp.trusted.io:8443/v2/sse`` are the same reviewed host. The parser
+reads the authority the way an HTTP runtime does, so a backslash or a
+percent-encoded host cannot launder an unlisted server past the check.
 
 Fail-closed where it counts: a connect event that presents no usable URI - a
-missing key, a non-str value, a non-dict args, a value ``urlparse`` cannot even
-split (a malformed IPv6 literal raises ``ValueError``), or a string with no
-parseable host - is blocked rather than waved through. A connect that cannot
-prove its host is exactly the case the allowlist exists to refuse. Non-connect
-traffic is left alone, so this guard composes with the tool-level policies
-rather than replacing them.
+missing key, a non-str value, a non-dict args, a malformed IPv6 literal, a
+bare host with no ``scheme://`` authority, or a string with no parseable host -
+is blocked rather than waved through. A connect that cannot prove its host is
+exactly the case the allowlist exists to refuse. Non-connect traffic is left
+alone, so this guard composes with the tool-level policies rather than
+replacing them.
 
 An allowlist that fails to load (None, a non-iterable, or non-str entries)
 yields an empty host set, which admits nothing: every connect is blocked. That
@@ -34,8 +37,8 @@ must not silently fabricate coverage.
 from __future__ import annotations
 
 from typing import Any, FrozenSet, Iterable, Optional
-from urllib.parse import urlparse
 
+from .._url import url_host
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -72,27 +75,22 @@ def _as_host_frozenset(allowed_hosts: Optional[Iterable[str]]) -> FrozenSet[str]
     return frozenset(host.lower() for host in items if isinstance(host, str))
 
 
-def _host_of(args: Any) -> Optional[str]:
-    """Return the hostname of the URI declared in `args`, or None.
+def _uri_host(args: Any) -> Optional[str]:
+    """Return the canonical host of the URI declared in `args`, or None.
 
     Args are attacker-influenced and may be anything - None, an int, a list. A
     non-mapping args, a missing key, or a non-str value all mean "no usable URI
-    here". ``urlparse`` raises ``ValueError`` on some malformed inputs (an
-    unterminated IPv6 literal), and a bare word like ``"not a url"`` parses to
-    no host at all; both collapse to None, which the caller blocks. The
-    hostname - not the netloc - is returned, so a port on an approved host does
-    not read as a different server.
+    here". :func:`url_host` requires a ``scheme://`` authority and returns None
+    for a bare word, a malformed IPv6 literal, or any host it cannot vet, so
+    the caller blocks. The hostname - not the netloc - is returned, so a port
+    on an approved host does not read as a different server.
     """
     if not isinstance(args, dict):
         return None
     uri = args.get(_URI_KEY)
     if not isinstance(uri, str):
         return None
-    try:
-        host = urlparse(uri).hostname
-    except ValueError:
-        return None
-    return host or None
+    return url_host(uri)
 
 
 def mcp_server_allowlist(allowed_hosts: Iterable[str]) -> Rule:
@@ -108,7 +106,7 @@ def mcp_server_allowlist(allowed_hosts: Iterable[str]) -> Rule:
     def rule(event: SensorEvent) -> Optional[Decision]:
         if event.action != _CONNECT_ACTION:
             return None
-        host = _host_of(event.args)
+        host = _uri_host(event.args)
         if host is not None and host in allowed:
             return None
         return Decision.block(

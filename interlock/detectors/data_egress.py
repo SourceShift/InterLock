@@ -32,8 +32,8 @@ from __future__ import annotations
 import os
 import re
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Set, Tuple
-from urllib.parse import urlparse
 
+from .._url import destination_host
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -53,11 +53,19 @@ DEFAULT_EGRESS_ACTIONS = frozenset({
     "slack_post", "post_webhook", "publish_message", "notify_external",
 })
 
+# The network allowlist's own default set. It adds the PATCH verb the same
+# HTTP transport carries; ``DEFAULT_EGRESS_ACTIONS`` stays the frozen set PII
+# redaction shares so this guard's coverage does not widen that guard's scope.
+DEFAULT_NETWORK_EGRESS_ACTIONS = frozenset(DEFAULT_EGRESS_ACTIONS | {"http_patch"})
+
 # Argument keys that carry a destination (a URL, host, or recipient address).
+# cc/bcc are blind recipients, proxy is the hop the request is sent through,
+# and the list keys carry every URL an action will touch.
 DEFAULT_DESTINATION_KEYS = (
     "url", "endpoint", "uri", "href", "host", "hostname",
     "address", "addr", "to", "recipient", "recipients",
     "email", "dest", "destination", "target", "server", "webhook_url",
+    "cc", "bcc", "proxy", "url_list", "urls", "endpoints",
 )
 
 # Read actions the sensitive-path guard watches.
@@ -105,24 +113,6 @@ def _normalize_host(value: str) -> str:
     return value.strip().lower().rstrip(".")
 
 
-def _host_of(destination: str) -> Optional[str]:
-    """Pull a host out of a URL, an ``user@host`` address, or a bare hostname.
-
-    Returns None when nothing host-like can be extracted, which the caller
-    treats as un-vettable and therefore denied.
-    """
-    text = destination.strip()
-    if not text:
-        return None
-    if "://" in text:
-        host = urlparse(text).hostname
-        return _normalize_host(host) if host else None
-    if "@" in text:  # an email / SMTP recipient: the domain is the destination
-        return _normalize_host(text.rsplit("@", 1)[1])
-    # a bare host, possibly host:port
-    return _normalize_host(text.split("/", 1)[0].split(":", 1)[0])
-
-
 def _host_allowed(host: str, allowed: Set[str]) -> bool:
     """True if host equals an allowed entry or is a subdomain of one."""
     return any(host == a or host.endswith("." + a) for a in allowed)
@@ -152,28 +142,34 @@ def _destinations(args: Any, keys: Iterable[str]) -> List[Tuple[str, str]]:
 def network_egress_guard(
     allowed_hosts: Iterable[str],
     *,
-    egress_actions: Iterable[str] = DEFAULT_EGRESS_ACTIONS,
+    egress_actions: Iterable[str] = DEFAULT_NETWORK_EGRESS_ACTIONS,
     destination_keys: Iterable[str] = DEFAULT_DESTINATION_KEYS,
     reason: Optional[str] = None,
 ) -> Rule:
     """Rule: permit an outbound action only to allowlisted destination hosts.
 
-    An action counts as egress when its name is in ``egress_actions``. For such
-    an action every destination in its arguments must resolve to a host that is,
-    or is a subdomain of, an entry in ``allowed_hosts``. Three ways to be denied,
-    all fail-closed:
+    An action counts as egress when its name is in ``egress_actions``, compared
+    case-insensitively so an adapter that spells ``HTTP_POST`` is still covered;
+    a custom action name keeps working. For such an action every destination in
+    its arguments must resolve to a host that is, or is a subdomain of, an entry
+    in ``allowed_hosts``. Three ways to be denied, all fail-closed:
 
     - a destination whose host is not on the allowlist (the exfiltration case),
     - a destination that is not host-like and cannot be vetted,
     - an egress action that names no destination at all.
 
+    Hosts are read by :func:`interlock._url.destination_host`, the same parser a
+    runtime uses, so a backslash, a control character or a percent-encoded host
+    cannot make the guard vet one name while the socket reaches another.
+
     Non-egress actions get no opinion (None), leaving them to other rules.
     """
     allowed = {_normalize_host(h) for h in allowed_hosts if isinstance(h, str)}
-    actions = _as_name_set(egress_actions)
+    actions = {name.lower() for name in _as_name_set(egress_actions)}
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if event.action not in actions:
+        action = getattr(event, "action", None)
+        if not isinstance(action, str) or action.lower() not in actions:
             return None
         dests = _destinations(event.args, destination_keys)
         if not dests:
@@ -183,7 +179,7 @@ def network_egress_guard(
                 policy_id=NETWORK_EGRESS_POLICY_ID,
             )
         for key, dest in dests:
-            host = _host_of(dest)
+            host = destination_host(dest)
             if host is None or not _host_allowed(host, allowed):
                 return Decision.block(
                     reason or "egress to '{}' is not on the destination "

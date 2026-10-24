@@ -50,6 +50,28 @@ def test_ipv6_loopback_blocks():
     assert decision.verdict is Verdict.BLOCK
 
 
+def test_backslash_differential_blocks_the_runtime_host():
+    # urlparse reads userinfo "169.254.169.254\" and host api.example.com; a
+    # runtime ends the authority at the backslash and reaches the metadata IP.
+    detector = private_ip_egress_guard()
+    decision = detector(
+        _event(args={"url": r"http://169.254.169.254\@api.example.com/latest"})
+    )
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "url"
+
+
+def test_carrier_grade_nat_blocks():
+    # RFC 6598 reaches cloud metadata services even on interpreters where
+    # ipaddress does not call it private.
+    detector = private_ip_egress_guard()
+    decision = detector(_event(args={"url": "http://100.64.0.1/latest/meta-data"}))
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert "carrier-grade NAT" in decision.reason
+
+
 def test_destination_read_from_a_non_url_key_blocks():
     detector = private_ip_egress_guard()
     decision = detector(_event(args={"endpoint": "http://127.0.0.1/admin"}))
@@ -77,6 +99,15 @@ def test_public_domain_returns_none():
 def test_public_ip_returns_none():
     detector = private_ip_egress_guard()
     assert detector(_event(args={"url": "https://93.184.216.34/resource"})) is None
+
+
+def test_benign_backslash_counterpart_returns_none():
+    # The inverse spelling: the runtime host is the public name, so there is
+    # no literal for this guard to refuse.
+    detector = private_ip_egress_guard()
+    assert detector(
+        _event(args={"url": r"http://api.example.com\@169.254.169.254/x"})
+    ) is None
 
 
 def test_non_egress_action_returns_none_even_with_blocked_url():
