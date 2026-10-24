@@ -187,6 +187,13 @@ crash, **denies the call** and tells the agent to have you run
 warning on each one; use it only if you'd rather keep working unguarded than
 stop.
 
+The installed command runs the Python and the interlock package that installed
+it, isolated from the agent's working directory, so a `secrets.py` or an
+`interlock/` in the project cannot stand in for interlock or the standard
+library. If the hook cannot start at all (interlock was moved or is
+half-installed), it still denies the call in the agent's own format and names
+the failure. Re-run `install-hook` after moving interlock.
+
 `interlock doctor` checks that each agent's hook is installed and that the
 Python it runs still exists (a deleted virtualenv would break every call).
 

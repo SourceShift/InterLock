@@ -7,9 +7,11 @@
 Registers `interlock hook --agent <name>` in the agent's hook settings
 (~/.claude/settings.json, ~/.codex/hooks.json, ~/.cursor/hooks.json), keeping
 every other entry, backing the file up first (<file>.interlock-bak) and
-replacing any earlier interlock entry. It also creates ~/.interlock with a
-default policy that extends the built-in coding-agent pack and a key for the
-receipt log. Restart running agent sessions afterwards.
+replacing any earlier interlock entry. The hook runs this Python and this
+interlock package, whatever directory the agent runs it from, and denies the
+call if it cannot start. It also creates ~/.interlock with a default policy
+that extends the built-in coding-agent pack and a key for the receipt log.
+Restart running agent sessions afterwards; re-run this if interlock moves.
 
 Run this yourself, outside the agent: the coding-agent pack refuses it from
 inside one.
@@ -18,6 +20,7 @@ Exit codes: 0 done, 1 an agent could not be configured, 64 bad arguments.
 """
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -40,8 +43,96 @@ def add_arguments(parser) -> None:
     parser.add_argument("--uninstall", action="store_true", help="remove interlock's hooks")
 
 
+#: The program the hook command runs (``python -I -c``), before interlock is
+#: imported: it loads the package from the root recorded at install time, and if
+#: anything stops ``interlock hook`` from starting it answers in the agent's own
+#: blocking shape instead of exiting with a traceback, which agents read as "no
+#: objection". The shapes mirror ``render_error`` in adapters/claude_code.py,
+#: adapters/codex.py and adapters/cursor.py: change them together.
+_BOOTSTRAP = r"""
+import sys
+argv = sys.argv[2:]
+opts = {"--agent": None, "--on-error": "deny"}
+for i, arg in enumerate(argv):
+    for flag in opts:
+        if arg == flag and i + 1 < len(argv):
+            opts[flag] = argv[i + 1]
+        elif arg.startswith(flag + "="):
+            opts[flag] = arg[len(flag) + 1:]
+agent, allow = opts["--agent"], opts["--on-error"] == "allow"
+
+
+def refuse(why):
+    import json
+    try:
+        event = str(json.loads(sys.stdin.buffer.read(1 << 24)).get("hook_event_name", ""))
+    except Exception:
+        event = None
+    deny = ("interlock could not start ({}); denied fail-closed. "
+            "Run `interlock doctor` outside the agent.").format(why)
+    warn = "⚠ interlock is NOT enforcing: could not start: {} (run: interlock doctor)".format(why)
+    out, err, code = None, "", 0
+    if agent == "cursor":
+        out = ({"permission": "allow", "user_message": warn} if allow else
+               {"permission": "deny", "user_message": deny, "agent_message": deny})
+    elif agent == "codex" and not allow and event in (None, "PreToolUse", "PermissionRequest"):
+        err, code = deny + "\n", 2
+    elif allow or agent == "codex":
+        out = {"systemMessage": warn}
+    elif event == "PostToolUse":
+        out = {"decision": "block", "reason": "interlock could not start ({}); withheld".format(why),
+               "hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                      "updatedToolOutput": "[interlock withheld this tool output]"}}
+    else:
+        out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                      "permissionDecisionReason": deny}}
+    if out is not None:
+        sys.stdout.write(json.dumps(out) + "\n")
+    sys.stderr.write(err)
+    sys.stdout.flush()
+    return code
+
+
+try:
+    if agent not in ("claude-code", "codex", "cursor"):
+        raise ValueError("unknown agent {!r}".format(agent))
+    import io
+    import os
+    root = @ROOT@
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import interlock
+    found = os.path.dirname(os.path.dirname(os.path.abspath(interlock.__file__)))
+    if found != root:
+        raise ImportError("interlock is no longer installed in {} (found it in {}); "
+                          "re-run interlock install-hook".format(root, found))
+    from interlock.cli import build_parser
+    real, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        args = build_parser().parse_args(argv)
+    except SystemExit:
+        raise ValueError(sys.stderr.getvalue().strip().rpartition("\n")[2] or "bad arguments")
+    finally:
+        sys.stderr = real
+    code = int(args._run(args) or 0)
+except BaseException as exc:
+    code = refuse("{}: {}".format(type(exc).__name__, exc)[:300])
+sys.exit(code)
+"""
+
+
 def hook_command(agent: str, args) -> str:
-    parts = [shlex.quote(sys.executable), "-m", "interlock", "hook", "--agent", agent]
+    """The agent's hook command: one shell line, independent of the agent's cwd.
+
+    It runs this Python isolated (``-I``: neither the working directory nor
+    PYTHONPATH reaches ``sys.path``) through :data:`_BOOTSTRAP`. The trailing
+    ``interlock hook --agent <name>`` stays literal: it is the bootstrap's argv
+    and the marker install, uninstall and doctor find the entry by.
+    """
+    source = _BOOTSTRAP.replace("@ROOT@", json.dumps(_package_root()))
+    parts = [shlex.quote(sys.executable), "-I", "-c",
+             shlex.quote("exec({})".format(json.dumps(source))),
+             "interlock", "hook", "--agent", shlex.quote(agent)]
     for flag, value in (("--policy", args.policy), ("--sidecar", args.sidecar),
                         ("--receipts", args.receipts), ("--key-file", args.key_file)):
         if value:
@@ -49,6 +140,12 @@ def hook_command(agent: str, args) -> str:
     if args.monitor:
         parts.append("--monitor")
     return " ".join(parts)
+
+
+def _package_root() -> str:
+    """The directory the hook imports interlock from: where this copy lives."""
+    import interlock
+    return os.path.dirname(os.path.dirname(os.path.abspath(interlock.__file__)))
 
 
 def run(args) -> int:
