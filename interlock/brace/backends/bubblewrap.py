@@ -20,6 +20,12 @@ tested without ever needing bwrap installed. The system base paths are bound wit
 ``--ro-bind-try`` (a missing ``/lib64`` on some arches is not fatal), while the
 paths the policy explicitly grants use ``--ro-bind`` / ``--bind`` and fail loudly
 if absent, which is the fail-closed behaviour we want.
+
+The per-run scratch directory ``Sandbox.run`` adds to ``write_paths`` is
+normally under ``/tmp``, so its ``--bind`` is emitted after the ``--tmpfs /tmp``
+pair and lands inside that fresh tmpfs. Order matters: a bind before the tmpfs
+would be hidden by it. bwrap creates the bind destination inside the namespace,
+so no extra ``--dir`` is needed.
 """
 from __future__ import annotations
 
@@ -112,4 +118,12 @@ class BubblewrapBackend(Backend):
         preexec = rlimit_preexec(profile.cpu_seconds, profile.memory_mb)
         if preexec is not None:
             popen_kwargs["preexec_fn"] = preexec
-        return WrapPlan(exec_argv=exec_argv, popen_kwargs=popen_kwargs, enforced=enforced)
+        # ``--new-session`` makes bwrap call setsid() itself, so the spawner
+        # must not also pass ``start_new_session=True``: the second setsid()
+        # would return EPERM and bwrap would exit before running the command.
+        return WrapPlan(
+            exec_argv=exec_argv,
+            popen_kwargs=popen_kwargs,
+            enforced=enforced,
+            creates_session=True,
+        )

@@ -20,16 +20,22 @@ from ..profile import SandboxProfile
 class WrapPlan:
     """The executable form of a profile for one backend.
 
-    exec_argv:    the full argv including any wrapper (``bwrap``, ``sandbox-exec``).
-    popen_kwargs: extra kwargs for ``subprocess.run`` (env, cwd, preexec_fn).
-    enforced:     containment tokens actually applied, surfaced on the result.
-    cleanup:      called after the run to release any resource wrap allocated.
+    exec_argv:       the full argv including any wrapper (``bwrap``, ``sandbox-exec``).
+    popen_kwargs:    extra kwargs for ``subprocess.run`` (env, cwd, preexec_fn).
+    enforced:        containment tokens actually applied, surfaced on the result.
+    cleanup:         called after the run to release any resource wrap allocated.
+    creates_session: the wrapper itself calls ``setsid()`` (bwrap does this for
+                     ``--new-session``), so the spawner must not ask ``Popen`` to
+                     create a session too: the wrapper's second ``setsid()``
+                     would fail with ``EPERM``. The wrapper is then the process
+                     group leader, so ``killpg(proc.pid)`` still works.
     """
 
     exec_argv: List[str]
     popen_kwargs: Dict[str, object] = field(default_factory=dict)
     enforced: List[str] = field(default_factory=list)
     cleanup: Optional[Callable[[], None]] = None
+    creates_session: bool = False
 
 
 class Backend:

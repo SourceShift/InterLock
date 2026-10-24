@@ -81,6 +81,80 @@ def test_seatbelt_enforced_tokens_omit_fs_ro():
     assert "fs-rw" in enforced and "net" in enforced
 
 
+def test_seatbelt_locked_profile_grants_no_shared_temp_root_and_not_all_of_dev():
+    """The locked profile writes only to the two device nodes a process needs.
+
+    /dev as a whole includes /dev/fd (already granted) and every other device;
+    the shared temp roots must stay closed so a per-run scratch grant means
+    something.
+    """
+    sbpl = sandbox_exec.build_profile(SandboxProfile.locked())
+    assert "(subpath \"/dev\")" not in sbpl
+    assert "(literal \"/dev/null\")" in sbpl
+    assert "(subpath \"/dev/fd\")" in sbpl
+    assert "/private/tmp" not in sbpl
+    assert "/private/var/folders" not in sbpl
+
+
+def test_seatbelt_renders_device_nodes_as_literals_and_grants_as_subpaths():
+    prof = SandboxProfile(write_paths=("/private/tmp/out",))
+    sbpl = sandbox_exec.build_profile(prof)
+    assert "(literal \"/dev/null\")" in sbpl
+    assert "(subpath \"/dev/fd\")" in sbpl
+    assert "(subpath \"/private/tmp/out\")" in sbpl
+
+
+def test_seatbelt_escapes_a_path_that_could_inject_a_rule():
+    """A quote or paren in a grant path must not add SBPL rules.
+
+    Escaping only the quote leaves the injected text inside the string literal,
+    which is semantically safe but still makes the rendered profile look like it
+    contains a second grant; the parentheses are octal-escaped too, and
+    Seatbelt decodes ``\\050``/``\\051`` back to parens for matching.
+    """
+    hostile = '/tmp/x" (allow network*) (allow file-write* "/'
+    sbpl = sandbox_exec.build_profile(SandboxProfile(write_paths=(hostile,)))
+    assert sbpl.count("(allow file-write*") == 1
+    assert "(allow network*)" not in sbpl
+    assert "\\050allow network*\\051" in sbpl
+
+
+@pytest.mark.parametrize("bad", ["", "rel/path", "a\nb", "a\rb", "a\x00b"])
+def test_seatbelt_rejects_invalid_grant_paths(bad):
+    with pytest.raises(ValueError):
+        sandbox_exec.build_profile(SandboxProfile(write_paths=(bad,)))
+
+
+@pytest.mark.parametrize("bad", ["", "rel/path"])
+def test_sandbox_exec_wrap_rejects_relative_paths_before_canonicalizing(bad):
+    """realpath() would turn these into cwd-derived absolute paths; a relative
+    grant must fail closed instead of silently granting something unnamed."""
+    with pytest.raises(ValueError):
+        sandbox_exec.SandboxExecBackend().wrap(
+            SandboxProfile(write_paths=(bad,)), ["/bin/echo", "x"]
+        )
+
+
+def test_bwrap_binds_the_scratch_directory_after_the_tmpfs():
+    """The per-run scratch lives under /tmp; its --bind must come after the
+    --tmpfs /tmp pair or the tmpfs would hide it."""
+    scratch = "/tmp/interlock-brace-abc123"
+    argv, _ = bubblewrap.build_argv(
+        SandboxProfile(write_paths=(scratch,)), ["cmd"]
+    )
+    assert argv.index("--tmpfs") < argv.index("--bind")
+    assert argv[argv.index("--bind") + 1] == scratch
+
+
+def test_bwrap_owns_its_session_so_the_spawner_must_not_repeat_it():
+    """bwrap's --new-session already calls setsid(); a Popen start_new_session
+    would make that second setsid() fail with EPERM and bwrap would exit
+    before running anything."""
+    plan = bubblewrap.BubblewrapBackend().wrap(SandboxProfile.locked(), ["cmd"])
+    assert "--new-session" in plan.exec_argv
+    assert plan.creates_session is True
+
+
 # --- nftables: host-granular egress (pure builder + gated apply) -------------
 def test_nft_ruleset_drops_by_default_and_allows_listed_ips():
     rs = nftables.build_ruleset(["10.0.0.1", "2001:db8::1"])

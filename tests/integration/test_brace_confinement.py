@@ -61,9 +61,9 @@ def _exfil_code(secret_path: str, url: str) -> str:
 def protected_dir():
     """A directory OUTSIDE every default write grant (so grants are meaningful).
 
-    It lives under $HOME rather than the system temp, because the macOS backend
-    must allow writes to the temp tree for runtimes, and asserting a write there
-    was blocked would test nothing.
+    It lives under $HOME rather than the system temp: the macOS backend grants
+    only device nodes and the run's own private scratch directory, and $HOME is
+    outside both, so the write grant is the only thing that can allow the write.
     """
     d = os.path.join(os.path.expanduser("~"), ".interlock_brace_test_%d" % os.getpid())
     os.makedirs(d, exist_ok=True)

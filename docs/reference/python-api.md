@@ -917,8 +917,8 @@ The constructor raises:
 
 | Method | Meaning |
 |---|---|
-| `run(argv, *, capture_output=True, timeout=None) -> SandboxResult` | Checks the launch with the policy engine, then checks `require` against what the backend would enforce, then runs the command. Raises `Blocked` or [`IsolationUnavailable`](#isolationunavailable) without starting a process. |
-| `plan(argv) -> WrapPlan` | Returns the wrapped command without running it, and **without** the policy check or the `require` check. A `WrapPlan` has `exec_argv`, `popen_kwargs`, `enforced`, and `cleanup` (call it if it is not `None`). |
+| `run(argv, *, capture_output=True, timeout=None) -> SandboxResult` | Checks the launch with the policy engine, then checks `require` against what the backend would enforce, then runs the command. Creates one private `0700` scratch directory for this run (granted and set as `TMPDIR`/`TMP`/`TEMP`), removes it on every exit path, and on timeout kills the POSIX process group before raising `subprocess.TimeoutExpired`. Raises `Blocked` or [`IsolationUnavailable`](#isolationunavailable) without starting a process and without creating the scratch directory. |
+| `plan(argv) -> WrapPlan` | Returns the wrapped command without running it, and **without** the policy check or the `require` check. No scratch directory is created and none appears in the plan: `plan()` describes the profile you passed, not the per-run profile `run()` executes. A `WrapPlan` has `exec_argv`, `popen_kwargs`, `enforced`, `cleanup` (call it if it is not `None`), and `creates_session` (the wrapper calls `setsid()` itself, so the spawner must not also pass `start_new_session`). |
 
 ```python
 import sys
@@ -935,7 +935,9 @@ The launch check is an ordinary call event with `action="process_spawn"` and the
 `args`: `path` (`argv[0]`), `argv`, `allow_network`, `allowed_hosts`, and
 `write_paths`. A rule can block it (`run` raises `Blocked`) or return a modify
 with a new `argv` list, which is what runs instead. An empty `argv` raises
-`ValueError`. A `timeout` that expires raises `subprocess.TimeoutExpired`.
+`ValueError`. A `timeout` that expires kills the sandbox's process group on
+POSIX and raises `subprocess.TimeoutExpired`; a descendant that calls `setsid()`
+escapes that group (confinement and rlimits still apply).
 
 ### `SandboxProfile`
 
@@ -944,10 +946,10 @@ A frozen dataclass.
 | Field | Default | Meaning |
 |---|---|---|
 | `read_paths` | `()` | Host paths mounted read-only. |
-| `write_paths` | `()` | Host paths mounted read-write. |
+| `write_paths` | `()` | Host paths mounted read-write. `run()` adds one private per-run scratch directory to this set for the executed command; `plan()` and the launch event see the profile as given. |
 | `allow_network` | `False` | Whether the process gets any network at all. |
 | `allowed_hosts` | `()` | Hosts the grant is meant for. The OS backends can't restrict to these, so they open the network fully and don't report `net`. |
-| `env` | `{}` | The child's complete environment. Nothing is inherited from the parent. |
+| `env` | `{}` | The child's complete environment. Nothing is inherited from the parent. `run()` overwrites `TMPDIR`, `TMP`, and `TEMP` with the run's scratch directory. |
 | `cpu_seconds` | `None` | CPU time limit. Applied on every backend. |
 | `memory_mb` | `None` | Address-space limit. Applied on every backend on Linux. **Refused on macOS**, where the kernel won't accept a useful address-space limit (`LimitUnsupported`). |
 | `unshare_pid` | `True` | Separate PID namespace where the backend supports it. |

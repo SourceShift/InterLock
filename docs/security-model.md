@@ -120,6 +120,20 @@ Each of these is sometimes the right choice. Make it on purpose.
   memory. `sandbox-exec` never reports `fs-ro` or `pid`, and a profile with
   `memory_mb` raises `LimitUnsupported` on macOS rather than running without the
   limit.
+- **A sandbox timeout kills the process group; `setsid()` leaves it.** BRACE
+  starts each sandbox in its own session so `timeout=` can kill the child and
+  its descendants together, but a descendant that calls `setsid()` itself
+  survives the kill. Its confinement and per-process rlimits still apply, and
+  the caller's wait is bounded. On Windows only the direct child is killed.
+- **Write confinement differs by backend.** On macOS the Seatbelt profile
+  grants writes only to the profile's `write_paths` plus one private per-run
+  scratch directory (set as `TMPDIR`/`TMP`/`TEMP` and removed after the run);
+  the shared temp roots (`/private/tmp`, `/private/var/folders`) and the rest
+  of `/dev` stay unwritable. Under bubblewrap, `/tmp` is a fresh tmpfs and
+  `/dev` a fresh private device tree, so writes there outside the run's own
+  scratch bind stay inside the sandbox and never reach the host's shared temp
+  roots; nothing outside the binds is visible. A scratch tree is left in place
+  only when an escaped descendant still holds it open at timeout.
 - **CPU and memory limits are reported only by `soft`.** bubblewrap and Seatbelt
   apply them too, but leave `rlimit` out of `enforced` until those rows join the
   tested guarantee matrix.

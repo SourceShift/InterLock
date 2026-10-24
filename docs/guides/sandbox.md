@@ -62,8 +62,26 @@ OPENAI_API_KEY in child: None
 `stderr`, `enforced`, and an `ok` property (`returncode == 0`). `run` also
 accepts `timeout=` and `capture_output=`.
 
+A `timeout=` that expires kills the sandbox's whole process group on POSIX, then
+raises `subprocess.TimeoutExpired`. A descendant that calls `setsid()` itself
+leaves that group and is not killed; confinement and per-process limits still
+apply to it.
+
 Use an absolute path for the program (`sys.executable` above). The child's
 environment is empty, so there is no `PATH` from your shell to search.
+
+### The per-run scratch directory
+
+Each `run()` creates one private `0700` directory (`interlock-brace-…`), sets
+`TMPDIR`, `TMP`, and `TEMP` to it, grants write access to it, and removes the
+tree afterwards — on success, on failure, and on timeout. The one exception is
+a descendant that escaped the process group via `setsid()` and still holds the
+directory open when the timeout drain expires: the tree is then left in place
+rather than pulled from under it. On macOS the shared temp roots
+(`/private/tmp`, `/private/var/folders`) are **not** granted, so a runtime that
+needs scratch space gets exactly one directory that dies with the run. The
+scratch path is added only for the executed command: the policy
+`process_spawn` event, `plan()`, and `result.argv` show the profile you passed.
 
 ## Grant what the command needs
 
@@ -86,8 +104,11 @@ The environment comes from `base_env`, never from your process:
 ```python
 profile = compile_profile(None, base_env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
 Sandbox(profile).run([sys.executable, "-c", "import os; print(sorted(os.environ))"]).stdout
-# -> "['LANG', 'PATH']\n"
+# -> "['LANG', 'PATH', 'TEMP', 'TMP', 'TMPDIR']\n"
 ```
+
+`TEMP`, `TMP`, and `TMPDIR` are the run's private scratch directory, injected by
+`run()`; everything else is exactly what you passed.
 
 `compile_profile(None)` gives the fully locked profile, and so does `Sandbox()`
 with no profile. `workdir=` sets the child's working directory on every backend.
@@ -192,8 +213,13 @@ The event's arguments:
 ```python
 {'path': '/usr/local/bin/python3',
  'argv': ['/usr/local/bin/python3', '-c', 'import sys; print(sys.flags.isolated)'],
- 'allow_network': False, 'allowed_hosts': [], 'write_paths': ['/private/tmp']}
+ 'allow_network': False, 'allowed_hosts': [], 'write_paths': []}
 ```
+
+`write_paths` is the profile you passed. The per-run scratch directory is
+deliberately absent: the launch your rules approve happens before that directory
+exists, and the scratch is an implementation detail of the run.
+
 
 Block a program:
 
@@ -242,7 +268,11 @@ takes `engine=`, `enforcement="monitor"`, and `principal=` for this check.
 What each token means:
 
 - `env`: the child gets only the environment you passed, nothing from the parent.
-- `fs-rw`: writes outside `write_paths` fail.
+- `fs-rw`: writes outside `write_paths` fail. Each run's private scratch
+  directory is added to those grants. On macOS the shared temp roots and the
+  rest of `/dev` are not, so only `/dev/null` and `/dev/fd` are writable by
+  default; under bubblewrap `/tmp` and `/dev` are fresh trees private to the
+  sandbox.
 - `fs-ro`: only the granted paths, plus read-only system directories such as
   `/usr`, `/bin`, and `/etc/ssl`, exist inside the sandbox.
 - `pid`: the child can't see or signal host processes.

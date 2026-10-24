@@ -78,8 +78,10 @@ def _exfil_code(secret_path, url):
 def protected_dir():
     """A directory outside every default write grant, under $HOME.
 
-    Same reasoning as test_brace_confinement: the macOS backend must allow the
-    system temp tree, so a blocked write there would prove nothing.
+    The macOS backend grants only the device nodes a process needs plus the
+    run's own private scratch directory, so a sibling under the shared temp
+    root would also be denied; $HOME keeps the fixture meaningful on every
+    backend and makes the grant the only thing that can allow the write.
     """
     d = os.path.join(os.path.expanduser("~"), ".interlock_brace_matrix_%d" % os.getpid())
     os.makedirs(d, exist_ok=True)
