@@ -101,11 +101,18 @@ OPERATORS: FrozenSet[str] = frozenset(
      "endswith", "matches", "glob", "exists"}
 )
 VERDICTS: FrozenSet[str] = frozenset({"block", "escalate", "modify"})
+#: Mesh facts a rule may carry (see ``interlock.mesh.bundle``): how far the
+#: community trusts it, whether this node only observes it, and the strongest
+#: verdict it may carry here. A decision above the ceiling becomes an escalate.
+RULE_STATUSES: FrozenSet[str] = frozenset({"experimental", "test", "stable", "deprecated"})
+RULE_MODES: FrozenSet[str] = frozenset({"enforce", "shadow"})
+RULE_CEILINGS: Dict[str, int] = {"escalate": 1, "modify": 2, "block": 3}
 _RULE_KEYS = frozenset(
     {"id", "verdict", "reason", "when", "set", "locked", "phase", "detector", "with",
-     "widenable", "description", "on"}
+     "widenable", "description", "on", "status", "mode", "ceiling"}
 )
-_DOC_KEYS = frozenset({"version", "name", "description", "extends", "rules", "disable", "tools"})
+_DOC_KEYS = frozenset({"version", "name", "description", "extends", "rules", "disable", "tools",
+                       "channel"})
 _OVERLAY_KEYS = frozenset({"version", "name", "description", "rules", "widen", "tools"})
 
 #: Longest regex a ``matches`` condition may use, and the longest string it scans.
@@ -194,7 +201,8 @@ class DeclarativeEngine(PolicyEngine):
                  quarantined: Sequence[str] = (), locked: Iterable[str] = (),
                  overlays: Sequence[Tuple[str, str]] = (),
                  loader: Optional[Callable[[], "DeclarativeEngine"]] = None,
-                 watch: Optional[float] = None, files: Sequence[str] = ()) -> None:
+                 watch: Optional[float] = None, files: Sequence[str] = (),
+                 shadow_rules: Sequence[Rule] = ()) -> None:
         super().__init__(list(rules))
         self.documents = [copy.deepcopy(dict(d)) for d in documents]
         self.quarantined = list(quarantined)
@@ -207,6 +215,18 @@ class DeclarativeEngine(PolicyEngine):
         self._stamps = _stamps(self._files)
         self._checked = time.monotonic()
         self._content_epoch = _content_epoch(self.documents)
+        # Shadow rules (``"mode": "shadow"``, set by the mesh subscriber for a
+        # rule inside its monitor window) are evaluated after the real decision
+        # and never change it. What they would have decided is logged, counted
+        # in metrics as observed, tallied in ``shadow_counts`` and handed to
+        # ``shadow_sink`` when one is set. The engine does this, not the rule,
+        # so the invariant that rules never write records holds.
+        self._shadow: List[Rule] = list(shadow_rules)
+        self.shadow_sink: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.shadow_counts: Dict[Tuple[str, str], int] = {}
+        #: Wall-clock time after which the policy should be reloaded even if no
+        #: file changed: the moment a shadow rule's monitor window ends.
+        self.reload_at: Optional[float] = None
 
     @property
     def epoch(self) -> str:  # type: ignore[override]
@@ -224,24 +244,73 @@ class DeclarativeEngine(PolicyEngine):
             _log.warning("interlock: policy reload failed, keeping the last good policy: %s", exc)
             return False
         self._rules = list(fresh._rules)
+        self._shadow = list(fresh._shadow)
         self._epoch = None
         self.documents = fresh.documents
         self.quarantined = fresh.quarantined
         self.locked = fresh.locked
         self.overlays = fresh.overlays
         self._content_epoch = fresh._content_epoch
+        self._files = list(fresh._files) or self._files
         self._stamps = _stamps(self._files)
+        self.reload_at = fresh.reload_at
+        if fresh.shadow_sink is not None:
+            self.shadow_sink = fresh.shadow_sink
         self.last_error = None
         return True
+
+    @property
+    def shadow_ids(self) -> List[str]:
+        """The ``policy_id`` of every rule this engine only observes."""
+        from .engine import _rule_label
+        return [_rule_label(rule) for rule in self._shadow]
 
     def evaluate(self, event: SensorEvent) -> Decision:
         if self._watch is not None:
             now = time.monotonic()
             if now - self._checked >= self._watch:
                 self._checked = now
-                if _stamps(self._files) != self._stamps:
+                due = self.reload_at is not None and time.time() >= self.reload_at
+                if due or _stamps(self._files) != self._stamps:
                     self.reload()
-        return super().evaluate(event)
+        decision = super().evaluate(event)
+        if self._shadow:
+            self._observe(event)
+        return decision
+
+    def _observe(self, event: SensorEvent) -> None:
+        is_result = getattr(event, "phase", "call") == "result"
+        for rule in self._shadow:
+            if (getattr(rule, "phase", "call") == "result") != is_result:
+                continue
+            try:
+                would = rule(event)
+            except Exception as exc:  # a shadow rule's bug is a log line, never a decision
+                _log.warning("interlock: shadow rule %s raised %s", getattr(rule, "policy_id", "?"), exc)
+                continue
+            if would is None or would.verdict == Verdict.ALLOW:
+                continue
+            policy_id = would.policy_id or getattr(rule, "policy_id", "?")
+            verdict = would.verdict.name
+            key = (str(policy_id), verdict)
+            self.shadow_counts[key] = self.shadow_counts.get(key, 0) + 1
+            _log.info("interlock: shadow rule %s would %s action=%s reason=%s",
+                      policy_id, verdict, event.action, would.reason)
+            try:
+                from .. import metrics
+                metrics.record(verdict, getattr(event, "phase", "call"), str(policy_id), observed=True)
+            except Exception:
+                pass
+            if self.shadow_sink is not None:
+                try:
+                    from ..receipt import digest_args
+                    self.shadow_sink({
+                        "ts": time.time(), "action": event.action, "phase": getattr(event, "phase", "call"),
+                        "policy_id": policy_id, "verdict": verdict, "reason": would.reason,
+                        "args_digest": digest_args(event.args), "principal": event.principal,
+                    })
+                except Exception as exc:
+                    _log.warning("interlock: shadow sink failed: %s", exc)
 
 
 def _stamps(files: Sequence[str]) -> Tuple[Tuple[str, float, int], ...]:
@@ -279,9 +348,10 @@ def load_policy(doc: Mapping[str, Any], *, source: str = "<policy>",
         rules = widened + extra
         documents.append({"overlay": name, **dict(overlay)})
         applied.append((name, "applied"))
-    compiled = [r.rule for r in rules]
+    compiled = [r.rule for r in rules if not r.shadow]
+    shadow = [r.rule for r in rules if r.shadow]
     return DeclarativeEngine(compiled, documents=documents, quarantined=quarantined,
-                             locked=locked, overlays=applied)
+                             locked=locked, overlays=applied, shadow_rules=shadow)
 
 
 def load_policy_file(path: str, *, overlays: Sequence[str] = (), trust: Any = None,
@@ -311,14 +381,34 @@ def load_policy_file(path: str, *, overlays: Sequence[str] = (), trust: Any = No
         for name, status in engine.overlays:
             _record_overlay(name, status)
         engine.overlays = notes + engine.overlays
+        engine._files = [path] + [os.path.abspath(o) for o in overlays]
+        _attach_mesh(engine)
+        engine._stamps = _stamps(engine._files)
         return engine
 
     engine = build()
     engine._loader = build
     engine._watch = watch
-    engine._files = [path] + [os.path.abspath(o) for o in overlays]
     engine._stamps = _stamps(engine._files)
     return engine
+
+
+def _attach_mesh(engine: "DeclarativeEngine") -> None:
+    """If any document came from the mesh, watch the mesh cache for changes,
+    reload when the next shadow window ends, and record shadow decisions."""
+    specs = [d.get("source") for d in engine.documents
+             if isinstance(d.get("source"), str) and d["source"].startswith("mesh:")]
+    if not specs:
+        return
+    try:
+        from ..mesh.subscriber import watch_info
+        files, reload_at, sink = watch_info(specs)
+    except Exception as exc:  # the mesh is optional plumbing; never fail a load over it
+        _log.warning("interlock: mesh watch not attached: %s", exc)
+        return
+    engine._files = list(engine._files) + [f for f in files if f not in engine._files]
+    engine.reload_at = reload_at
+    engine.shadow_sink = sink
 
 
 def _trusted_overlay(path: str, trust: Any) -> Tuple[str, Optional[Mapping[str, Any]]]:
@@ -349,13 +439,15 @@ def _record_overlay(path: str, status: str) -> None:
 
 
 class _Compiled:
-    __slots__ = ("id", "rule", "doc", "locked")
+    __slots__ = ("id", "rule", "doc", "locked", "shadow")
 
-    def __init__(self, rule_id: str, rule: Rule, doc: Mapping[str, Any], locked: bool) -> None:
+    def __init__(self, rule_id: str, rule: Rule, doc: Mapping[str, Any], locked: bool,
+                 shadow: bool = False) -> None:
         self.id = rule_id
         self.rule = rule
         self.doc = doc
         self.locked = locked
+        self.shadow = shadow
 
 
 def _compile_with_extends(doc: Mapping[str, Any], source: str, base_dir: Optional[str],
@@ -424,6 +516,17 @@ def _resolve_extends(parent: Any, source: str, base_dir: Optional[str]) -> Tuple
             return builtin_pack(parent[len("builtin:"):]), parent, None
         except KeyError as exc:
             raise PolicyError(str(exc), source)
+    if parent.startswith("mesh:"):
+        # A community pack from the node's verified mesh cache. Never a network
+        # call: ``interlock mesh sync`` fills the cache, this only reads it, so
+        # a mirror outage cannot stall a policy load. A pack that is not cached
+        # is a load error, which keeps the last good policy in force.
+        from ..mesh.subscriber import SubscriberError, resolve_extends
+        try:
+            doc, spec, _cache_path = resolve_extends(parent)
+        except SubscriberError as exc:
+            raise PolicyError(str(exc), source)
+        return doc, spec, None
     path = parent if os.path.isabs(parent) else os.path.join(base_dir or os.getcwd(), parent)
     doc, _ = read_policy_file(path)
     return doc, path, os.path.dirname(path)
@@ -521,6 +624,15 @@ def _compile_rule(raw: Any, where: str) -> _Compiled:
         raise PolicyError("'id' must be 1-128 characters of [A-Za-z0-9_.:/-]", where)
     where = "{} ({})".format(where, rule_id)
     locked = bool(raw.get("locked", False))
+    status = raw.get("status")
+    if status is not None and status not in RULE_STATUSES:
+        raise PolicyError("'status' must be one of {}".format(", ".join(sorted(RULE_STATUSES))), where)
+    mode = raw.get("mode", "enforce")
+    if mode not in RULE_MODES:
+        raise PolicyError("'mode' must be one of {}".format(", ".join(sorted(RULE_MODES))), where)
+    ceiling = raw.get("ceiling")
+    if ceiling is not None and ceiling not in RULE_CEILINGS:
+        raise PolicyError("'ceiling' must be one of {}".format(", ".join(sorted(RULE_CEILINGS))), where)
     scope = _action_condition(raw["on"], where + " on") if "on" in raw else None
     scope_names = _actions_in([{"action": raw["on"]}]) if "on" in raw else None
     if "detector" in raw:
@@ -530,7 +642,7 @@ def _compile_rule(raw: Any, where: str) -> _Compiled:
         rule = _detector_rule(raw["detector"], raw.get("with", {}), where)
         if scope is not None:
             rule = _scoped(rule, scope)
-        return _Compiled(rule_id, _labelled(rule, rule_id, locked), raw, locked)
+        return _finish(rule_id, rule, raw, locked, mode, ceiling)
 
     verdict = raw.get("verdict")
     if verdict not in VERDICTS:
@@ -574,7 +686,34 @@ def _compile_rule(raw: Any, where: str) -> _Compiled:
                                attributed_to=attributed)
 
     rule.phase = phase  # type: ignore[attr-defined]
-    return _Compiled(rule_id, _labelled(rule, rule_id, locked), raw, locked)
+    return _finish(rule_id, rule, raw, locked, mode, ceiling)
+
+
+def _finish(rule_id: str, rule: Rule, raw: Mapping[str, Any], locked: bool, mode: str,
+            ceiling: Optional[str]) -> _Compiled:
+    if ceiling is not None:
+        rule = _ceilinged(rule, ceiling)
+    return _Compiled(rule_id, _labelled(rule, rule_id, locked), raw, locked, shadow=(mode == "shadow"))
+
+
+def _ceilinged(rule: Rule, ceiling: str) -> Rule:
+    """Cap a rule's verdict: a decision stronger than ``ceiling`` becomes an
+    ESCALATE, so a community rule the node does not fully trust yet asks a
+    human instead of acting on its own."""
+    limit = RULE_CEILINGS[ceiling]
+
+    def capped(event: SensorEvent) -> Optional[Decision]:
+        decision = rule(event)
+        if decision is None or decision.verdict == Verdict.ALLOW:
+            return decision
+        rank = RULE_CEILINGS.get(decision.verdict.name.lower())
+        if rank is None or rank <= limit:
+            return decision
+        return Decision.escalate("above the {} ceiling: {}".format(ceiling, decision.reason),
+                                 decision.policy_id, attributed_to=decision.attributed_to)
+
+    capped.phase = getattr(rule, "phase", "call")  # type: ignore[attr-defined]
+    return capped
 
 
 def _scoped(rule: Rule, scope: Condition) -> Rule:

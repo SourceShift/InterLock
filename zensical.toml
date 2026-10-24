@@ -68,6 +68,7 @@ nav = [
     { "Audit log" = "guides/audit-log.md" },
     { "Console" = "guides/console.md" },
     { "Sandbox" = "guides/sandbox.md" },
+    { "Mesh" = "guides/mesh.md" },
     { "Production checklist" = "guides/production.md" },
   ] },
   { "Reference" = [

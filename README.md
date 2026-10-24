@@ -234,6 +234,7 @@ somewhere other than a checkout? Pass `--static /path/to/web/dist`.
 | BRACE sandbox | Runs subprocesses under bubblewrap (Linux) or Seatbelt (macOS), built from your policy | [Sandbox](docs/guides/sandbox.md) |
 | Node.js client | Guards JS agents with the same Python policy through a local daemon | [js/README.md](js/README.md) |
 | Console | A local web app: activity, the review queue, the audit log, the policy editor, a detector playground, and ops; writes need a terminal-only unlock | [Console](docs/guides/console.md) |
+| Mesh | Subscribe to community policy packs (`"extends": "mesh:coding-agent@stable"`), verified from a pinned root with signed, expiring metadata; new rules run in shadow mode first and a ring caps their verdict. Or publish a commons yourself | [Mesh](docs/guides/mesh.md) |
 
 ## Works with
 

@@ -31,6 +31,7 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("mcp", "inventory the MCP servers configured on this machine", "mcp"),
     ("reviews", "decide pending reviews; serve their status to agents", "reviews"),
     ("drift", "diff a live surface's tool listing against a recorded corpus", "drift"),
+    ("mesh", "subscribe to community policy packs, or publish a commons", "mesh"),
 ]
 
 

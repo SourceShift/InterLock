@@ -35,6 +35,7 @@ minutes), then read [how interlock works](concepts.md).
 | [Scopes](guides/scopes.md) | Give each tenant, agent, and sub-agent its own rules |
 | [Audit log](guides/audit-log.md) | Keep a tamper-evident record of every decision |
 | [Sandbox](guides/sandbox.md) | Run subprocesses under OS-level confinement built from your policy |
+| [Mesh](guides/mesh.md) | Subscribe to community policy packs, verified from a pinned root and applied in monitor mode first; or publish a commons |
 | [Production checklist](guides/production.md) | Roll out safely: prove protection is on, monitor mode, refusals, logging, deployment |
 
 ## Reference

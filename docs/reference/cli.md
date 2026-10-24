@@ -19,6 +19,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`mcp`](#interlock-mcp) | inventory the MCP servers configured on this machine |
 | [`reviews`](#interlock-reviews) | decide pending reviews; serve their status to agents |
 | [`drift`](#interlock-drift) | diff a live surface's tool listing against a recorded corpus |
+| [`mesh`](#interlock-mesh) | subscribe to community policy packs, or publish a commons |
 
 ## `interlock doctor`
 
@@ -324,4 +325,48 @@ usage: interlock drift [-h] [--corpus FILE] [--live CMD] [--surface NAME] [--jso
   --live                     a shell command whose stdout is the live tool listing
   --surface                  which corpus surface the live command describes (default: the corpus's only surface)
   --json                     machine-readable output
+```
+
+## `interlock mesh`
+
+Subscribe to the interlock mesh, or publish a commons for it.
+
+For a node (the deployment running an agent):
+
+```bash
+interlock mesh init --root root.json --mirror https://commons.example.org [--ring stable]
+interlock mesh sync                       # fetch and verify; the cache only changes if all of it verifies
+interlock mesh status [--json]            # subscriptions, freshness, what shadow rules would have done
+interlock mesh resolve mesh:coding-agent@stable   # print the pack as this node would install it
+```
+
+Then in your policy file:  {"version": 1, "extends": "mesh:coding-agent@stable", "rules": [...]}
+
+For a maintainer (the people who run a commons):
+
+```bash
+interlock mesh keys init --out keys/      # one Ed25519 key per role; raise counts/thresholds for a real root
+interlock mesh publish --source commons/ --out site/ --keys keys/
+interlock mesh verify site/               # walk the site exactly as a subscriber would
+```
+
+A node never auto-enforces a new community rule: every rule it has not seen
+before spends a monitor window in shadow mode, and a rule's status and the
+node's ring cap how strong its verdict may be. See docs/guides/mesh.md.
+
+Exit codes: 0 ok, 1 the mesh is stale or a shadow summary shows findings
+(status), 2 verification or publishing failed, 3 a file could not be read,
+64 the command line was wrong.
+
+```text
+usage: interlock mesh [-h] ACTION ...
+usage: interlock mesh init [-h] --root FILE [--mirror URL] [--ring {canary,early,stable}]
+                           [--monitor-days DAYS] [--dir DIR]
+usage: interlock mesh sync [-h] [--dir DIR] [--json]
+usage: interlock mesh status [-h] [--dir DIR] [--json]
+usage: interlock mesh resolve [-h] [--dir DIR] spec
+usage: interlock mesh keys [-h] ACTION ...
+usage: interlock mesh publish [-h] --source DIR --out DIR --keys DIR [--timestamp-days DAYS]
+                              [--no-validate] [--json]
+usage: interlock mesh verify [-h] [--root FILE] [--json] DIR
 ```

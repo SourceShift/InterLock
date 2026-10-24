@@ -203,6 +203,11 @@ class Receipt:
     # (identity only). Omitted while None, like the other R17 fields, so older
     # chains verify unchanged.
     scope_document: Optional[str] = None
+    # The installed detector catalog's id (``interlock.mesh.catalog``), stamped
+    # once :func:`set_catalog_id` has been called, so a mesh report built from
+    # receipts can say which published detector set decided. Omitted while
+    # None, like the other optional fields, so older chains verify unchanged.
+    catalog: Optional[str] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape.
@@ -238,8 +243,23 @@ _FIELD_NAMES = tuple(f.name for f in dataclasses.fields(Receipt))
 
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
-    "enforcer", "elapsed_us", "masked", "tokens", "scope_document",
+    "enforcer", "elapsed_us", "masked", "tokens", "scope_document", "catalog",
 )
+
+# The catalog id receipts carry, once a mesh component has set it. None (the
+# default) leaves receipts byte-for-byte as they were before the field existed.
+_CATALOG_ID: Optional[str] = None
+
+
+def set_catalog_id(value: Optional[str]) -> None:
+    """Stamp ``value`` as ``catalog`` on every receipt from now on (None stops)."""
+    global _CATALOG_ID
+    _CATALOG_ID = value
+
+
+def catalog_id_stamp() -> Optional[str]:
+    """The catalog id receipts currently carry, or None."""
+    return _CATALOG_ID
 
 
 def signing_payload(receipt: Receipt) -> bytes:
@@ -396,6 +416,7 @@ def emit_receipt(
         masked=dict(decision.masked) if getattr(decision, "masked", None) else None,
         tokens=tokens,
         scope_document=scope_document,
+        catalog=_CATALOG_ID,
     )
     _write(sink, receipt, event.action)
 

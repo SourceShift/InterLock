@@ -52,6 +52,7 @@ def run(args) -> int:
     checks.extend(_sidecar_checks(args))
     checks.extend(_sandbox_checks())
     checks.extend(_receipt_checks(args))
+    checks.extend(_mesh_checks())
     checks.extend(_hook_checks())
     checks.extend(_framework_checks())
     for provider in EXTRA_CHECKS:
@@ -117,6 +118,37 @@ def _sidecar_checks(args) -> List[Check]:
             return [Check("sidecar.reachable", INFO, "no sidecar socket at {}".format(default))]
         path = default
     return [probe_sidecar(path)]
+
+
+def _mesh_checks() -> List[Check]:
+    """Is the node's mesh subscription fresh? Only reported when one exists."""
+    try:
+        from ..mesh.subscriber import Subscriber
+        status = Subscriber().status()
+    except Exception as exc:  # the mesh is optional; a broken state dir is a warning, not a crash
+        return [Check("mesh.state", WARN, "mesh state unreadable: {}".format(type(exc).__name__))]
+    if not status.get("configured"):
+        return []
+    checks: List[Check] = []
+    if status.get("cache_error"):
+        checks.append(Check("mesh.cache", FAIL, "mesh cache does not verify: {}".format(status["cache_error"]),
+                            fix="interlock mesh sync"))
+    elif status.get("timestamp_expired"):
+        checks.append(Check("mesh.fresh", WARN,
+                            "mesh timestamp expired {}: the commons stopped signing or sync is failing; "
+                            "the last good packs stay in force".format(status.get("timestamp_expires")),
+                            fix="interlock mesh sync"))
+    elif status.get("timestamp_expires"):
+        checks.append(Check("mesh.fresh", OK, "mesh verified, timestamp valid until {}".format(
+            status["timestamp_expires"])))
+    if status.get("last_error"):
+        checks.append(Check("mesh.sync", WARN, "last mesh sync failed: {}".format(status["last_error"]),
+                            fix="interlock mesh sync"))
+    shadow = status.get("shadow") or {}
+    if shadow.get("total"):
+        checks.append(Check("mesh.shadow", INFO, "{} shadow finding(s) from rules in their monitor window".format(
+            shadow["total"]), fix="interlock mesh status"))
+    return checks
 
 
 def _receipt_checks(args) -> List[Check]:

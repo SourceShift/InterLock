@@ -11,6 +11,19 @@ breaking changes land.
 
 ### Added
 
+- The mesh, phase 0 (`interlock mesh`, `interlock.mesh`): subscribe to
+  community policy packs with `"extends": "mesh:<pack>@<ring>"`. A node pins a
+  root and syncs a commons through TUF-shaped metadata (root, targets,
+  snapshot, timestamp: thresholds, expiry, rollback and hash checks) over any
+  HTTP or `file://` mirror, with pure-Python Ed25519. Rules carry a `status`;
+  the node's ring decides which it installs and caps their verdict (`ceiling`),
+  and every rule new to the node spends a monitor window in `"mode": "shadow"`,
+  recorded but not enforced, then reloads into enforcement. Policy loads read
+  the verified cache only and fail closed. `interlock mesh keys|publish|verify`
+  run a commons; `interlock doctor` reports a stale subscription. Receipts gain
+  an optional `catalog` field (the installed detector set's hash) once
+  `interlock.receipt.set_catalog_id` is called.
+
 - The console (`python -m interlock.console`, `interlock-console`): a local
   web app on loopback for the person running the agent - activity, the review
   queue, the audit log with a live tail, the policy editor with overlays and
