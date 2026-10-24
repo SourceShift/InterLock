@@ -23,6 +23,20 @@ breaking changes land.
   run a commons; `interlock doctor` reports a stale subscription. Receipts gain
   an optional `catalog` field (the installed detector set's hash) once
   `interlock.receipt.set_catalog_id` is called.
+- The mesh, phase 1: reporting and consensus. `interlock mesh report
+  init|build|submit` projects a receipt log into a signed report of rule
+  counts (per verdict, tool class, phase and hour), argument digests of what
+  was blocked or escalated (never from redacting rules, rewrites or monitor
+  mode), and operator false-positive sightings; counts leave the node as
+  additive secret shares to two or more aggregators (`interlock.mesh.aggregate`).
+  `interlock mesh serve --role consensus|aggregator` is a standard-library
+  reference implementation of the collectors; the consensus engine
+  (`interlock.mesh.consensus`) requires a known detector catalog, weights
+  reporters by tenure and canary agreement, needs distinct organisations
+  before an indicator is active, demotes rules on multi-organisation
+  false-positive sightings, expires stale indicators, and exports a public
+  stats document and an indicator pack. The `mesh_indicator_guard` detector
+  blocks (or escalates) a call whose argument digest is a published indicator.
 
 - The console (`python -m interlock.console`, `interlock-console`): a local
   web app on loopback for the person running the agent - activity, the review

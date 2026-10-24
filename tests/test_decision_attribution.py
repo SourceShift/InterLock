@@ -590,6 +590,7 @@ ACTION_NAME = "trigger is the action name itself, not an argument"
 ADDITIVE = "MODIFY adds a stamp field to the event; nothing in the input tripped it"
 
 KNOWN_GAPS = {
+    "mesh_indicator_guard": AGGREGATE,  # the digest covers the whole argument set, no single argument
     "call_rate_limiter": STATEFUL,
     "content_digest_stamp": ADDITIVE,
     "cost_budget_guard": STATEFUL,

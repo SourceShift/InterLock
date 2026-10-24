@@ -127,9 +127,79 @@ files under `keys/retired/`, put the new ones in place, and publish: the new
 root is signed by both sets, and subscribers follow the rotation on their next
 sync.
 
+## Report what your guard stopped
+
+Reporting is off until you turn it on, and it is a projection of the receipts
+interlock already writes ([audit log](audit-log.md)). A report carries three
+kinds of fact and nothing else:
+
+| Layer | Carries | Never carries |
+|---|---|---|
+| counts | how often each published rule fired, per verdict, tool *class* (shell, http, file.write, mcp, ...), phase and hour | tool names, principals, sessions |
+| digests | the SHA-256 of the arguments a rule **blocked or escalated**, exactly as the receipt stores it | arguments; anything a redacting or masking rule saw; rewrites; monitor-mode decisions |
+| sightings | "rule X is wrong here", an operator's false-positive statement | |
+
+```bash
+interlock mesh report init                                  # an Ed25519 key: the only identity the mesh sees
+interlock mesh report build --receipts ~/.interlock/receipts.jsonl --since 24h --out report.json
+interlock mesh report build --receipts ... --false-positive tool_result_injection --out report.json
+interlock mesh report submit report.json --consensus https://consensus.example.org \
+    --aggregator https://agg-a.example.org --aggregator https://agg-b.example.org
+```
+
+`build` prints what the report contains before anything leaves the machine;
+`--json` shows the exact envelope. `submit` sends the signed envelope (digests
+and sightings) to the **consensus** service, and splits the counts into
+additive secret shares, one per **aggregator**: each aggregator sees a
+uniformly random number, and only their combined sums are the real totals. Two
+aggregators run by organisations that will not collude are the minimum; with
+fewer, counts are not sent at all.
+
+Every report also names the node's **catalog id**, a hash of the installed
+detector modules and the interlock version. The consensus engine refuses
+reports from catalogs it does not know, so only unmodified, published
+detectors count, the way only unmodified hub scenarios count in CrowdSec.
+
+## Run the collectors
+
+The package ships a reference implementation of both roles, standard library
+only, meant to sit behind a real web server:
+
+```bash
+interlock mesh serve --role consensus --bind 127.0.0.1:7949 --state consensus.json \
+    --known-catalog <catalog id> --token <shared secret>
+interlock mesh serve --role aggregator --bind 127.0.0.1:7950 --state agg.json
+```
+
+The consensus engine turns reports into decisions the way every crowdsourced
+defence that works does:
+
+- **Distinct organisations, not events.** An indicator (a rule id plus a
+  digest) becomes *active* when at least `min_orgs` (default 3) different
+  reporters saw it and their combined trust clears `min_trust`.
+- **Trust the reporter, not the report.** Trust starts at a floor, grows with
+  tenure and with agreement with **canaries** (known-bad payloads the
+  maintainers seed), and drops when a node reports a known-*benign* canary as
+  blocked, the signature of misconfiguration or poisoning. Reports are
+  rate-limited per reporter.
+- **Let receivers push back.** False-positive sightings from `fp_demote_orgs`
+  (default 2) organisations demote a rule: its indicators leave the pack and
+  the demotion is published in the stats for the maintainers to act on.
+- **Expire everything.** An indicator unseen for `indicator_ttl_days` (default
+  30) is no longer active.
+
+`GET /v1/stats` is the public dashboard: per-rule fire counts across the
+network, how many organisations saw each rule fire, the indicator funnel, and
+demotions. It carries nothing per reporter. `GET /v1/indicators` (or
+`interlock mesh consensus export --state consensus.json`) is the indicator
+**pack**: one rule using the `mesh_indicator_guard` detector with the active
+digests, published with status `test`. On a subscriber's canary and early
+rings that caps it to an escalate, and the stable ring does not install it
+until a maintainer promotes the pack. The commons publishes it like any other
+pack, so indicators reach nodes through the same verified path.
+
 ## What is not here yet
 
-Phases 1 to 3 of the design, reporting what the guard stopped (as counts,
-digests and private fingerprints), the consensus service, the forge that
-drafts rules from reports, and the transparency log, are in the package but
-described in their own sections of this guide as they land.
+Phases 2 and 3 of the design, private fingerprints for paraphrased variants,
+the forge that drafts rules from reports, and the transparency log with
+monitors and peer seeding, land in their own sections of this guide.

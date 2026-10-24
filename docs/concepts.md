@@ -170,7 +170,7 @@ Two things to remember about results:
 - **Blocking a result doesn't undo the tool.** By the time a result exists, the
   tool has run and its side effects stand. Blocking only keeps the output from
   your agent.
-- **Most detectors check calls.** Of the 119 built-in detectors, five are
+- **Most detectors check calls.** Of the 120 built-in detectors, five are
   result rules: `tool_result_injection_guard`, `tool_output_secret_redactor`,
   `data_masking_guard`, `http_status_guard` and `result_size_guard`. To scan results for anything
   else, write a result rule. [Writing rules](guides/writing-rules.md#check-results)

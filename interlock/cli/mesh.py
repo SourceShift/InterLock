@@ -76,6 +76,42 @@ def add_arguments(parser) -> None:
     verify.add_argument("--root", default=None, metavar="FILE", help="pin this root instead of the site's")
     verify.add_argument("--json", action="store_true")
 
+    report = sub.add_parser("report", help="build, inspect and submit what your guard stopped")
+    report_sub = report.add_subparsers(dest="report_command", metavar="ACTION")
+    report_init = report_sub.add_parser("init", help="create this node's reporting key")
+    report_init.add_argument("--dir", default=None, metavar="DIR")
+    report_build = report_sub.add_parser("build", help="project a receipt log into a signed report")
+    report_build.add_argument("--receipts", required=True, metavar="FILE", help="a receipt log written by FileSink")
+    report_build.add_argument("--since", default="24h", metavar="DURATION", help="window: 30m, 24h, 7d (default 24h)")
+    report_build.add_argument("--out", default=None, metavar="FILE", help="write the signed envelope here")
+    report_build.add_argument("--false-positive", action="append", default=[], metavar="RULE_ID",
+                              help="say this rule is wrong here (a negative sighting); repeatable")
+    report_build.add_argument("--no-digests", action="store_true", help="counts only, no argument digests")
+    report_build.add_argument("--dir", default=None, metavar="DIR")
+    report_build.add_argument("--json", action="store_true", help="print the envelope instead of a summary")
+    report_submit = report_sub.add_parser("submit", help="send a built report to the collectors")
+    report_submit.add_argument("file", metavar="FILE", help="an envelope written by `report build --out`")
+    report_submit.add_argument("--consensus", required=True, metavar="URL", help="the consensus service")
+    report_submit.add_argument("--aggregator", action="append", default=[], metavar="URL",
+                               help="an aggregator; give at least two or counts are not shared")
+    report_submit.add_argument("--token", default=None, metavar="TOKEN", help="bearer token the collectors require")
+
+    serve = sub.add_parser("serve", help="run a collector role (reference implementation)")
+    serve.add_argument("--role", required=True, choices=["consensus", "aggregator"])
+    serve.add_argument("--bind", default="127.0.0.1:7949", metavar="HOST:PORT")
+    serve.add_argument("--state", default=None, metavar="FILE", help="persist state here")
+    serve.add_argument("--token", default=None, metavar="TOKEN", help="require this bearer token on every POST")
+    serve.add_argument("--known-catalog", action="append", default=[], metavar="ID",
+                       help="consensus: accept reports from this detector catalog id; repeatable")
+    serve.add_argument("--min-orgs", type=int, default=None, metavar="N")
+
+    consensus = sub.add_parser("consensus", help="work with a consensus state file offline")
+    consensus_sub = consensus.add_subparsers(dest="consensus_command", metavar="ACTION")
+    consensus_export = consensus_sub.add_parser("export", help="write the active indicators as a pack, or the stats")
+    consensus_export.add_argument("--state", required=True, metavar="FILE")
+    consensus_export.add_argument("--out", default=None, metavar="FILE", help="write the pack here (default: stdout)")
+    consensus_export.add_argument("--stats", action="store_true", help="export the public statistics instead")
+
 
 def run(args) -> int:
     command = args.mesh_command
@@ -93,8 +129,169 @@ def run(args) -> int:
         return _publish(args)
     if command == "verify":
         return _verify(args)
-    sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, keys, publish, verify\n")
+    if command == "report":
+        return _report(args)
+    if command == "serve":
+        return _serve(args)
+    if command == "consensus":
+        return _consensus(args)
+    sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, keys, publish, verify, "
+                     "report, serve, consensus\n")
     return 64
+
+
+def _report(args) -> int:
+    from ..mesh import default_mesh_dir
+    from ..mesh.report import ReportError, ReporterKey
+
+    import os
+    mesh_dir = args.dir or default_mesh_dir()
+    key_path = os.path.join(mesh_dir, "reporter.key")
+    if args.report_command == "init":
+        os.makedirs(mesh_dir, exist_ok=True)
+        try:
+            key = ReporterKey.load_or_create(key_path)
+        except ReportError as exc:
+            sys.stderr.write("interlock mesh report: {}\n".format(exc))
+            return 2
+        print("reporter {} (key at {}; this id is the only identity the mesh sees)".format(key.keyid, key_path))
+        return 0
+    if args.report_command == "build":
+        return _report_build(args, key_path)
+    if args.report_command == "submit":
+        return _report_submit(args)
+    sys.stderr.write("interlock mesh report: choose an action: init, build, submit\n")
+    return 64
+
+
+def _report_build(args, key_path: str) -> int:
+    import os
+
+    from ..mesh.catalog import catalog_id
+    from ..mesh.report import ReportError, ReporterKey, build_report, sign_report
+    from ..report import parse_since, read_receipts
+
+    if not os.path.exists(key_path):
+        sys.stderr.write("interlock mesh report: no reporting key; run: interlock mesh report init\n")
+        return 2
+    try:
+        since_seconds = parse_since(args.since)
+    except ValueError as exc:
+        sys.stderr.write("interlock mesh report: {}\n".format(exc))
+        return 64
+    try:
+        receipts, bad = read_receipts(args.receipts)
+    except OSError as exc:
+        sys.stderr.write("interlock mesh report: cannot read {}: {}\n".format(args.receipts, exc))
+        return 3
+    now = time.time()
+    since = now - (since_seconds or 0) if since_seconds else 0.0
+    try:
+        key = ReporterKey.load_or_create(key_path)
+        body = build_report(receipts, since=since, until=now, catalog_id=catalog_id(), reporter_id=key.keyid,
+                            include_digests=not args.no_digests,
+                            sightings=[{"policy_id": r, "kind": "false_positive"} for r in args.false_positive])
+        envelope = sign_report(body, key)
+    except ReportError as exc:
+        sys.stderr.write("interlock mesh report: {}\n".format(exc))
+        return 2
+    text = json.dumps(envelope, sort_keys=True, indent=1)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+    if args.json:
+        sys.stdout.write(text + "\n")
+    else:
+        total = sum(c["n"] for c in body["counts"])
+        print("report by {}: {} decision(s) in {} count row(s), {} digest(s), {} sighting(s); catalog {}".format(
+            key.keyid[:12], total, len(body["counts"]), len(body["digests"]), len(body["sightings"]), body["catalog"]))
+        if bad:
+            print("  {} unreadable line(s) in the log were skipped".format(len(bad)))
+        print("  carries: rule ids, verdicts, tool classes, hour buckets, argument digests. Never arguments, "
+              "principals or sessions.")
+        if args.out:
+            print("  written to {}".format(args.out))
+    return 0
+
+
+def _report_submit(args) -> int:
+    from ..mesh.aggregate import count_key, encode_counts
+    from ..mesh.report import ReportError, submit, verify_report
+
+    try:
+        with open(args.file, "r", encoding="utf-8") as fh:
+            envelope = json.load(fh)
+        body = verify_report(envelope)
+    except (OSError, ValueError, ReportError) as exc:
+        sys.stderr.write("interlock mesh report: {} is not a valid report: {}\n".format(args.file, exc))
+        return 3
+    try:
+        reply = submit(args.consensus.rstrip("/") + "/v1/reports", envelope, token=args.token)
+    except OSError as exc:
+        sys.stderr.write("interlock mesh report: consensus {}: {}\n".format(args.consensus, exc))
+        return 2
+    print("consensus: {}".format("accepted" if reply.get("accepted") else "refused: {}".format(reply.get("reason"))))
+    if len(args.aggregator) < 2:
+        if args.aggregator:
+            print("counts not shared: one aggregator alone would see them; give at least two")
+        return 0 if reply.get("accepted") else 2
+    counts = {count_key(c["policy_id"], c["verdict"], c["tool_class"], c["phase"], c["bucket"]): c["n"]
+              for c in body["counts"]}
+    report_id = "{}:{}".format(body["reporter"], int(body["period"]["until"]))
+    shares = encode_counts(counts, len(args.aggregator))
+    for url, share in zip(args.aggregator, shares):
+        try:
+            answer = submit(url.rstrip("/") + "/v1/shares", {"report_id": report_id, "shares": share}, token=args.token)
+        except OSError as exc:
+            sys.stderr.write("interlock mesh report: aggregator {}: {}\n".format(url, exc))
+            return 2
+        print("aggregator {}: {}".format(url, "accepted" if answer.get("accepted") else answer))
+    return 0 if reply.get("accepted") else 2
+
+
+def _serve(args) -> int:
+    from ..mesh.server import make_server
+
+    config = {"min_orgs": args.min_orgs} if args.min_orgs else None
+    try:
+        server = make_server(args.role, args.bind, state_path=args.state, token=args.token,
+                             known_catalogs=tuple(args.known_catalog), config=config)
+    except (OSError, ValueError) as exc:
+        sys.stderr.write("interlock mesh serve: {}\n".format(exc))
+        return 2
+    print("interlock mesh {} listening on {}{}".format(args.role, server.url,
+                                                        " (state: {})".format(args.state) if args.state else ""))
+    if args.role == "consensus" and not args.known_catalog:
+        print("warning: no --known-catalog given; every report will be refused (unknown catalog)")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+def _consensus(args) -> int:
+    from ..mesh.consensus import ConsensusEngine
+
+    if args.consensus_command != "export":
+        sys.stderr.write("interlock mesh consensus: choose an action: export\n")
+        return 64
+    try:
+        engine = ConsensusEngine.load(args.state)
+    except (OSError, ValueError) as exc:
+        sys.stderr.write("interlock mesh consensus: cannot load {}: {}\n".format(args.state, exc))
+        return 3
+    payload = engine.export_stats() if args.stats else engine.export_indicators()
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+        print("wrote {}".format(args.out))
+    else:
+        sys.stdout.write(text + "\n")
+    return 0
 
 
 def _init(args) -> int:

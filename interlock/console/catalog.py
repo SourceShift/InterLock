@@ -130,6 +130,11 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
         "Least privilege by tool name.",
         ["tool_policy"],
     ),
+    (
+        "Community indicators",
+        "Exact-match indicators the mesh publishes from what other deployments' guards refused.",
+        ["mesh_indicator_guard"],
+    ),
 ]
 
 #: Scoping the action-name scan cannot see: conventions on the arguments, and
