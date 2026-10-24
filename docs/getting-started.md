@@ -127,9 +127,9 @@ anyway, because the event includes default values.
 > later rule sees the call as the earlier ones rewrote it.
 > [Concepts](concepts.md#how-rules-combine) has the details.
 
-## 5. Add built-in detectors
+## 5. Add the built-in detection rules
 
-You don't have to write every rule yourself. interlock ships 115 detectors, small
+You don't have to write every rule yourself. interlock ships 119 detectors, small
 rules that each catch one kind of attack. Two useful ones:
 
 - `network_egress_guard` blocks calls that send data to hosts you didn't list.
@@ -236,7 +236,9 @@ rewrites. Decisions go to the standard `interlock` logger:
 
 ```python
 import logging
-from interlock import monitor
+
+import interlock
+from interlock import deny_when, monitor
 
 logging.basicConfig(level=logging.DEBUG, format="%(name)s %(message)s")
 
@@ -252,13 +254,17 @@ print(delete_records(table="orders"))
 
 ```text
 interlock action=delete_records verdict=BLOCK reason=deletes need review span=None observed=True attributed_to=None
-interlock mcp result action=delete_records verdict=ALLOW observed=True attributed_to=None
+interlock mcp result action=delete_records verdict=ALLOW reason= span=None observed=False attributed_to=None
 deleted everything in orders
 ```
 
-`verdict=BLOCK ... observed=True` means "this would have been blocked". Run your
-agent like this for a while, read the log, and switch to `@guard()` once the rules
-stop surprising you.
+The first line is the call-phase finding: the rule would have blocked the call,
+and `observed=True` says monitor mode recorded it without intervening. The
+second line is the result-phase event for the same call. No rule covers results
+here, so it is a clean `ALLOW` with `observed=False` — "observed" means "would
+have blocked or rewritten", not "was recorded". The `delete_records` body ran,
+and its return value was printed. Run your agent like this for a while, read the
+log, and switch to `@guard()` once the rules stop surprising you.
 
 ## What you built
 

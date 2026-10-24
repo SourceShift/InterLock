@@ -23,7 +23,7 @@ minutes), then read [how interlock works](concepts.md).
 |---|---|
 | [Console](guides/console.md) | Build and launch the local web UI over your running policy engine |
 | [Writing rules](guides/writing-rules.md) | Block, rewrite, check results, scope rules to tools, and test your policy |
-| [Using detectors](guides/detectors.md) | Pick from the 115 built-in detectors, make sure they see your tools, and start from a tested set |
+| [Using detectors](guides/detectors.md) | Pick from the 119 built-in detectors, make sure they see your tools, and start from a tested set |
 | [Declarative policies](guides/policies.md) | Write rules as JSON/YAML, lock the ones that must stay on, and accept project overlays safely |
 | [Approvals](guides/approvals.md) | Hold a call for a human with `ESCALATE`, and write an approver |
 | [Coding agents](guides/coding-agents.md) | Guard Claude Code, Codex and Cursor with one command |
@@ -42,8 +42,8 @@ minutes), then read [how interlock works](concepts.md).
 | Page | Covers |
 |---|---|
 | [Python API](reference/python-api.md) | Every public class and function, with signatures |
-| [Detector catalog](reference/detectors.md) | All 115 detectors: what they catch, which calls they see, how to build them |
-| [Command line](reference/cli.md) | `interlock doctor`, `report`, `install-hook`, `hook`, `policy`, `trust`, `mcp` |
+| [Detector catalog](reference/detectors.md) | All 119 detectors: what they catch, which calls they see, how to build them |
+| [Command line](reference/cli.md) | `interlock doctor`, `report`, `hook`, `install-hook`, `policy`, `learn`, `trust`, `mcp`, `reviews`, `drift` |
 | [Sidecar](reference/sidecar.md) | The `interlock-sidecar` daemon for Node.js agents, and its wire protocol |
 | [Node.js client](https://github.com/SourceShift/InterLock/blob/main/js/README.md) | The `interlock-guard` npm package |
 | [Native scope store](https://github.com/SourceShift/InterLock/blob/main/rust/README.md) | The optional Rust backend for very large scope trees |

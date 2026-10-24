@@ -10,7 +10,9 @@ each section says which one.
 
 - [Setup](#setup): `install`, `get_engine`, `set_engine`
 - [Guarding calls](#guarding-calls): `guard`, `monitor`, `guard_mcp_session`,
-  `guard_langchain_tools`, `enforce_tool_call`, `enforce_tool_result`
+  `guard_langchain_tools`, `guard_tool_loop`, `guard_litellm_tool_loop`,
+  `guard_crewai_tool_loop`, `guard_adk_tool_loop`, `enforce_tool_call`,
+  `enforce_tool_result`
 - [Rules and engines](#rules-and-engines): `Rule`, `PolicyEngine`, `deny_tool`,
   `deny_when`
 - [Decisions](#decisions): `Verdict`, `Decision`, `Blocked`
@@ -82,6 +84,14 @@ set_engine(engine) -> None
 
 Installs an engine without touching rules or the sink. It accepts any object with
 an `evaluate(event) -> Decision` method and does no validation.
+
+### `__version__`
+
+```python
+__version__ -> str
+```
+
+The installed package version, as a string.
 
 ---
 
@@ -270,10 +280,31 @@ too.
 Requires the `[langchain]` extra (`langchain-core`). Importing interlock does not
 import LangChain. Calling this function does.
 
+### `guard_tool_loop`
+
+```python
+guard_tool_loop(tool, *, engine=None, enforcement="blocking", principal=None) -> Callable
+```
+
+Wraps the `(name, args) -> result` dispatcher at the bottom of a framework tool
+loop and returns a dispatcher with the same shape. `tool` is that callable, or a
+framework tool object exposing `run` / `run_async` (CrewAI's `_run` is also
+accepted). On ALLOW the tool's value is returned; on BLOCK `Blocked` is raised
+before the tool runs; on MODIFY the tool is called with the rewritten
+arguments; and the result is checked on the way back.
+
+The package root exports four entry points. `guard_tool_loop` is the OpenAI SDK
+adapter; `guard_litellm_tool_loop`, `guard_crewai_tool_loop` and
+`guard_adk_tool_loop` are the LiteLLM, CrewAI and Google ADK adapters' own
+`guard_tool_loop`, exposed under distinct names because each module uses the
+same symbol. Their signature is identical. The SDK is never imported, so
+`import interlock` stays dependency-free. `interlock doctor` reports which of
+these adapters it detected and which surfaces remain uncovered.
+
 ### `enforce_tool_call`
 
 ```python
-enforce_tool_call(action, arguments, *, engine=None, enforcement="blocking", principal=None) -> Dict[str, Any]
+enforce_tool_call(action, arguments, *, engine=None, enforcement="blocking", principal=None, call_id=None) -> Dict[str, Any]
 ```
 
 The core every adapter uses. Checks one call and returns the arguments to use:
@@ -285,10 +316,15 @@ The core every adapter uses. Checks one call and returns the arguments to use:
 The event gets its own copy of the arguments, so a rule that edits `event.args`
 in place can't change what the tool receives. Only a modify decision can.
 
+`call_id` ties this event to the rest of one guarded call. Pass the same value
+to the matching `enforce_tool_result` call when you drive the phases yourself;
+the interceptors mint one with [`new_call_id`](#new_call_id) and use it on the
+call, result and outcome events and their receipts.
+
 ### `enforce_tool_result`
 
 ```python
-enforce_tool_result(action, result, *, engine=None, enforcement="blocking", principal=None) -> Any
+enforce_tool_result(action, result, *, engine=None, enforcement="blocking", principal=None, call_id=None) -> Any
 ```
 
 Checks what a tool returned, as a `phase="result"` event whose `args` is
@@ -576,6 +612,17 @@ Sets the principal for the rest of the current context. The parent principal
 changes only if you pass one, so `set_principal("x")` keeps an inherited
 delegation link. Use `span` when you want the old values restored.
 
+### `new_call_id`
+
+```python
+new_call_id() -> str
+```
+
+Mints a fresh id for one guarded call. The interceptors use it to tie a call's
+call-, result- and outcome-phase events and its receipts together. Pass the same
+value to [`enforce_tool_call`](#enforce_tool_call) and
+[`enforce_tool_result`](#enforce_tool_result) when you drive the phases yourself.
+
 ---
 
 ## Scopes (`interlock.policy`)
@@ -732,19 +779,26 @@ exceptions.
 Guide: [audit log](../guides/audit-log.md).
 
 ```python
-from interlock.sink import FileSink, InMemorySink, verify_file
+from interlock.sink import FileSink, InMemorySink, OtlpSink, verify_file
 from interlock.receipt import set_sink
 ```
 
 ### `FileSink`
 
 ```python
-FileSink(path, *, signer=hmac_sha256, key=None)
+FileSink(path, *, signer=hmac_sha256, key=None, shared=False)
 ```
 
 Appends one JSON line per receipt to `path`, chained and signed. `key` is the
 signing key in bytes. Without one, a random per-process key is used and only this
 process can verify the file.
+
+`shared=False` (the default) is one writer per file: each write appends using an
+append-mode open, which keeps concurrent writers inside one process from
+overwriting each other's bytes. `shared=True` is for several processes appending
+to one log (each coding-agent hook call is its own process): every write takes an
+exclusive file lock and re-reads the chain head from the file, so the writers
+extend one chain instead of forking it. It needs `fcntl` (POSIX).
 
 **A reopened file continues its chain.** When `path` already holds receipts (after
 a restart, say), the new `FileSink` reads the last one and links the next receipt
@@ -753,8 +807,9 @@ won't verify under the new one. If the file's last line isn't a readable receipt
 (a crash mid-write, a foreign file), the constructor raises `ValueError` instead of
 appending to damage nobody saw. Move the file aside to start a new log.
 
-Two `FileSink`s writing the same file **at the same time** still fork the chain,
-and verification reports the fork as `receipt N: chain break (...)`. One writer per
+Two `FileSink`s in different processes writing the same file **at the same
+time** without `shared=True` fork the chain, and verification reports the fork as
+`receipt N: chain break (...)`. Either use `shared=True` or keep one writer per
 file at a time.
 
 ### `InMemorySink`
@@ -764,6 +819,46 @@ InMemorySink(*, signer=hmac_sha256, key=None)
 ```
 
 Keeps receipts in the `receipts` list attribute. Useful in tests.
+
+### `OtlpSink`
+
+```python
+OtlpSink(endpoint, headers=None, service_name="interlock", *, signer=hmac_sha256, key=None, timeout=5.0, retry_interval=0.5, max_buffer=4096)
+```
+
+A `ChainedSink` that also exports each receipt over OTLP/HTTP. Local behaviour is
+exactly `InMemorySink`: every receipt is chained and signed into `receipts`, so
+`verify()` and the tamper evidence are unchanged. On top of that, each receipt is
+mapped to an OTLP/HTTP JSON log record and handed to a background daemon worker
+that POSTs it.
+
+| Parameter | Meaning |
+|---|---|
+| `endpoint` | The full logs URL, e.g. `http://collector:4318/v1/logs`. POSTed as given — no path is appended. |
+| `headers` | Extra HTTP headers, e.g. an auth token. |
+| `service_name` | Becomes the `service.name` resource attribute. |
+| `signer`, `key` | As for `FileSink`. |
+| `timeout` | Per-POST timeout in seconds. |
+| `retry_interval` | How long the worker waits before retrying a record the collector did not accept. |
+| `max_buffer` | Queue bound. A record enqueued while the queue is full is dropped and counted; a record already retained for retry is never dropped. |
+
+Three guarantees hold by construction, because a receipt is written on the
+guarded call's critical path:
+
+- **It never blocks the call.** `write` only appends to an in-memory buffer and
+  wakes the worker; the POST happens off-thread with an explicit timeout.
+- **It never raises into the call.** Every failure in mapping, buffering,
+  serializing and the POST is swallowed and counted in `stats()`.
+- **It never carries argument values.** The record is built from an allow-list of
+  receipt fields (`action`, `principal`, `policy_id`, `reason`, `span_id`).
+  Arguments exist only as the receipt's `args_digest`, which is not exported.
+
+A collector outage changes no verdict: a record that fails to POST stays at the
+front of the buffer and is retried until accepted, so the buffer drains in order
+once the collector returns. `close(timeout=2.0)` stops the worker; it is
+idempotent, a POST already in flight is not interrupted, and records still
+buffered when the worker exits are left undelivered and reported by `stats()`.
+`stats()` returns `sent`, `failed`, `pending`, `dropped` and `build_failures`.
 
 ### `ChainedSink`
 
@@ -1107,7 +1202,7 @@ New receipt fields (`call_id`, `policy_epoch`, `policy_verdict`, `approval`,
 `outcome`, `enforcer`, `elapsed_us`) are described in the
 [audit log guide](../guides/audit-log.md#what-a-receipt-records).
 `interlock.receipt.dropped_receipts()` counts writes that failed and aren't yet
-reported. `FileSink(path, *, key=None, signer=..., shared=False)`: `shared=True`
+reported. `FileSink(path, *, signer=..., key=None, shared=False)`: `shared=True`
 locks the file per write so several processes keep one chain.
 
 ### Shell commands (`interlock.shell`)

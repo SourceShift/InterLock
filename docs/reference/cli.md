@@ -14,9 +14,11 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`hook`](#interlock-hook) | decide one coding-agent tool call (run by the agent) |
 | [`install-hook`](#interlock-install-hook) | put interlock in front of Claude Code, Codex or Cursor |
 | [`policy`](#interlock-policy) | check a declarative policy file, or show a built-in pack |
+| [`learn`](#interlock-learn) | draft a reviewable policy from observed receipts |
 | [`trust`](#interlock-trust) | trust a project's policy overlay |
 | [`mcp`](#interlock-mcp) | inventory the MCP servers configured on this machine |
 | [`reviews`](#interlock-reviews) | decide pending reviews; serve their status to agents |
+| [`drift`](#interlock-drift) | diff a live surface's tool listing against a recorded corpus |
 
 ## `interlock doctor`
 
@@ -125,9 +127,11 @@ interlock install-hook --for codex --uninstall
 Registers `interlock hook --agent <name>` in the agent's hook settings
 (~/.claude/settings.json, ~/.codex/hooks.json, ~/.cursor/hooks.json), keeping
 every other entry, backing the file up first (<file>.interlock-bak) and
-replacing any earlier interlock entry. It also creates ~/.interlock with a
-default policy that extends the built-in coding-agent pack and a key for the
-receipt log. Restart running agent sessions afterwards.
+replacing any earlier interlock entry. The hook runs this Python and this
+interlock package, whatever directory the agent runs it from, and denies the
+call if it cannot start. It also creates ~/.interlock with a default policy
+that extends the built-in coding-agent pack and a key for the receipt log.
+Restart running agent sessions afterwards; re-run this if interlock moves.
 
 Run this yourself, outside the agent: the coding-agent pack refuses it from
 inside one.
@@ -168,6 +172,37 @@ Exit codes: 0 valid, 1 loaded with quarantined rules, 2 does not load.
 usage: interlock policy [-h] ACTION ...
 usage: interlock policy check [-h] [--overlay FILE] [--json] file
 usage: interlock policy show [-h] name
+```
+
+## `interlock learn`
+
+Draft a reviewable policy from a receipt log: the actions your guard
+actually allowed, and an escalation for everything else.
+
+```bash
+interlock learn --receipts audit.jsonl --out baseline.json
+interlock learn --receipts audit.jsonl --out baseline.json --name acme-baseline
+```
+
+Reads a receipt log written by FileSink, keeps the actions observed with an
+ALLOW verdict (matched case-insensitively), and writes a declarative policy
+whose single rule escalates any action outside that envelope. The draft is
+deterministic - two runs over the same log are byte-identical - so a diff
+between two drafts is worth reviewing.
+
+It is never auto-enforced: this command only writes the file you name. It
+installs nothing, enables nothing, locks nothing and emits no `block` rule.
+Review it with `interlock policy check` and install it on purpose.
+
+Exit codes: 0 wrote the policy, 3 the log could not be read, held no
+ALLOW-observed receipt, or the output could not be written (no file is written
+in those cases); 64 the command line was wrong.
+
+```text
+usage: interlock learn [-h] [--receipts FILE] [--out FILE] [--name NAME]
+  --receipts                 a receipt log written by FileSink (required)
+  --out                      where to write the draft policy (required)
+  --name                     the policy 'name' field (default: learned-behavioural-baseline)
 ```
 
 ## `interlock trust`
@@ -258,4 +293,35 @@ usage: interlock reviews reject [-h] [--as NAME] [--reason REASON] id
 usage: interlock reviews revoke [-h] [--as NAME] id
 usage: interlock reviews wait [-h] [--timeout TIMEOUT] id
 usage: interlock reviews mcp [-h]
+```
+
+## `interlock drift`
+
+Diff a live surface's tool listing against a recorded corpus.
+
+```bash
+interlock drift --corpus corpus.json --live "my-mcp-server --list-tools"
+interlock drift --corpus corpus.json --live "..." --surface demo
+interlock drift --corpus corpus.json --live "..." --json
+```
+
+The corpus records each covered surface's tool-listing fingerprint and schema
+shapes (see ``interlock/drift.py``). ``--live`` runs a command and reads its
+standard output as the live tool listing: one tool name per line, or one JSON
+object per line when you also record schema shapes. ``--live`` is a shell
+string, so a command with arguments or quoted paths works as written.
+
+Every added tool, removed tool and changed schema shape is reported with a
+severity, and any finding is drift. **Nothing is written back and nothing is
+filed** - the corpus is only ever read - so the diff is a report you act on.
+
+Exit codes: 0 no drift, 1 drift found, 64 the command line was wrong,
+3 the corpus could not be read or the live command failed.
+
+```text
+usage: interlock drift [-h] [--corpus FILE] [--live CMD] [--surface NAME] [--json]
+  --corpus                   the recorded corpus to diff against
+  --live                     a shell command whose stdout is the live tool listing
+  --surface                  which corpus surface the live command describes (default: the corpus's only surface)
+  --json                     machine-readable output
 ```

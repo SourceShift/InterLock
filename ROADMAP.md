@@ -56,9 +56,9 @@ worse at both jobs.
 | R2 | `Verdict.ESCALATE` | `shipped` | S→M | T9 · 15 papers · agentjail review |
 | R3 | Verdict provenance (`reason`, `attributed_to`) | `shipped` | S | T2, T3 |
 | R4 | Signed execution receipts + append-only audit sink | `shipped` | M | T3 · M4 TODO resolved |
-| R5 | Guardrail robustness harness (FP rate, DoS) | `not started` | M | T5 · nothing ships today |
+| R5 | Guardrail robustness harness (FP rate, DoS) | `partial` | M | T5 · conformance corpus only |
 | R6 | MCP capability leases + server attestation | `shipped` | L | T4 · 57 papers |
-| R7 | Tool-result and observation sanitization | `shipped` | M | T8 |
+| R7 | Tool-result and observation sanitization | `partial` | M | T8 · result phase ships, injection sanitizer blocks |
 | R8 | BRACE escape-resistance suite + unprivileged egress | `shipped` | M | T7 |
 | R9 | Flow-typed policy dimension | `not started` | L | T6 · a constraint on R10 |
 | R10 | Declarative YAML/JSON policies | `shipped` | L | carried from M0 → M2 · agentjail review |
@@ -81,7 +81,7 @@ worse at both jobs.
 | R26 | Console approval workflow | `shipped` | M | operational review |
 | R27 | Framework sensor adapters | `shipped` | M | operational review |
 | R28 | A2A policy dimension | `shipped` | M | operational review |
-| R29 | MCP transport controls and scoped engine over the sidecar | `shipped` | M | operational review |
+| R29 | MCP transport controls and scoped engine over the sidecar | `partial` | M | operational review · no client sends a scope |
 | R30 | Upstream-drift detector | `shipped` | M | operational review |
 
 ---
@@ -352,10 +352,14 @@ key with no access to the running system.
 
 ### Acceptance
 
-A receipt verifies offline against the published key; a byte-flipped record
-fails verification; removing a record from the middle of the chain is detected.
-A benchmark reports the added per-decision cost, and the README's claim about
-overhead (see R12) is updated to match the measured number.
+**Shipped and tested:** a receipt verifies offline against the published key; a
+byte-flipped record fails verification; removing a record from the middle of the
+chain is detected.
+
+**Not delivered:** a benchmark reports the added per-decision cost, and the
+README's claim about overhead (see R12) is updated to match the measured number.
+`benchmarks/` holds only `scope_memory.py`, so that half is still open under
+R12; the `shipped` status above covers the receipts and the append-only sink.
 
 ### Risks & dependencies
 
@@ -368,7 +372,13 @@ still useful but much less so.
 
 ## R5 · Guardrail robustness harness (false positives, induced blocking)
 
-**Status:** `not started`.
+**Status:** `partial` — a fixed detector conformance corpus ships
+(`tests/conformance/detectors/*.json`, 767 cases across six categories, driven
+by `tests/conformance/runner.py`), alongside a wire-protocol corpus
+(`tests/conformance/events.json`, 13 cases and 9 malformed frames, consumed by
+`tests/test_sidecar_conformance.py`). Neither is a benign agent-traffic corpus:
+there is no false-positive runner, no abuse/load fixture and no regression gate,
+which is the measurement this item is about.
 **Size:** M
 **Literature:** T5 — a cluster that barely existed a year ago, and the area
 where interlock has the largest gap relative to its importance.
@@ -507,14 +517,18 @@ anyone who wants a *provable* MCP posture — which is most of the 57 papers.
 
 ## R7 · Tool-result and observation sanitization
 
-**Status:** `shipped` — `SensorEvent` gained a `phase` field (`"call"` by
+**Status:** `partial` — `SensorEvent` gained a `phase` field (`"call"` by
 default, `"result"` on the observation path), so a result-level rule cannot fire
 on a call event and vice versa. `enforce_tool_result(action, result)` mirrors
-`enforce_tool_call` and returns the sanitized result (or raises `Blocked`), and
+`enforce_tool_call` and returns the checked result (or raises `Blocked`), and
 `Decision.modified_result` is a field of its own rather than an overload of
-`modified_args`. `tool_result_injection_guard` is the first detector that
-remediates rather than merely flags: a poisoned result is rewritten, not just
-reported.
+`modified_args`. Result-phase rewriting also ships for sensitive data:
+`tool_output_secret_redactor` and `data_masking_guard` return
+`Decision.modify_result` and redact secrets and PII in a result. What is not
+delivered is injection sanitization: the shipped `tool_result_injection_guard`
+**blocks** a poisoned result instead of rewriting it, and no built-in detector
+strips an injected instruction or override from a result. The rewrite mechanism
+exists; the sanitizing detector named below does not.
 **Size:** M
 **Literature:** T8 — the injection channel that matters is the tool *result* and
 the tool *description*, not the user prompt.
@@ -1067,9 +1081,11 @@ These came from mapping what operators who deploy agents in an enterprise
 actually ask for — the questions asked when someone has to run an agent fleet
 and answer to a security team — against what interlock ships today. Each is a
 capability *gap*, recorded with the capability named and no reference to any
-particular vendor. All eight are now shipped — R23–R25 and R27–R30 landed with
-live smoke tests, and R26 arrived onboard the console rather than as a separate
-run. Each one is what makes the detectors usable in a deployment.
+particular vendor. Seven of the eight shipped: R23–R25, R27, R28 and R30 landed
+with live smoke tests, and R26 arrived onboard the console rather than as a
+separate run. R29 is `partial` — its transport controls ship, but no client
+sends the signed scope document, so the scoped engine is not reachable over the
+wire. Each one is what makes the detectors usable in a deployment.
 
 | # | Item | Status | Size | Pull |
 |---|---|---|---|---|
@@ -1079,7 +1095,7 @@ run. Each one is what makes the detectors usable in a deployment.
 | R26 | Console approval workflow | `shipped` | M | operational review |
 | R27 | Framework sensor adapters (SDK loops, LiteLLM, CrewAI, ADK) | `shipped` | M | operational review |
 | R28 | A2A policy dimension | `shipped` | M | operational review |
-| R29 | MCP transport controls + scoped engine over the sidecar | `shipped` | M | operational review |
+| R29 | MCP transport controls + scoped engine over the sidecar | `partial` | M | operational review · no client sends a scope |
 | R30 | Upstream-drift detector | `shipped` | M | operational review |
 
 ---
@@ -1104,9 +1120,10 @@ over OTLP/HTTP, mapping interlock's fields onto the standard envelope (severity
 from the verdict, `service.name`, `span_id` for correlation, and attributes
 carrying `action`, `principal`, `policy_id`, `reason`). It writes the local
 chained receipt **and** exports it, so tamper-evidence survives when a collector
-is the destination. Configuration through `interlock.install(sink=...)` and the
-environment. Export is buffered and never blocks a verdict: a collector outage
-changes no decision, and the buffer flushes on recovery.
+is the destination. Configuration is through `interlock.install(sink=...)`; there is no
+environment variable for the collector. Export is buffered and never blocks a
+verdict: a collector outage changes no decision, and the buffer flushes on
+recovery.
 
 ### Acceptance
 With an OTLP receiver on loopback, one guarded call produces exactly one exported
@@ -1163,7 +1180,11 @@ counted evidence behind each rule and be visibly a proposal. Depends on R4
 ## R25 · Token accounting in the budget guard
 
 **Status:** `shipped` — `interlock.tokens` (a usage ledger) and the
-`token_budget_guard` detector; receipts and the report carry per-principal totals.
+`token_budget_guard` detector; receipts and the report carry per-principal
+totals. It meters **input-side (call-phase) text only**: every string in a call
+payload is counted, including an expected or observed output embedded under any
+key, but the guard does not see or count output from the result phase, so
+result-phase usage is unmetered.
 **Size:** S
 
 ### Problem
@@ -1174,9 +1195,9 @@ who cares about cost asks for token limits first.
 ### What changes
 A dependency-free token estimator (a characters-per-token heuristic with a
 per-model correction table) and a `token_budget_guard` that accumulates estimated
-input and output tokens per principal over a window, with bucket and refill
-semantics. Receipts carry the estimate so `interlock report` can show token spend
-next to verdict counts.
+input tokens per principal over a window, with bucket and refill semantics. The
+cap is input-side only; result-phase output is unmetered. Receipts carry the
+estimate so `interlock report` can show token spend next to verdict counts.
 
 ### Acceptance
 A loop of N calls trips `token_budget_guard` at the configured ceiling; the
@@ -1197,8 +1218,12 @@ presented as metering. Standalone.
 (`interlock/console/reviews_api.py`), reachable at `#/reviews`
 (`web/src/design/ReviewsScreen.tsx`). Decisions go through `ReviewQueue` exactly
 as the CLI does; writes are unlock-gated (a locked approve is refused) and
-four-eyes is enforced. Live smoke: a seeded pending review is listed over HTTP,
-a locked approve is refused, an unlocked approve releases the identical retry.
+four-eyes is **opt-in**: it is enforced only when the console is started with
+`--four-eyes`, and self-approval is allowed otherwise.
+The console polls `GET /api/reviews` every 5 seconds (`POLL_FAST` in
+`web/src/store.ts`); the review screen does not use the SSE stream. Live smoke: a
+seeded pending review is listed over HTTP, a locked approve is refused, an
+unlocked approve releases the identical retry.
 (The epic proposed `/api/approvals`; the shipped route is `/api/reviews` — the
 same capability under the console's own name.)
 **Size:** M
@@ -1216,8 +1241,8 @@ the existing SSE stream. The server stays loopback-only; the only writes are the
 queue transitions, and the approve route is opt-in.
 
 ### Acceptance
-An escalation raised by a run appears on the console within the existing stream
-bound; approving it from the console releases the identical retry exactly as
+An escalation raised by a run appears on the console within one 5-second poll;
+approving it from the console releases the identical retry exactly as
 `interlock reviews approve` does; a request whose args digest no longer matches,
 or that has expired, cannot be approved (400, not a silent allow).
 
@@ -1288,8 +1313,12 @@ allowlist-first. Standalone.
 
 ## R29 · MCP transport controls and scoped engine over the sidecar
 
-**Status:** `shipped` — `mcp_transport_guard` plus scope fields on the wire
-(`PROTOCOL_VERSION` bump), mirrored in the JS client (`js/src/wire.ts`).
+**Status:** `partial` — `mcp_transport_guard` ships, and the wire carries an
+optional signed scope document (`PROTOCOL_VERSION` 1), parsed and encoded in the
+JS client (`js/src/wire.ts`). But no client sets the field: neither
+`RemoteEngine` in Python nor the JS client populates `scope` on a request, so a
+remote client still cannot ask the daemon for a scoped decision. The transport
+half is shipped; the scoped-engine-over-the-sidecar half is not.
 **Size:** M
 
 ### Problem
@@ -1307,9 +1336,10 @@ policy provenance.
 
 ### Acceptance
 A stdio server not on the exception list is refused before launch; a denied HTTP
-transport is refused with a transport-named reason; the Node.js client resolves
-the same per-principal decision as the Python `ScopedEngine` for an identical
-event.
+transport is refused with a transport-named reason. **Not met:** the Node.js
+client resolves the same per-principal decision as the Python `ScopedEngine`
+for an identical event — the wire can carry the signed scope document, but no
+client sends one.
 
 ### Risks & dependencies
 The scope document on the wire is new trust surface — signed like the fallback
