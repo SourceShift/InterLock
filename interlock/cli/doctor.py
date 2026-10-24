@@ -144,6 +144,13 @@ def _mesh_checks() -> List[Check]:
     if status.get("last_error"):
         checks.append(Check("mesh.sync", WARN, "last mesh sync failed: {}".format(status["last_error"]),
                             fix="interlock mesh sync"))
+    if status.get("split_views"):
+        latest = status["split_views"][-1]
+        checks.append(Check("mesh.log", FAIL, "transparency log split view seen ({}): {}".format(
+            latest.get("source"), latest.get("detail")),
+            fix="stop trusting this commons until its maintainers explain; keep the evidence in the mesh state"))
+    elif status.get("log"):
+        checks.append(Check("mesh.log", OK, "transparency log verified: {} entries".format(status["log"].get("size"))))
     shadow = status.get("shadow") or {}
     if shadow.get("total"):
         checks.append(Check("mesh.shadow", INFO, "{} shadow finding(s) from rules in their monitor window".format(

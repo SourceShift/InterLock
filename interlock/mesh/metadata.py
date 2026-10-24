@@ -235,6 +235,21 @@ class RootInfo:
                     or threshold < 1 or threshold > len(set(keyids)):
                 raise MetadataError("format", "role {} has an impossible threshold".format(role))
             roles[role] = {"keyids": sorted(set(keyids)), "threshold": threshold}
+        # Optional roles beyond the four: today only ``log``, the key that signs
+        # the transparency log's checkpoints. Validated like the others, never
+        # required, so a commons without a log still verifies.
+        for role in ("log",):
+            spec = raw_roles.get(role)
+            if spec is None:
+                continue
+            keyids = spec.get("keyids") if isinstance(spec, dict) else None
+            threshold = spec.get("threshold") if isinstance(spec, dict) else None
+            if (not isinstance(keyids, list) or not keyids
+                    or not all(isinstance(k, str) and k in keys for k in keyids)
+                    or not isinstance(threshold, int) or isinstance(threshold, bool)
+                    or threshold < 1 or threshold > len(set(keyids))):
+                raise MetadataError("format", "role {} is malformed".format(role))
+            roles[role] = {"keyids": sorted(set(keyids)), "threshold": threshold}
         return cls(version, expires, keys, roles, bool(signed.get("consistent_snapshot", True)))
 
     def verify(self, env: Mapping[str, Any], role: str) -> int:
@@ -243,13 +258,17 @@ class RootInfo:
 
 
 def build_root(role_keys: Mapping[str, Sequence[Key]], thresholds: Mapping[str, int],
-               *, version: int, expires: str) -> Dict[str, Any]:
+               *, version: int, expires: str,
+               extra_roles: Optional[Mapping[str, Sequence[Key]]] = None) -> Dict[str, Any]:
     keys: Dict[str, Any] = {}
     roles: Dict[str, Any] = {}
-    for role in ROLES:
-        role_list = list(role_keys.get(role, ()))
+    wanted = [(role, list(role_keys.get(role, ())), True) for role in ROLES]
+    wanted += [(role, list(ks), False) for role, ks in (extra_roles or {}).items()]
+    for role, role_list, required in wanted:
         if not role_list:
-            raise ValueError("role {} has no keys".format(role))
+            if required:
+                raise ValueError("role {} has no keys".format(role))
+            continue
         for key in role_list:
             keys[key.keyid] = key.to_meta()
         threshold = int(thresholds.get(role, 1))

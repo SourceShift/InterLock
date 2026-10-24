@@ -87,6 +87,8 @@ def add_arguments(parser) -> None:
     report_build.add_argument("--false-positive", action="append", default=[], metavar="RULE_ID",
                               help="say this rule is wrong here (a negative sighting); repeatable")
     report_build.add_argument("--no-digests", action="store_true", help="counts only, no argument digests")
+    report_build.add_argument("--credential", default=None, metavar="FILE",
+                              help="a membership certificate for this node's reporting key")
     report_build.add_argument("--dir", default=None, metavar="DIR")
     report_build.add_argument("--json", action="store_true", help="print the envelope instead of a summary")
     report_enable = report_sub.add_parser("enable", help="record fingerprints (and opt-in samples) of what the guard stops")
@@ -103,14 +105,48 @@ def add_arguments(parser) -> None:
                                help="an aggregator; give at least two or counts are not shared")
     report_submit.add_argument("--token", default=None, metavar="TOKEN", help="bearer token the collectors require")
 
-    serve = sub.add_parser("serve", help="run a collector role (reference implementation)")
-    serve.add_argument("--role", required=True, choices=["consensus", "aggregator"])
+    serve = sub.add_parser("serve", help="run a collector role, or mirror this node's verified cache to peers")
+    serve.add_argument("--role", required=True, choices=["consensus", "aggregator", "mirror"])
     serve.add_argument("--bind", default="127.0.0.1:7949", metavar="HOST:PORT")
     serve.add_argument("--state", default=None, metavar="FILE", help="persist state here")
     serve.add_argument("--token", default=None, metavar="TOKEN", help="require this bearer token on every POST")
     serve.add_argument("--known-catalog", action="append", default=[], metavar="ID",
                        help="consensus: accept reports from this detector catalog id; repeatable")
     serve.add_argument("--min-orgs", type=int, default=None, metavar="N")
+    serve.add_argument("--dir", default=None, metavar="DIR",
+                       help="mirror: the directory to serve (default: this node's mesh cache)")
+    serve.add_argument("--require-credential", action="store_true",
+                       help="consensus: refuse reports without a membership certificate")
+    serve.add_argument("--issuer", action="append", default=[], metavar="HEX_PUBLIC",
+                       help="consensus: a credential issuer's public key; repeatable")
+
+    log_cmd = sub.add_parser("log", help="verify a commons' transparency log against its published documents")
+    log_cmd.add_argument("site", metavar="DIR_OR_URL", help="a published site directory or mirror URL")
+    log_cmd.add_argument("--root", default=None, metavar="FILE", help="pin this root (default: the site's 1.root.json)")
+    log_cmd.add_argument("--json", action="store_true")
+
+    gossip = sub.add_parser("gossip", help="compare transparency-log checkpoints with a peer")
+    gossip.add_argument("--peer", required=True, action="append", metavar="URL", help="a peer mirror; repeatable")
+    gossip.add_argument("--dir", default=None, metavar="DIR")
+    gossip.add_argument("--token", default=None, metavar="TOKEN")
+
+    credential = sub.add_parser("credential", help="issue or check membership certificates (issuer side)")
+    cred_sub = credential.add_subparsers(dest="credential_command", metavar="ACTION")
+    cred_init = cred_sub.add_parser("init", help="create an issuer key and ledger")
+    cred_init.add_argument("--out", required=True, metavar="DIR")
+    cred_issue = cred_sub.add_parser("issue", help="sign one certificate for a member's pseudonymous key")
+    cred_issue.add_argument("--issuer", required=True, metavar="DIR", help="the directory `credential init` wrote")
+    cred_issue.add_argument("--member", required=True, metavar="NAME", help="who is admitted (kept in the private ledger only)")
+    cred_issue.add_argument("--pseudonym", required=True, metavar="HEX_PUBLIC", help="the member's reporting public key")
+    cred_issue.add_argument("--scope", default="early", metavar="SCOPE")
+    cred_issue.add_argument("--epoch", type=int, default=None, metavar="N", help="default: the current week")
+    cred_issue.add_argument("--out", default=None, metavar="FILE")
+    cred_revoke = cred_sub.add_parser("revoke", help="add a certificate id to the issuer's revocation list")
+    cred_revoke.add_argument("--issuer", required=True, metavar="DIR")
+    cred_revoke.add_argument("id", metavar="CERT_ID")
+    cred_verify = cred_sub.add_parser("verify", help="check a certificate against an issuer public key")
+    cred_verify.add_argument("file", metavar="FILE")
+    cred_verify.add_argument("--issuer-public", required=True, metavar="HEX_PUBLIC")
 
     harness = sub.add_parser("harness", help="measure a policy's false-positive rate and cost on a benign corpus")
     harness.add_argument("--policy", required=True, metavar="FILE", help="a policy or pack document")
@@ -163,8 +199,118 @@ def run(args) -> int:
         return _harness(args)
     if command == "forge":
         return _forge(args)
+    if command == "log":
+        return _log(args)
+    if command == "gossip":
+        return _gossip(args)
+    if command == "credential":
+        return _credential(args)
     sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, keys, publish, verify, "
-                     "report, serve, consensus, harness, forge\n")
+                     "report, serve, consensus, harness, forge, log, gossip, credential\n")
+    return 64
+
+
+def _log(args) -> int:
+    import os
+
+    from ..mesh.metadata import MetadataError
+    from ..mesh.repository import verify_site
+
+    site = args.site
+    if os.path.isdir(site):
+        source = site
+    else:
+        source = site  # a URL: verify_site fetches through the same Fetcher as a subscriber
+    try:
+        result = verify_site(source, root_path=args.root)
+    except (MetadataError, OSError, ValueError) as exc:
+        sys.stderr.write("interlock mesh log: REFUSED: {}\n".format(exc))
+        return 2
+    if args.json:
+        sys.stdout.write(json.dumps(result, indent=2, sort_keys=True, default=str) + "\n")
+        return 0
+    if not result.get("log"):
+        print("{}: verified, but this commons publishes no transparency log".format(site))
+        return 1
+    log = result["log"]
+    print("{}: log verified: {} entries, root {}..., origin {}; every published document is logged".format(
+        site, log["size"], log["root"][:16], log["origin"]))
+    return 0
+
+
+def _gossip(args) -> int:
+    from ..mesh.subscriber import Subscriber, SubscriberError
+
+    node = Subscriber(args.dir)
+    worst = 0
+    for peer in args.peer:
+        try:
+            result = node.gossip(peer, token=args.token)
+        except SubscriberError as exc:
+            sys.stderr.write("interlock mesh gossip: {}\n".format(exc))
+            worst = max(worst, 2)
+            continue
+        theirs = result.get("theirs")
+        if result.get("conflict"):
+            print("{}: SPLIT VIEW: {}".format(peer, result["conflict"]))
+            worst = max(worst, 1)
+        elif theirs is None:
+            print("{}: peer has no checkpoint yet (ours: size {})".format(peer, result["ours"]["size"]))
+        else:
+            print("{}: consistent (ours size {}, theirs size {})".format(peer, result["ours"]["size"], theirs["size"]))
+    return worst
+
+
+def _credential(args) -> int:
+    import os
+
+    from ..mesh.credential import CredentialError, Issuer, Revocations, issuer_map, verify_certificate
+
+    command = args.credential_command
+    if command == "init":
+        os.makedirs(args.out, exist_ok=True)
+        os.chmod(args.out, 0o700)
+        issuer = Issuer.load_or_create(os.path.join(args.out, "issuer.json"), os.path.join(args.out, "ledger.json"))
+        print("issuer {} (public {})".format(issuer.keyid, issuer.public.hex()))
+        print("give the public key to the collectors (--issuer); keep {} offline".format(args.out))
+        return 0
+    if command == "issue":
+        issuer = Issuer.load_or_create(os.path.join(args.issuer, "issuer.json"), os.path.join(args.issuer, "ledger.json"))
+        try:
+            cert = issuer.issue(args.member, bytes.fromhex(args.pseudonym), epoch=args.epoch, scope=args.scope)
+        except (CredentialError, ValueError) as exc:
+            sys.stderr.write("interlock mesh credential: {}\n".format(exc))
+            return 2
+        text = json.dumps(cert, indent=1, sort_keys=True)
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                fh.write(text + "\n")
+            print("certificate {} for epoch {} written to {}".format(cert["id"], cert["certificate"]["epoch"], args.out))
+        else:
+            sys.stdout.write(text + "\n")
+        return 0
+    if command == "revoke":
+        path = os.path.join(args.issuer, "revoked.json")
+        revoked = Revocations()
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                revoked = Revocations.from_dict(json.load(fh))
+        revoked.revoke(args.id)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(revoked.to_dict(), fh, indent=1)
+        print("revoked {}; publish {} to the collectors".format(args.id, path))
+        return 0
+    if command == "verify":
+        try:
+            with open(args.file, "r", encoding="utf-8") as fh:
+                cert = json.load(fh)
+            body = verify_certificate(cert, issuer_map([args.issuer_public]))
+        except (OSError, ValueError, CredentialError) as exc:
+            sys.stderr.write("interlock mesh credential: REFUSED: {}\n".format(exc))
+            return 2
+        print("valid: pseudonym {}... epoch {} scope {}".format(body["pseudonym"][:16], body["epoch"], body["scope"]))
+        return 0
+    sys.stderr.write("interlock mesh credential: choose an action: init, issue, revoke, verify\n")
     return 64
 
 
@@ -302,13 +448,21 @@ def _report_build(args, key_path: str) -> int:
     mesh_dir = os.path.dirname(key_path)
     fingerprints = read_records(os.path.join(mesh_dir, "fingerprints.jsonl"), since, now, 500)
     samples = read_records(os.path.join(mesh_dir, "samples.jsonl"), since, now, 20)
+    credential = None
+    if args.credential:
+        try:
+            with open(args.credential, "r", encoding="utf-8") as fh:
+                credential = json.load(fh)
+        except (OSError, ValueError) as exc:
+            sys.stderr.write("interlock mesh report: cannot read credential {}: {}\n".format(args.credential, exc))
+            return 3
     try:
         key = ReporterKey.load_or_create(key_path)
         body = build_report(receipts, since=since, until=now, catalog_id=catalog_id(), reporter_id=key.keyid,
                             include_digests=not args.no_digests,
                             sightings=[{"policy_id": r, "kind": "false_positive"} for r in args.false_positive],
                             fingerprints=fingerprints, samples=samples)
-        envelope = sign_report(body, key)
+        envelope = sign_report(body, key, credential=credential)
     except ReportError as exc:
         sys.stderr.write("interlock mesh report: {}\n".format(exc))
         return 2
@@ -369,19 +523,30 @@ def _report_submit(args) -> int:
 
 
 def _serve(args) -> int:
+    from ..mesh import default_mesh_dir
     from ..mesh.server import make_server
 
-    config = {"min_orgs": args.min_orgs} if args.min_orgs else None
+    config = {}
+    if args.min_orgs:
+        config["min_orgs"] = args.min_orgs
+    if args.require_credential:
+        config["require_credential"] = True
+        config["issuers"] = list(args.issuer)
+    directory = args.dir or default_mesh_dir()
     try:
         server = make_server(args.role, args.bind, state_path=args.state, token=args.token,
-                             known_catalogs=tuple(args.known_catalog), config=config)
+                             known_catalogs=tuple(args.known_catalog), config=config or None,
+                             directory=directory if args.role == "mirror" else None)
     except (OSError, ValueError) as exc:
         sys.stderr.write("interlock mesh serve: {}\n".format(exc))
         return 2
     print("interlock mesh {} listening on {}{}".format(args.role, server.url,
-                                                        " (state: {})".format(args.state) if args.state else ""))
+                                                        " (state: {})".format(args.state) if args.state else
+                                                        " (serving {})".format(directory) if args.role == "mirror" else ""))
     if args.role == "consensus" and not args.known_catalog:
         print("warning: no --known-catalog given; every report will be refused (unknown catalog)")
+    if args.role == "mirror":
+        print("peers add this URL as a mirror; they verify everything from their own pinned root")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

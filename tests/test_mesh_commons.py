@@ -101,7 +101,7 @@ def test_keys_are_private_and_not_overwritten(tmp_path):
     keys = tmp_path / "keys"
     init_keys(str(keys), counts={"root": 3}, thresholds={"root": 2})
     files = sorted(os.listdir(keys))
-    assert files == ["roles.json", "root.1.json", "root.2.json", "root.3.json", "snapshot.1.json",
+    assert files == ["log.1.json", "roles.json", "root.1.json", "root.2.json", "root.3.json", "snapshot.1.json",
                      "targets.1.json", "timestamp.1.json"]
     assert oct(os.stat(keys / "root.1.json").st_mode & 0o777) == "0o600"
     with pytest.raises(PublishError):

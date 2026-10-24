@@ -50,6 +50,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "pack_name": "mesh-indicators",
     "pack_channel": "indicators",
     "pack_status": "test",
+    # Membership credentials (phase 3): when required, a report must carry a
+    # certificate from one of ``issuers`` for the key that signed it.
+    "require_credential": False,
+    "issuers": [],
+    "revoked": [],
+    "credential_scope": None,
 }
 STATE_MAX = 64 * 1024 * 1024
 
@@ -105,11 +111,26 @@ class ConsensusEngine:
                 self.rejected += 1
             return {"accepted": False, "reason": "signature: {}".format(exc)}
         reporter = body["reporter"]
+        credentialed = False
+        if self.config.get("require_credential"):
+            from .credential import CredentialError, Revocations, issuer_map, verify_certificate
+            try:
+                verify_certificate(envelope.get("credential"), issuer_map(self.config.get("issuers", [])), now=now,
+                                   revoked=Revocations(self.config.get("revoked", [])),
+                                   scope=self.config.get("credential_scope"),
+                                   pseudonym_public=bytes.fromhex(envelope["public"]))
+            except CredentialError as exc:
+                with self._lock:
+                    self.rejected += 1
+                return {"accepted": False, "reason": "credential: {}".format(exc)}
+            credentialed = True
         with self._lock:
             if self.config["require_known_catalog"] and body["catalog"] not in self.catalogs:
                 self.rejected += 1
                 return {"accepted": False, "reason": "unknown catalog {}".format(body["catalog"])}
             record = self.reporters.setdefault(reporter, self._new_reporter(now))
+            if credentialed:
+                record["enrolled"] = True
             day = int(now // 86400)
             per_day = record.setdefault("per_day", {})
             per_day[str(day)] = per_day.get(str(day), 0) + 1

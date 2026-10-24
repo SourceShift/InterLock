@@ -51,6 +51,19 @@ breaking changes land.
   forge` drafts gated, reviewable proposals (indicators, campaigns, and shared
   fragments from multi-organisation samples; an optional drafter hook) and
   writes them as pull-request-shaped directories, never publishing.
+- The mesh, phase 3: decentralise. A commons with a `log` key keeps an
+  RFC 6962/9162 Merkle transparency log of every published document and pack
+  (`interlock.mesh.log`, with inclusion and consistency proofs) and signs a
+  checkpoint per publish; a subscriber refuses unlogged, rewritten or
+  shrunken history at sync, `interlock mesh log` walks a site's log, and
+  `interlock mesh gossip --peer URL` compares checkpoints to catch split
+  views (`status` shows them, `doctor` fails on them). `interlock mesh serve
+  --role mirror` seeds a node's verified cache to peers read-only and answers
+  gossip. `interlock mesh credential init|issue|revoke|verify`
+  (`interlock.mesh.credential`) issues one pseudonymous membership certificate
+  per member per weekly epoch, unlinkable to verifiers and accountable to the
+  issuer; collectors started with `--require-credential` refuse reports
+  without one, and `report build --credential FILE` attaches it.
 
 - The console (`python -m interlock.console`, `interlock-console`): a local
   web app on loopback for the person running the agent - activity, the review

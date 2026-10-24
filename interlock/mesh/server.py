@@ -26,6 +26,7 @@ tested and reasoned about with nothing but Python.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
@@ -34,9 +35,10 @@ from ._util import atomic_write, read_bounded
 from .aggregate import Aggregator
 from .consensus import ConsensusEngine
 
-__all__ = ["MeshServer", "make_server", "MAX_BODY"]
+__all__ = ["MeshServer", "make_server", "MAX_BODY", "MAX_MIRROR_FILE"]
 
 MAX_BODY = 2 * 1024 * 1024
+MAX_MIRROR_FILE = 16 * 1024 * 1024
 
 
 class MeshServer(ThreadingHTTPServer):
@@ -45,9 +47,9 @@ class MeshServer(ThreadingHTTPServer):
 
     def __init__(self, address: Tuple[str, int], role: str, *, state_path: Optional[str] = None,
                  token: Optional[str] = None, engine: Optional[ConsensusEngine] = None,
-                 aggregator: Optional[Aggregator] = None) -> None:
-        if role not in ("consensus", "aggregator"):
-            raise ValueError("role must be consensus or aggregator")
+                 aggregator: Optional[Aggregator] = None, directory: Optional[str] = None) -> None:
+        if role not in ("consensus", "aggregator", "mirror"):
+            raise ValueError("role must be consensus, aggregator or mirror")
         super().__init__(address, _Handler)
         self.role = role
         self.state_path = state_path
@@ -55,6 +57,11 @@ class MeshServer(ThreadingHTTPServer):
         self.lock = threading.Lock()
         self.engine = engine
         self.aggregator = aggregator
+        # mirror: the directory whose metadata/, targets/ and log/ are served read-only
+        # (a node's verified mesh cache, or a published site).
+        self.directory = os.path.abspath(directory) if directory else None
+        if role == "mirror" and not self.directory:
+            raise ValueError("a mirror needs a directory to serve")
         if role == "consensus" and self.engine is None:
             self.engine = ConsensusEngine()
         if role == "aggregator" and self.aggregator is None:
@@ -130,6 +137,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._reply(200, {"ok": True, "role": self.server.role})
             return
+        if self.server.role == "mirror":
+            self._serve_file(path)
+            return
         if self.server.role == "consensus" and self.server.engine is not None:
             if path == "/v1/stats":
                 self._reply(200, self.server.engine.export_stats())
@@ -144,12 +154,64 @@ class _Handler(BaseHTTPRequestHandler):
                 return
         self._reply(404, {"error": "no such route"})
 
+    def _serve_file(self, path: str) -> None:
+        """Serve one file from the mirrored directory, read-only, no traversal."""
+        parts = [p for p in path.split("/") if p]
+        if (not parts or parts[0] not in ("metadata", "targets", "log") or any(p in ("..", "") for p in parts)
+                or any(p.startswith(".") for p in parts)):
+            self._reply(404, {"error": "no such route"})
+            return
+        full = os.path.join(self.server.directory or "", *parts)
+        if not os.path.isfile(full):
+            self._reply(404, {"error": "not found"})
+            return
+        try:
+            data = read_bounded(full, MAX_MIRROR_FILE)
+        except (OSError, ValueError):
+            self._reply(404, {"error": "not found"})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json" if full.endswith(".json") else "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _gossip(self, payload: Any) -> None:
+        """Record the peer's checkpoint and answer with ours, for split-view detection."""
+        if not isinstance(payload, dict) or not isinstance(payload.get("checkpoint"), dict):
+            self._reply(400, {"error": "expected {checkpoint}"})
+            return
+        directory = self.server.directory or ""
+        try:
+            os.makedirs(os.path.join(directory, "log"), exist_ok=True)
+            with self.server.lock:
+                with open(os.path.join(directory, "log", "gossip.jsonl"), "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"from": self.client_address[0], "checkpoint": payload["checkpoint"]},
+                                        sort_keys=True) + "\n")
+        except OSError:
+            pass
+        ours = None
+        path = os.path.join(directory, "log", "checkpoint.json")
+        if os.path.isfile(path):
+            try:
+                ours = json.loads(read_bounded(path, 16 * 1024).decode("utf-8"))
+            except (OSError, ValueError):
+                ours = None
+        self._reply(200, {"checkpoint": ours})
+
     def do_POST(self) -> None:  # noqa: N802
         path = self.path.split("?", 1)[0]
         if not self._authorized():
             return
         payload = self._body()
         if payload is None:
+            return
+        if self.server.role == "mirror":
+            if path == "/v1/gossip":
+                self._gossip(payload)
+            else:
+                self._reply(404, {"error": "no such route"})
             return
         if self.server.role == "consensus" and self.server.engine is not None and path == "/v1/reports":
             result = self.server.engine.ingest(payload)
@@ -184,14 +246,17 @@ class _Handler(BaseHTTPRequestHandler):
 
 def make_server(role: str, bind: str = "127.0.0.1:0", *, state_path: Optional[str] = None,
                 token: Optional[str] = None, known_catalogs: Tuple[str, ...] = (),
-                config: Optional[Dict[str, Any]] = None) -> MeshServer:
+                config: Optional[Dict[str, Any]] = None, directory: Optional[str] = None) -> MeshServer:
     """Build a server for ``role`` on ``bind`` (``host:port``; port 0 picks one),
-    restoring state from ``state_path`` when it exists."""
+    restoring state from ``state_path`` when it exists. A ``mirror`` serves
+    ``directory`` read-only and answers gossip."""
     host, _, port_text = bind.rpartition(":")
     host = host or "127.0.0.1"
     port = int(port_text or "0")
     engine = None
     aggregator = None
+    if role == "mirror":
+        return MeshServer((host, port), role, token=token, directory=directory)
     if role == "consensus":
         if state_path and _exists(state_path):
             engine = ConsensusEngine.load(state_path)

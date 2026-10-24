@@ -24,11 +24,17 @@ BENIGN = [SensorEvent(action="Bash", args={"command": c}) for c in ("ls -la", "g
          [SensorEvent(action="WebFetch", args={"result": "Quarterly sales rose 4% in the EMEA region."})]
 
 
+def seeded(text):
+    """Deterministic noise per text, so a test cannot flake on a 2-sigma tail."""
+    import random
+    return random.Random(text).randrange
+
+
 def report_with(key, text, *, with_sample=True, since=T0):
     receipts = [Receipt(ts=since + 1, action="WebFetch", verdict="BLOCK", policy_id="tool_result_injection",
                         reason="r", args_digest=digest_args({"result": text}), phase="result")]
-    fps = [{"policy_id": "tool_result_injection", "fp": fp.fingerprint(text, 1.5).hex(), "alpha": 1.5,
-            "tool_class": "http", "ts": since + 1}]
+    fps = [{"policy_id": "tool_result_injection", "fp": fp.fingerprint(text, 1.5, rng=seeded(text)).hex(),
+            "alpha": 1.5, "tool_class": "http", "ts": since + 1}]
     samples = [{"policy_id": "tool_result_injection", "tool_class": "http", "text": fp.redact(text),
                 "arg_names": ["result"]}] if with_sample else []
     body = build_report(receipts, since=since, until=since + 3600, catalog_id="cat1", reporter_id=key.keyid,

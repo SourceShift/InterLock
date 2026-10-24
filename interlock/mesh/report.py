@@ -208,11 +208,18 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
     }
 
 
-def sign_report(body: Mapping[str, Any], key: ReporterKey) -> Dict[str, Any]:
+def sign_report(body: Mapping[str, Any], key: ReporterKey,
+                credential: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Sign ``body`` into an envelope; ``credential`` (a membership certificate
+    for this key, see :mod:`.credential`) rides alongside when the collectors
+    require one."""
     if body.get("reporter") != key.keyid:
         raise ReportError("the report names a different reporter than the signing key")
     payload = canonical(body)
-    return {"report": dict(body), "public": key.public.hex(), "signature": key.sign(payload).hex()}
+    envelope = {"report": dict(body), "public": key.public.hex(), "signature": key.sign(payload).hex()}
+    if credential is not None:
+        envelope["credential"] = dict(credential)
+    return envelope
 
 
 def verify_report(envelope: Any, *, max_bytes: int = MAX_ENVELOPE) -> Dict[str, Any]:

@@ -163,16 +163,18 @@ def randomize(bits: bytes, alpha: float, rng: Optional[Callable[[int], int]] = N
 
 
 def fingerprint(text: str, alpha: Optional[float] = DEFAULT_ALPHA,
-                embedder: Optional[Callable[[str], Sequence[float]]] = None) -> bytes:
+                embedder: Optional[Callable[[str], Sequence[float]]] = None,
+                rng: Optional[Callable[[int], int]] = None) -> bytes:
     """Redact, embed, quantise and (unless ``alpha`` is None) randomise ``text``.
 
     ``alpha=None`` yields the clean fingerprint a node computes for its own live
-    traffic when matching against published, noised fingerprints.
+    traffic when matching against published, noised fingerprints. ``rng`` is
+    the noise source, ``secrets`` by default; tests pass a seeded one.
     """
     clean = redact(text)
     vector = embedder(clean) if embedder is not None else embed(clean)
     bits = quantize(vector)
-    return bits if alpha is None else randomize(bits, alpha)
+    return bits if alpha is None else randomize(bits, alpha, rng)
 
 
 def hamming(a: bytes, b: bytes) -> int:

@@ -62,9 +62,12 @@ def test_matching_across_noise_and_paraphrase():
 
 
 def test_cluster_groups_variants_and_separates_benign():
+    import random
+
     alpha = 1.5
-    items = [("a1", fp.fingerprint(ATTACK, alpha)), ("a2", fp.fingerprint(VARIANT, alpha)),
-             ("b1", fp.fingerprint(BENIGN, alpha)), ("a3", fp.fingerprint(ATTACK, alpha))]
+    rng = random.Random(7).randrange  # seeded: two noised variants sit ~1.8 sigma inside the threshold
+    items = [("a1", fp.fingerprint(ATTACK, alpha, rng=rng)), ("a2", fp.fingerprint(VARIANT, alpha, rng=rng)),
+             ("b1", fp.fingerprint(BENIGN, alpha, rng=rng)), ("a3", fp.fingerprint(ATTACK, alpha, rng=rng))]
     groups = fp.cluster(items, alpha)
     assert sorted(len(g) for g in groups) == [1, 3]
     assert ["b1"] in groups

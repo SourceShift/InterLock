@@ -370,8 +370,12 @@ usage: interlock mesh publish [-h] --source DIR --out DIR --keys DIR [--timestam
                               [--no-validate] [--json]
 usage: interlock mesh verify [-h] [--root FILE] [--json] DIR
 usage: interlock mesh report [-h] ACTION ...
-usage: interlock mesh serve [-h] --role {consensus,aggregator} [--bind HOST:PORT] [--state FILE]
-                            [--token TOKEN] [--known-catalog ID] [--min-orgs N]
+usage: interlock mesh serve [-h] --role {consensus,aggregator,mirror} [--bind HOST:PORT]
+                            [--state FILE] [--token TOKEN] [--known-catalog ID] [--min-orgs N]
+                            [--dir DIR] [--require-credential] [--issuer HEX_PUBLIC]
+usage: interlock mesh log [-h] [--root FILE] [--json] DIR_OR_URL
+usage: interlock mesh gossip [-h] --peer URL [--dir DIR] [--token TOKEN]
+usage: interlock mesh credential [-h] ACTION ...
 usage: interlock mesh harness [-h] --policy FILE --benign FILE [--samples FILE]
                               [--max-fp-rate RATE] [--max-p95-us US] [--min-recall RATE] [--json]
 usage: interlock mesh forge [-h] --state FILE --benign FILE --out DIR [--samples FILE]

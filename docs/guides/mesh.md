@@ -263,8 +263,83 @@ samples named. A `drafter` callable (an LLM behind a validation loop) can be
 plugged in through the Python API; whatever it returns runs through the same
 gates. A human reviews the proposal and opens the pull request.
 
-## What is not here yet
+## The transparency log
 
-Phase 3 of the design, the transparency log with monitors and gossip, peer
-seeding of the verified cache, and membership credentials for the early ring,
-lands in its own section of this guide.
+Signed metadata proves a document came from the maintainers. It does not
+prove they published the same document to everyone, or that a compromised
+signing key did not publish something quietly. A commons whose keys include a
+`log` key (`keys init` creates one) therefore also keeps a **transparency
+log**: every metadata document and every pack is a leaf in a Merkle tree
+(RFC 6962 / RFC 9162 hashing, so an independent monitor written against the
+RFC can read it), and each publish signs the tree's root as a **checkpoint**.
+
+A subscriber whose root names a `log` role refuses, at sync, anything the log
+cannot vouch for:
+
+- a checkpoint not signed by the log key, or whose root the entries do not
+  reproduce;
+- a document it just verified that is not in the logged prefix (an *unlogged*
+  publish, however well signed);
+- a log that shrank or whose earlier entries changed (the previous checkpoint
+  must be a prefix of the new tree).
+
+```bash
+interlock mesh log site/                     # walk a site's log exactly as a subscriber would
+interlock mesh log https://commons.example.org
+```
+
+### Gossip and split views
+
+The attack a log cannot catch alone is the **split view**: one tree shown to
+you, another to everyone else. Nodes catch it by comparing notes. A node that
+serves its verified cache (below) also answers gossip, and any node can ask:
+
+```bash
+interlock mesh gossip --peer http://peer.example.org:7949
+```
+
+Both sides exchange their newest checkpoints. Two checkpoints of the same
+size with different roots, or a peer's checkpoint the local entries cannot
+reproduce, is recorded as a split view: `status` shows it, `doctor` fails on
+it, and the evidence (both signed checkpoints) stays in the mesh state. That
+is the point of a log: the maintainers are accountable to it.
+
+## Seed your cache to peers
+
+Mirrors and peers are trusted for availability only, so any node may be one:
+
+```bash
+interlock mesh serve --role mirror --bind 0.0.0.0:7949
+```
+
+serves the node's own verified cache (`metadata/`, `targets/`, `log/`)
+read-only and answers gossip. Another node adds `http://host:7949` as a
+mirror and verifies everything from its own pinned root, exactly as it would
+from the maintainers' site. If every maintainer mirror is offline, the
+commons keeps flowing between nodes, and nothing a peer serves can be
+altered without a signature it does not have.
+
+## Membership credentials
+
+The early ring is a trusted community, and a reporter's weight in consensus
+is worth attacking: one organisation pretending to be ten is the Sybil
+problem. An **issuer** (the people who run the commons) admits an
+organisation once, out of band, then signs one **certificate per epoch** (a
+week) for a pseudonymous reporting key the member generated:
+
+```bash
+interlock mesh credential init --out issuer/                 # once, offline
+interlock mesh credential issue --issuer issuer/ --member acme --pseudonym <hex public> --out acme-week.json
+interlock mesh credential revoke --issuer issuer/ <certificate id>
+```
+
+The certificate names the pseudonym, the epoch and a scope, never the member.
+A collector started with `--require-credential --issuer <hex public>` refuses
+reports without one, and a node attaches its certificate with
+`report build --credential acme-week.json`. Verifiers learn only that the
+issuer admitted whoever holds this key this week; certificates from different
+weeks are unlinkable to them; the issuer's private ledger says who got which,
+so misbehaviour has an owner and a revocation list. One certificate per
+member per epoch is the Sybil bound. The stated upgrade is an anonymous
+credential or a zero-knowledge membership proof, which would remove the
+issuer's own linkability without changing what verifiers see.

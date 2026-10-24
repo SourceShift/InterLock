@@ -322,17 +322,114 @@ class Subscriber:
             atomic_write(local, data)
             fetched.append(info.path)
 
+        # The transparency log, when the commons has one: every document above
+        # must be in it, and the log may only have grown since we last looked.
+        log_info = None
+        if "log" in trusted.root.roles:
+            from ._util import sha256_hex
+            from .repository import verify_log
+            previous = self._saved_checkpoint()
+            hashes = [sha256_hex(ts_raw), sha256_hex(snap_raw), sha256_hex(tgt_raw)]
+            hashes += [info.sha256 for info in trusted.all_targets()]
+            try:
+                log_info = verify_log(trusted, fetch, hashes, previous=previous)
+            except MetadataError as exc:
+                if "split view" in str(exc) or "rewritten" in str(exc):
+                    self._record_split_view("sync", str(exc))
+                raise
+
         # Everything verified: now, and only now, replace the trusted cache.
         for version, raw in new_roots:
             atomic_write(self._meta("{}.root.json".format(version)), raw)
         atomic_write(self._meta("timestamp.json"), ts_raw)
         atomic_write(self._meta("snapshot.json"), snap_raw)
+        atomic_write(self._meta("{}.snapshot.json".format(snap["version"])), snap_raw)
         atomic_write(self._meta("targets.json"), tgt_raw)
+        atomic_write(self._meta("{}.targets.json".format(tgt_meta["version"])), tgt_raw)
+        if log_info is not None:
+            atomic_write(self._log_path("checkpoint.json"), log_info["checkpoint_raw"])
+            atomic_write(self._log_path("entries.jsonl"), log_info["entries_raw"])
+            self._remember_checkpoint(log_info["checkpoint"], source="sync")
         self._prune_targets({info.consistent_name for info in trusted.all_targets()})
         return {"root_version": trusted.root.version, "timestamp_version": ts["version"],
                 "snapshot_version": snap["version"], "targets_version": tgt_meta["version"],
                 "timestamp_expires": ts["expires"], "fetched": fetched, "kept": kept,
-                "packs": [info.path for info in trusted.all_targets()]}
+                "packs": [info.path for info in trusted.all_targets()],
+                "log": None if log_info is None else {"size": log_info["size"], "root": log_info["root"]}}
+
+    # log and gossip -----------------------------------------------------------------
+
+    def _log_path(self, name: str) -> str:
+        return os.path.join(self.dir, "log", name)
+
+    def _saved_checkpoint(self) -> Optional[Dict[str, Any]]:
+        path = self._log_path("checkpoint.json")
+        if not os.path.exists(path):
+            return None
+        try:
+            return json.loads(read_bounded(path, 16 * 1024).decode("utf-8")).get("checkpoint")
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def _remember_checkpoint(self, checkpoint: Dict[str, Any], *, source: str) -> None:
+        line = json.dumps({"ts": self._now(), "source": source, **checkpoint}, sort_keys=True) + "\n"
+        os.makedirs(os.path.dirname(self._log_path("seen.jsonl")), exist_ok=True)
+        with open(self._log_path("seen.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(line)
+
+    def _record_split_view(self, source: str, detail: str) -> None:
+        with _state_lock:
+            state = self._load_state()
+            state.setdefault("split_views", []).append({"ts": self._now(), "source": source, "detail": detail})
+            state["split_views"] = state["split_views"][-50:]
+            self._save_state(state)
+
+    def gossip(self, peer_url: str, *, token: Optional[str] = None) -> Dict[str, Any]:
+        """Exchange checkpoints with a peer and compare: the way a split view is caught.
+
+        Sends our newest verified checkpoint to ``peer_url/v1/gossip``, receives
+        the peer's, verifies its signature under our root's log keys, and checks
+        both against our entries. A conflict is recorded in the state for
+        ``status`` and ``doctor``; it is evidence, and it names the peer.
+        """
+        from .log import LogError, MerkleLog, split_view, verify_checkpoint
+        from .report import submit
+
+        path = self._log_path("checkpoint.json")
+        if not os.path.exists(path):
+            raise SubscriberError("no verified checkpoint yet; run: interlock mesh sync")
+        ours_env = json.loads(read_bounded(path, 16 * 1024).decode("utf-8"))
+        try:
+            reply = submit(peer_url.rstrip("/") + "/v1/gossip", {"checkpoint": ours_env}, token=token)
+        except OSError as exc:
+            raise SubscriberError("peer {} unreachable: {}".format(peer_url, exc))
+        theirs_env = reply.get("checkpoint")
+        result: Dict[str, Any] = {"peer": peer_url, "ours": ours_env["checkpoint"], "theirs": None, "conflict": None}
+        if not theirs_env:
+            return result
+        trusted = self._trusted(allow_expired=True)
+        keyids = trusted.root.roles.get("log", {}).get("keyids", [])
+        try:
+            theirs = verify_checkpoint(theirs_env, keyids)
+        except LogError as exc:
+            result["conflict"] = "peer checkpoint rejected: {}".format(exc)
+            self._record_split_view(peer_url, result["conflict"])
+            return result
+        result["theirs"] = theirs
+        log = None
+        entries = self._log_path("entries.jsonl")
+        if os.path.exists(entries):
+            try:
+                log = MerkleLog.from_bytes(read_bounded(entries, 16 * 1024 * 1024))
+            except (LogError, ValueError):
+                log = None
+        conflict = split_view(ours_env["checkpoint"], theirs, log)
+        if conflict:
+            result["conflict"] = conflict
+            self._record_split_view(peer_url, conflict)
+        else:
+            self._remember_checkpoint(theirs, source="gossip:" + peer_url)
+        return result
 
     def _prune_targets(self, keep: set) -> None:
         base = os.path.join(self.dir, TARGETS_DIR)
@@ -442,7 +539,10 @@ class Subscriber:
         out.update({"mirrors": config.mirrors, "ring": config.ring, "monitor_days": config.monitor_days,
                     "last_sync": state.get("last_sync"), "last_error": state.get("last_error"),
                     "subscriptions": state.get("subscriptions", {}),
-                    "next_transition": state.get("next_transition", {})})
+                    "next_transition": state.get("next_transition", {}),
+                    "split_views": state.get("split_views", []),
+                    "log": self._saved_checkpoint(),
+                    "recorder": config.recorder})
         try:
             trusted = self._trusted(allow_expired=True)
             expires = trusted.expires("timestamp")
