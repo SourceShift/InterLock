@@ -37,6 +37,10 @@ class SensorEvent:
     # receipts of one action can be joined. None when the caller did not mint
     # one; see new_call_id().
     call_id: Optional[str] = None
+    # The directory the action runs in, when the sensor knows it (an agent
+    # hook's session cwd), so a relative path in a shell command resolves
+    # where the command will run. None: the guard's own directory.
+    cwd: Optional[str] = None
 
 
 def new_call_id() -> str:

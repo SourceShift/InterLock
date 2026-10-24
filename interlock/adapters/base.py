@@ -210,7 +210,7 @@ def call_events(agent: str, tool_name: str, args: Dict[str, Any], *,
                 session_id: Optional[str], call_id: str,
                 cwd: Optional[str]) -> List[SensorEvent]:
     """The call-phase events for one tool call (one per patch target)."""
-    common = dict(principal=agent, span_id=session_id, call_id=call_id)
+    common = dict(principal=agent, span_id=session_id, call_id=call_id, cwd=cwd)
     if tool_name == "apply_patch" and isinstance(args.get("command"), str):
         targets = patch_targets(args["command"], cwd)
         if targets:

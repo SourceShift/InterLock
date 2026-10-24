@@ -814,7 +814,7 @@ def _intent_condition(selector: Any, arg: Any, where: str,
         for name, value in items:
             if not isinstance(value, str):
                 continue
-            for intent in analyze(value):
+            for intent in analyze(value, cwd=getattr(event, "cwd", None)):
                 if any(intent.matches(s) for s in selectors):
                     return Hit(name)
         return False

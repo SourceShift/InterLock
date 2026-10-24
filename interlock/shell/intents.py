@@ -30,20 +30,23 @@ Kinds:
 ``persist.schedule``        ``crontab``, ``at``, ``launchctl load``, ``systemctl enable``
 ``persist.shell_init``      writes to ``~/.bashrc``, ``~/.zshrc`` ...
 ``priv.escalate``           ``sudo``, ``doas``, ``su``, ``pkexec``
-``interlock.tamper``        ``interlock trust``/``install-hook``, a write,
-                            move or delete under ``~/.interlock``, or an HTTP
-                            client calling the local console's unlock or
-                            write API
+``interlock.tamper``        ``interlock trust``/``install-hook``, any command
+                            naming a path under ``~/.interlock`` (``detail``
+                            ``write`` for a write, move or delete, ``path``
+                            for any other program), or an HTTP client calling
+                            the local console's unlock or write API
 ==========================  ==================================================
 """
 from __future__ import annotations
 
+import fnmatch
+import os
 import posixpath
 import re
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
 
-from .parser import _WRAPPERS, Invocation, ParsedCommand, parse
+from .parser import _SCRIPT_INTERPRETER, _WRAPPERS, Invocation, ParsedCommand, _literals, parse
 
 
 @dataclass(frozen=True)
@@ -74,12 +77,17 @@ class Intent:
         return self.detail == qualifier
 
 
-def analyze(command: Union[str, ParsedCommand]) -> Tuple[Intent, ...]:
-    """Every intent a command string carries, duplicates removed, in order."""
+def analyze(command: Union[str, ParsedCommand], cwd: Optional[str] = None) -> Tuple[Intent, ...]:
+    """Every intent a command string carries, duplicates removed, in order.
+
+    ``cwd`` is the directory the command runs in (an agent hook's session
+    directory); a relative path is resolved against it, or against this
+    process's directory when None.
+    """
     parsed = parse(command) if isinstance(command, str) else command
     found: List[Intent] = []
     for inv in parsed.invocations:
-        found.extend(_classify(inv))
+        found.extend(_classify(inv, cwd))
     found.extend(_fetch_exec(parsed.invocations))
     unique: Dict[Intent, None] = {}
     for intent in found:
@@ -178,7 +186,7 @@ def _flags(args: Sequence[str]) -> Tuple[set, List[str]]:
     return letters, operands
 
 
-def _classify(inv: Invocation) -> Iterable[Intent]:
+def _classify(inv: Invocation, cwd: Optional[str] = None) -> Iterable[Intent]:
     name = inv.name
     args = inv.args
     out: List[Intent] = []
@@ -272,7 +280,7 @@ def _classify(inv: Invocation) -> Iterable[Intent]:
     if name in _PRIVILEGE:
         out.append(Intent("priv.escalate", name))
 
-    out.extend(_tamper(inv))
+    out.extend(_tamper(inv, cwd))
 
     for target in inv.redirects:
         if _BLOCK_DEVICE.match(target):
@@ -309,20 +317,106 @@ _CONSOLE_WRITE = re.compile(
 _MUTATORS = frozenset({"rm", "mv", "cp", "ln", "chmod", "chown", "truncate", "tee",
                        "touch", "install", "rsync", "unlink", "shred"})
 
+#: Programs besides the script interpreters that read a script or query from
+#: an argument; a path inside it (``ATTACH '/x/reviews.db'``, ``.output /x``,
+#: ``print > "/x"``, ``w /x``) is a file the program opens.
+_CODE_ARGS = frozenset({"sqlite3", "sqlite", "duckdb", "litecli", "psql", "mysql", "mariadb",
+                        "awk", "gawk", "mawk", "nawk", "sed", "gsed"})
+_ATTACHED = re.compile(r"^-[A-Za-z0-9]+?([~/$].*)$")  # -o/path, -o~/path
+_OPEN_MODE = re.compile(r"^[<>+|&]+\s*")  # perl's open(F, "</path")
+_FILE_URL = re.compile(r"^file:(?://[^/]*)?", re.IGNORECASE)
+_BRACES = re.compile(r"\{([^{}]*,[^{}]*)\}")
+_GLOB = re.compile(r"[*?[]")
+_PATH_MAX = 4096  # longer words cannot be opened as one path
 
-def _in_interlock_home(target: str) -> bool:
-    import os
 
-    t = _HOME_VAR.sub("~", target.strip())
-    if t.startswith("~/"):
-        t = os.path.expanduser("~") + t[1:]
-    home = os.path.join(os.path.expanduser("~"), ".interlock")
-    norm = posixpath.normpath(t) if t.startswith("/") else ""
-    return bool(norm) and (norm == home or norm.startswith(home + "/"))
+def _in_interlock_home(target: str, cwd: Optional[str] = None) -> bool:
+    """Whether ``target`` names ``~/.interlock`` or anything under it.
+
+    The shell's expansions come first - ``~``, ``$HOME``, braces
+    (``~/.{interlock,x}``) - then a relative path is joined to ``cwd`` and
+    ``..`` resolved. A glob counts when it can match the home
+    (``~/.inter*/receipts.key``), though ``*`` and ``?`` skip a leading dot, as
+    in the shell. Case is ignored, as the default macOS volume ignores it.
+    """
+    if len(target) > _PATH_MAX:
+        return False
+    own = _components(os.path.join(os.path.expanduser("~"), ".interlock"))
+    for word in _brace_variants(target.strip()):
+        t = os.path.expanduser(_FILE_URL.sub("", _HOME_VAR.sub("~", word)))
+        if not t:
+            continue
+        if not t.startswith("/"):
+            base = cwd or _getcwd()
+            if not base:
+                continue
+            t = posixpath.join(base, t)
+        parts = _components(t)
+        if len(parts) >= len(own) and all(_component_is(p, o) for p, o in zip(parts, own)):
+            return True
+    return False
 
 
-def _tamper(inv: Invocation) -> List[Intent]:
-    """Commands that would switch interlock off from inside the agent."""
+def _components(path: str) -> List[str]:
+    """An absolute path's components, ``..`` resolved, casefolded."""
+    norm = posixpath.normpath(re.sub(r"/+", "/", path))
+    return [p for p in norm.casefold().split("/") if p]
+
+
+def _component_is(pattern: str, name: str) -> bool:
+    if not _GLOB.search(pattern):
+        return pattern == name
+    if name.startswith(".") and pattern.startswith(("*", "?")):
+        return False
+    return fnmatch.fnmatchcase(name, pattern)
+
+
+def _brace_variants(word: str, limit: int = 64) -> List[str]:
+    """``word`` with each ``{a,b}`` expanded as the shell would, up to ``limit``."""
+    done: List[str] = []
+    todo = [word]
+    while todo:
+        w = todo.pop()
+        m = _BRACES.search(w)
+        if not m or len(done) + len(todo) >= limit:
+            done.append(w)
+            continue
+        todo.extend(w[:m.start()] + alt + w[m.end():] for alt in m.group(1).split(","))
+    return done
+
+
+def _getcwd() -> str:
+    try:
+        return os.getcwd()
+    except OSError:  # the directory was removed
+        return ""
+
+
+def _path_words(inv: Invocation) -> List[str]:
+    """The words of ``inv`` that may name a file, whatever the program.
+
+    Each operand, each output redirect, and each option's value (``--opt=V``,
+    ``of=V``, ``-oV``). For a program that reads code or a query from its
+    arguments, also each string literal and each word inside them.
+    """
+    words = list(inv.redirects)
+    for arg in inv.args:
+        attached = _ATTACHED.match(arg)
+        if attached:
+            words.append(attached.group(1))
+        elif not arg.startswith("-"):
+            words.append(arg)
+        if "=" in arg:
+            words.append(arg.split("=", 1)[1])
+    if _SCRIPT_INTERPRETER.match(inv.name) or inv.name in _CODE_ARGS:
+        for arg in inv.args:
+            words.extend(_OPEN_MODE.sub("", w) for w in _literals(arg) + arg.split())
+    return words
+
+
+def _tamper(inv: Invocation, cwd: Optional[str] = None) -> List[Intent]:
+    """Commands that would switch interlock off from inside the agent, or
+    touch its home: the signing key, receipt log, review queue and policy."""
     out: List[Intent] = []
     name = inv.name
     args = list(inv.args)
@@ -342,9 +436,13 @@ def _tamper(inv: Invocation) -> List[Intent]:
         targets.extend(_flags(inv.args)[1])
     if name == "dd":
         targets.extend(a[3:] for a in inv.args if a.startswith("of="))
-    hit = tuple(t for t in targets if _in_interlock_home(t))
+    hit = tuple(t for t in targets if _in_interlock_home(t, cwd))
     if hit:
         out.append(Intent("interlock.tamper", name, hit, detail="write", critical=True))
+    named = tuple(dict.fromkeys(w for w in _path_words(inv)
+                                if w not in hit and _in_interlock_home(w, cwd)))
+    if named:
+        out.append(Intent("interlock.tamper", name, named, detail="path", critical=True))
     if name in _FETCHERS or re.match(r"^python[0-9.]*$", name) or name in ("node", "deno", "bun"):
         urls = tuple(a for a in inv.args if _CONSOLE_WRITE.search(a))
         if urls:

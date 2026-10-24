@@ -9,11 +9,12 @@ absolute, normalized paths, so a prefix test cannot be walked around with
 Locked rules - which no extending file and no overlay can disable - protect
 interlock itself and stop irreversible host damage:
 
-- ``self-protect-files``: no agent writes under ``~/.interlock`` (the policy,
-  the trust list, the receipt log and its key).
+- ``self-protect-files``: no agent file tool - reads included - touches
+  ``~/.interlock`` (the signing key, the receipt log, the review queue, the
+  policy and the trust list).
 - ``self-protect-commands``: no ``interlock trust`` / ``install-hook`` /
-  ``uninstall-hook`` from inside the agent, and no shell writes, moves or
-  deletes under ``~/.interlock``.
+  ``uninstall-hook`` from inside the agent, and no shell command, whatever the
+  program, that names a path under ``~/.interlock``.
 - ``destructive-commands``: recursive delete or re-permission of ``/``, ``~``
   or a system directory, raw disk writes and formats - however spelled.
 
@@ -23,7 +24,7 @@ that extends this pack.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 from .declarative import register_tool_schema
 
@@ -45,6 +46,8 @@ CODING_AGENT_TOOLS: Dict[str, List[str]] = {
 
 WRITE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]
 FILE_TOOLS = ["Read"] + WRITE_TOOLS
+#: Tools that read a file or directory named in their ``path`` argument.
+SEARCH_TOOLS = ["Grep", "Glob"]
 
 
 def _register() -> None:
@@ -52,9 +55,10 @@ def _register() -> None:
         register_tool_schema(action, names)
 
 
-def _path_under(prefixes: List[str], exact: List[str] = ()) -> Dict[str, Any]:  # type: ignore[assignment]
+def _path_under(prefixes: List[str], exact: List[str] = (),  # type: ignore[assignment]
+                args: Tuple[str, ...] = ("file_path", "notebook_path")) -> Dict[str, Any]:
     tests: List[Dict[str, Any]] = []
-    for arg in ("file_path", "notebook_path"):
+    for arg in args:
         for prefix in prefixes:
             tests.append({"arg": arg, "startswith": prefix})
         for path in exact:
@@ -81,12 +85,14 @@ def coding_agent() -> Dict[str, Any]:
         "rules": [
             # --- locked: interlock's own integrity, irreversible host damage ---
             {"id": "self-protect-files", "locked": True, "verdict": "block",
-             "on": WRITE_TOOLS,
-             "reason": "interlock's own configuration is not writable by the agent",
-             "when": _path_under([own + "/"], [own])},
+             "on": FILE_TOOLS + SEARCH_TOOLS,
+             "reason": "interlock's home - its signing key, receipt log, review queue "
+                       "and policy - is off limits to the agent, to read or to write",
+             "when": _path_under([own + "/"], [own], ("file_path", "notebook_path", "path"))},
             {"id": "self-protect-commands", "locked": True, "verdict": "block",
              "on": "Bash",
-             "reason": "the agent may not change interlock's trust, hooks or files",
+             "reason": "the agent may not change interlock's trust or hooks, or touch its "
+                       "signing key, receipt log, review queue or policy",
              "when": {"intent": "interlock.tamper", "arg": "command"}},
             {"id": "destructive-commands", "locked": True, "on": "Bash",
              "detector": "destructive_command_guard"},

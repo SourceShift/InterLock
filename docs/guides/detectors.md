@@ -260,7 +260,7 @@ command_intent_guard(
 | `pkg.publish` | `npm/pnpm/yarn/bun/cargo/gem/poetry/uv publish`, `twine upload`, `docker push`, `gh release create` |
 | `persist.schedule`, `persist.shell_init` | `crontab`, `at`, `launchctl load`, `systemctl enable`; writes to `~/.bashrc`, `~/.zshrc` and friends |
 | `priv.escalate` | `sudo`, `doas`, `su`, `pkexec` |
-| `interlock.tamper` | `interlock trust`/`install-hook` or a write under `~/.interlock` |
+| `interlock.tamper` | `interlock trust`/`install-hook`/`reviews approve`, a call to the console's write API, or any command naming a path under `~/.interlock`: detail `write` for a write, move or delete, `path` for any other program |
 
 A selector names a kind or a prefix of one (`"git"` covers all `git.*`), and
 `:detail` or `:critical` narrows it. The same selectors work in

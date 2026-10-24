@@ -25,6 +25,7 @@ creates `~/.interlock/` with:
 | `receipts.jsonl` | The receipt log, one line per decision, chained and MAC-signed |
 | `receipts.key` | The log's MAC key (mode 0600) |
 | `trusted.json` | Project overlays you approved (see below) |
+| `reviews.db` | The [review queue](reviews.md), created by the first hook call |
 
 Restart running agent sessions so they load the hooks. Use `--dry-run` to see the
 change without writing anything, and `--uninstall` to remove it.
@@ -88,8 +89,8 @@ full text):
 
 | Rule | Verdict | Catches |
 |---|---|---|
-| `self-protect-files` | block, **locked** | any write under `~/.interlock` |
-| `self-protect-commands` | block, **locked** | `interlock trust`/`install-hook` and shell writes under `~/.interlock` |
+| `self-protect-files` | block, **locked** | any read or write under `~/.interlock` (the signing key, receipt log, review queue and policy) by `Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `apply_patch`, or `Grep`/`Glob` pointed there |
+| `self-protect-commands` | block, **locked** | `interlock trust`/`install-hook`/`reviews approve`, the console's write API, and any shell command that names a path under `~/.interlock`. It matches on the target path, not the program: `cat`, a database client, an interpreter one-liner, a redirect, `tee`, `cp` and `install` all count |
 | `destructive-commands` | block, **locked** | recursive delete or chmod of `/`, `~` or a system directory, raw disk writes, formats, however they're spelled |
 | `fetch-and-execute` | block | `curl ... \| sh`, `bash -c "$(curl ...)"`, `bash <(curl ...)` |
 | `secret-files` | block | reading or writing `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.netrc`, `~/.npmrc` and similar |
@@ -108,6 +109,17 @@ Shell rules match **what a command does**, not its text. `rm -fr ~`,
 `/bin/rm -Rf /`, `bash -c 'rm -rf /'`, `sudo rm -rf /` and
 `python3 -c 'os.system("rm -rf /")'` are the same act to them (see
 [parsed commands](detectors.md#parsed-shell-commands)).
+
+`self-protect-commands` checks every word that could name a file: each
+argument, each `--opt=VALUE` or `-oVALUE`, each output redirect, and the
+string literals inside a script interpreter's code, a database client's query,
+or an `awk`/`sed` program. It expands `~`, `$HOME`, braces and globs, resolves
+a relative path against the session's working directory, removes `..`
+segments, and ignores case before it compares a path with `~/.interlock`.
+So `cat ~/.interlock/receipts.key`,
+`sqlite3 :memory: "ATTACH '/Users/me/.interlock/reviews.db' AS r"` and
+`cat ~/.inter*/receipts.key` are refused, while `cat ~/.interlock-notes.md`
+and a project's own `.interlock/policy.json` are not.
 
 ## Change the policy
 
@@ -205,6 +217,19 @@ Python it runs still exists (a deleted virtualenv would break every call).
 - **Command parsing is best-effort.** Obfuscated commands (`$'\x72\x6d'`,
   base64, a downloaded script) get past it. The locked rules and the sandbox
   are the backstop, not the parser.
+- **Self-protection sees the paths a command names, not the ones it builds.**
+  It does not catch:
+  - a path assembled at run time, such as a shell variable set earlier or
+    `Path.home() / ".interlock"`;
+  - a file read through an input redirect (`cat < ~/.interlock/receipts.key`);
+  - a relative path after a `cd` in the same command;
+  - a recursive read of a parent directory (`tar czf x.tgz ~`, or `Grep` over
+    `~`);
+  - a symlink made earlier.
+
+  It errs the other way for here-doc bodies, which the parser reads as
+  commands: a commit message built with `$(cat <<EOF ...)` is refused if one
+  of its lines has a path under `~/.interlock` as a separate word.
 - **Codex** can't ask or rewrite at `PreToolUse`, and can't withhold tool output.
   **Cursor** has no result hook.
 - **Each call starts a Python process.** For lower latency, run a sidecar and
