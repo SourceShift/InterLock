@@ -42,7 +42,7 @@ from ..actions import (
 )
 from ..enforce import Decision
 from ..event import SensorEvent
-from ..masking import card_number
+from ..masking import _LinearEmailPattern, _LinearPrivateKeyPattern, card_number
 from ..policy.engine import Rule
 
 NETWORK_EGRESS_POLICY_ID = "network_egress"
@@ -241,10 +241,11 @@ def sensitive_path_guard(
     return rule
 
 
-# A PII pattern: a label, the regex that finds it, and an optional validator that
-# confirms a raw match before it is masked (used to Luhn-check card numbers so
-# the pattern does not clobber every long digit string).
-PiiPattern = Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]]]
+# A PII pattern: a label, the engine that finds it (a compiled regex or a linear
+# scanner exposing ``sub``/``search``), and an optional validator that confirms a
+# raw match before it is masked (used to Luhn-check card numbers so the pattern
+# does not clobber every long digit string).
+PiiPattern = Tuple[str, Any, Optional[Callable[[str], bool]]]
 
 
 def _luhn_ok(candidate: str) -> bool:
@@ -261,9 +262,11 @@ def _luhn_ok(candidate: str) -> bool:
 # prefix, a PEM header) or validated (the card number). Callers pass their own
 # tuple to add house-specific secret formats.
 DEFAULT_PII_PATTERNS: Tuple[PiiPattern, ...] = (
-    ("PRIVATE_KEY", re.compile(
-        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
-        re.DOTALL), None),
+    ("PRIVATE_KEY", _LinearPrivateKeyPattern(
+        re.compile(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+            re.DOTALL),
+        require_end=True), None),
     ("AWS_KEY", re.compile(r"\bAKIA[0-9A-Z]{16}\b"), None),
     # The three key-prefix tables (here, masking.ENTITIES and
     # tool_output_secret_redactor.PATTERNS) deliberately share one shape: the
@@ -276,7 +279,9 @@ DEFAULT_PII_PATTERNS: Tuple[PiiPattern, ...] = (
     ("SLACK_TOKEN", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), None),
     ("BEARER_TOKEN", re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{20,}"), None),
     ("SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), None),
-    ("EMAIL", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"), None),
+    ("EMAIL", _LinearEmailPattern(
+        re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"),
+        re.compile(r"[\w.+-]")), None),
     ("CREDIT_CARD", re.compile(r"\b\d(?:[ -]?\d){12,18}\b"), _luhn_ok),
 )
 

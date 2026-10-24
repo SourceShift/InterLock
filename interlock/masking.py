@@ -203,6 +203,182 @@ def jwt(value: str) -> bool:
     return isinstance(data, dict) and isinstance(data.get("alg"), str)
 
 
+# --- linear scanner adapters ------------------------------------------------------
+#
+# The EMAIL_ADDRESS and PRIVATE_KEY entities are written as regexes so their
+# acceptance sets stay documented in one place, but running the regex itself
+# over an untrusted string is super-linear: a local-part run with no ``@``
+# rescans to the end from every start position, and a repeated BEGIN with no END
+# does the same for the lazy body. These adapters keep the original regex for the
+# bounded slice (so group/span and acceptance cannot drift) and drive it from a
+# single forward pass over the text.
+
+
+_WORD_RE = re.compile(r"\w")
+
+
+def _is_word(text: str, index: int) -> bool:
+    """Whether a regex ``\\w`` matches ``text[index]`` (outside the text: False)."""
+    return 0 <= index < len(text) and _WORD_RE.match(text, index) is not None
+
+
+def _is_word_boundary(text: str, index: int) -> bool:
+    """Whether a regex ``\\b`` holds at ``index``."""
+    return _is_word(text, index) != _is_word(text, index - 1)
+
+
+class _LinearMatch:
+    """The match-like surface the linear scanners promise: ``group`` and ``span``."""
+
+    __slots__ = ("_text", "_spans")
+
+    def __init__(self, text: str, spans: Sequence[Tuple[int, int]]) -> None:
+        self._text = text
+        self._spans = tuple(spans)
+
+    def group(self, number: int = 0) -> str:
+        start, end = self._spans[number]
+        return self._text[start:end]
+
+    def span(self, number: int = 0) -> Tuple[int, int]:
+        return self._spans[number]
+
+    def start(self, number: int = 0) -> int:
+        return self._spans[number][0]
+
+    def end(self, number: int = 0) -> int:
+        return self._spans[number][1]
+
+    def groups(self) -> Tuple[str, ...]:
+        return tuple(self.group(i) for i in range(1, len(self._spans)))
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "<linear match {!r}>".format(self.span())
+
+
+class _LinearPattern:
+    """A compiled-regex stand-in whose ``_iter`` is a single forward pass."""
+
+    #: The source of the regex whose acceptance set this scanner preserves.
+    pattern: str = ""
+
+    def _iter(self, text: str):  # pragma: no cover - subclasses implement
+        raise NotImplementedError
+
+    def search(self, text: str):
+        return next(self._iter(text), None)
+
+    def finditer(self, text: str):
+        return self._iter(text)
+
+    def sub(self, replacement, text: str) -> str:
+        return self.subn(replacement, text)[0]
+
+    def subn(self, replacement, text: str) -> Tuple[str, int]:
+        out: List[str] = []
+        last = 0
+        count = 0
+        for match in self._iter(text):
+            out.append(text[last:match.start()])
+            out.append(replacement(match) if callable(replacement) else replacement)
+            last = match.end()
+            count += 1
+        out.append(text[last:])
+        return "".join(out), count
+
+
+class _LinearEmailPattern(_LinearPattern):
+    """An email regex scanned one local run at a time.
+
+    ``full`` is the site's original pattern and ``local_class`` matches a single
+    character of its local part. For every ``@`` the local run before it is
+    walked backwards to its start, but never before ``position``: matches must
+    not overlap, so a later ``@`` cannot reach into text an earlier match
+    already consumed. The leftmost ``\\b`` at or after ``position`` is the only
+    start the regex could take (every later start shares the same ``@`` and
+    domain and has less text before it), so ``full.match`` is tried exactly once
+    and supplies the real match object, span included.
+
+    The runs before distinct ``@`` characters are disjoint - ``@`` is not in the
+    local class - so walking each one costs linear time over the whole text.
+    """
+
+    def __init__(self, full: "re.Pattern[str]", local_class: "re.Pattern[str]") -> None:
+        self._full = full
+        self._local = local_class
+        self.pattern = full.pattern
+
+    def _iter(self, text: str):
+        position = 0
+        length = len(text)
+        while position < length:
+            at = text.find("@", position)
+            if at < 0:
+                return
+            start = at
+            while start > position and self._local.match(text, start - 1) is not None:
+                start -= 1
+            while start < at and not _is_word_boundary(text, start):
+                start += 1
+            if start < at:
+                match = self._full.match(text, start)
+                if match is not None:
+                    yield match
+                    position = match.end()
+                    continue
+            position = at + 1
+
+
+class _LinearPrivateKeyPattern(_LinearPattern):
+    """A PEM private-key regex scanned one BEGIN/END pair at a time.
+
+    ``full`` is the site's original pattern. When ``require_end`` is false the
+    pattern has the masking ``\\Z`` branch, so an unterminated BEGIN matches to
+    end-of-text; when true an unterminated BEGIN is not a match, as in the
+    egress patterns. The first valid BEGIN is the only start that can matter and
+    the first valid END after it is the one the lazy body reaches.
+    """
+
+    _BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+    _END = re.compile(r"-----END [A-Z ]*PRIVATE KEY-----")
+
+    def __init__(self, full: "re.Pattern[str]", *, require_end: bool) -> None:
+        self._full = full
+        self._require_end = require_end
+        self.pattern = full.pattern
+
+    @staticmethod
+    def _find_header(header: "re.Pattern[str]", text: str, marker: str, position: int):
+        while True:
+            found = text.find(marker, position)
+            if found < 0:
+                return None
+            match = header.match(text, found)
+            if match is not None:
+                return match
+            position = found + 1
+
+    def _iter(self, text: str):
+        position = 0
+        length = len(text)
+        while position < length:
+            begin = self._find_header(self._BEGIN, text, "-----BEGIN ", position)
+            if begin is None:
+                return
+            end = self._find_header(self._END, text, "-----END ", begin.end())
+            if end is None:
+                if self._require_end:
+                    return
+                match = self._full.match(text, begin.start(), length)
+            else:
+                match = self._full.match(text, begin.start(), end.end())
+            if match is None:
+                position = begin.end()
+                continue
+            yield match
+            position = max(match.end(), begin.end())
+
+
 # --- the catalog ------------------------------------------------------------------
 
 
@@ -211,7 +387,7 @@ class Entity:
     """One detectable kind of sensitive value."""
 
     name: str
-    pattern: "re.Pattern[str]"
+    pattern: Any  # a compiled regex or a linear scanner exposing finditer/pattern
     score: float  # confidence when the pattern (and validator) match
     validator: Optional[Callable[[str], bool]] = None
     group: int = 0  # the part of the match to mask
@@ -224,7 +400,9 @@ def _re(pattern: str, flags: int = 0) -> "re.Pattern[str]":
 
 
 ENTITIES: Dict[str, Entity] = {e.name: e for e in [
-    Entity("EMAIL_ADDRESS", _re(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b"), 0.9),
+    Entity("EMAIL_ADDRESS", _LinearEmailPattern(
+        _re(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b"),
+        _re(r"[A-Za-z0-9._%+-]")), 0.9),
     Entity("CREDIT_CARD", _re(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)"), 1.0, card_number),
     Entity("IBAN_CODE", _re(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"), 1.0, iban),
     Entity("US_SSN", _re(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"), 0.8, us_ssn,
@@ -249,7 +427,9 @@ ENTITIES: Dict[str, Entity] = {e.name: e for e in [
     Entity("STRIPE_KEY", _re(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}\b"), 1.0),
     Entity("API_KEY", _re(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b"), 0.9),
     Entity("JWT", _re(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"), 1.0, jwt),
-    Entity("PRIVATE_KEY", _re(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)"), 1.0),
+    Entity("PRIVATE_KEY", _LinearPrivateKeyPattern(
+        _re(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)"),
+        require_end=False), 1.0),
     Entity("URL_PASSWORD", _re(r"\b[a-z][a-z0-9+.-]*://[^\s:/@]+:([^\s@/]+)@"), 1.0, group=1),
 ]}
 

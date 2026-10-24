@@ -29,6 +29,7 @@ from typing import Optional
 
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..masking import _LinearMatch
 from ..policy.engine import Rule
 
 POLICY_ID = "markdown_image_exfil"
@@ -43,10 +44,85 @@ POLICY_ID = "markdown_image_exfil"
 # re.IGNORECASE: URL schemes are case-insensitive and a receiving server reads
 # ``?Token=`` the same as ``?token=``, so a capital letter must not carry the
 # data past the rule. The image syntax the match requires keeps prose out.
-PATTERN = re.compile(
-    r"!\[[^\]]*\]\((https?://[^)]*(?:\?|/)[^)]*(?:token|data|secret|key|q)=[^)]*)\)",
-    re.IGNORECASE,
+#
+# The scanner below preserves that acceptance set in one forward pass. For each
+# ``![`` opener the first ``]`` is the only possible closer, its next character
+# must be ``(``, and ``https?://`` must start immediately after. The URL can
+# never cross a ``)``, so the next ``)`` is the only possible close; its window
+# is inspected once, and a failed tail is remembered so later candidates ending
+# at the same ``)`` (a suffix of the same window) are not rescanned.
+_IMAGE_SOURCE = (
+    r"!\[[^\]]*\]\((https?://[^)]*(?:\?|/)[^)]*(?:token|data|secret|key|q)=[^)]*)\)"
 )
+_IMAGE_SCHEME = re.compile(r"https?://", re.IGNORECASE)
+# The tail ``[^)]*(?:\?|/)[^)]*(?:token|data|secret|key|q)=[^)]*`` accepts a
+# window exactly when some ``?`` or ``/`` is followed by a payload keyword and
+# ``=``. The two nested ``[^)]*`` runs make that regex quadratic on a window full
+# of delimiters and keyword letters; splitting it into "first delimiter" then
+# "keyword after it" keeps the same acceptance set with two linear searches.
+_IMAGE_DELIMITER = re.compile(r"[?/]")
+_IMAGE_KEYWORD = re.compile(r"(?:token|data|secret|key|q)=", re.IGNORECASE)
+
+
+def _image_tail_matches(text: str, start: int, end: int) -> bool:
+    """Whether the tail regex matches ``text[start:end]`` (which has no ``)``)."""
+    delimiter = _IMAGE_DELIMITER.search(text, start, end)
+    if delimiter is None:
+        return False
+    return _IMAGE_KEYWORD.search(text, delimiter.start() + 1, end) is not None
+
+
+def _next_character(text: str, char: str):
+    """``out[i]`` is the index of the first ``char`` at or after ``i`` (or len)."""
+    length = len(text)
+    out = [length] * (length + 1)
+    nxt = length
+    for index in range(length - 1, -1, -1):
+        if text[index] == char:
+            nxt = index
+        out[index] = nxt
+    return out
+
+
+class _MarkdownImageScanner:
+    """Linear stand-in for the image pattern whose source is ``pattern``."""
+
+    pattern = _IMAGE_SOURCE
+
+    def search(self, text: str):
+        opener = -1
+        index = 0
+        length = len(text)
+        closers = None
+        failed_close = -1
+        while index < length:
+            char = text[index]
+            if char == "!" and index + 1 < length and text[index + 1] == "[":
+                if opener < 0:
+                    opener = index
+                index += 2
+                continue
+            if char == "]":
+                if opener >= 0 and index + 1 < length and text[index + 1] == "(":
+                    url_start = index + 2
+                    if closers is None:
+                        closers = _next_character(text, ")")
+                    closing = closers[url_start]
+                    if closing >= length:
+                        return None
+                    scheme = _IMAGE_SCHEME.match(text, url_start)
+                    if scheme is not None and closing != failed_close:
+                        if _image_tail_matches(text, scheme.end(), closing):
+                            return _LinearMatch(
+                                text, ((opener, closing + 1), (url_start, closing))
+                            )
+                        failed_close = closing
+                opener = -1
+            index += 1
+        return None
+
+
+PATTERN = _MarkdownImageScanner()
 
 
 def markdown_image_exfil_guard() -> Rule:

@@ -460,6 +460,17 @@ prompt_injection_detector(
 
 The catalog's **Factory** column shows each detector's parameters.
 
+## Scans are linear in the text they read
+
+The guards that inspect free text — `html_comment_injection_guard`,
+`markdown_link_injection_guard`, `markdown_image_exfil_guard`, `xxe_guard`,
+`destructive_command_guard`, and the email and private-key scans in `masking`,
+`pii_redaction_guard`, and `email_pii_redactor` — make one bounded pass over
+each argument, so scan time grows linearly with its length and an oversized or
+adversarial argument cannot stall the rule. The scans are pattern matchers, not
+parsers, and linear time does not make them exhaustive; the limits below still
+apply.
+
 ## What detectors can't do
 
 - **They match patterns, not meaning.** Each detector looks for shapes an

@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..masking import _LinearMatch
 from ..policy.engine import Rule
 
 POLICY_ID = "html_comment_injection"
@@ -32,10 +33,42 @@ POLICY_ID = "html_comment_injection"
 # case-insensitively because the keyword casing is attacker-controlled and the
 # *intent* is what defines the injection, not its spelling ("Ignore", "SYSTEM"
 # and "you are" all denote the same smuggled directive).
-PATTERN = re.compile(
-    r"<!--[\s\S]*?(?:ignore|system|instruction|you are|exfiltrate)[\s\S]*?-->",
-    re.IGNORECASE,
+#
+# The semantics are the regex's, not "pair each opener with the next closer":
+# the old lazy pattern can cross an intervening ``-->``, so the keyword merely
+# has to follow the *first* ``<!--`` and a ``-->`` has to follow the keyword.
+#
+# This scanner is that pattern in linear time. It finds the first opener, then
+# the first keyword anywhere after it, then the first closer after the keyword.
+# No restart from a later opener is needed: a later opener's remainder is a
+# suffix of the first one's, so it can only have fewer keyword/closer pairs.
+_HTML_SOURCE = (
+    r"<!--[\s\S]*?(?:ignore|system|instruction|you are|exfiltrate)[\s\S]*?-->"
 )
+_HTML_KEYWORD = re.compile(
+    r"ignore|system|instruction|you are|exfiltrate", re.IGNORECASE
+)
+
+
+class _HtmlCommentScanner:
+    """Linear stand-in for the comment pattern whose source is ``pattern``."""
+
+    pattern = _HTML_SOURCE
+
+    def search(self, text: str):
+        opening = text.find("<!--")
+        if opening < 0:
+            return None
+        keyword = _HTML_KEYWORD.search(text, opening + 4)
+        if keyword is None:
+            return None
+        closing = text.find("-->", keyword.end())
+        if closing < 0:
+            return None
+        return _LinearMatch(text, ((opening, closing + 3),))
+
+
+PATTERN = _HtmlCommentScanner()
 
 
 def html_comment_injection_guard() -> Rule:

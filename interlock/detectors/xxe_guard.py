@@ -41,6 +41,7 @@ from typing import Optional
 
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..masking import _LinearMatch, _is_word
 from ..policy.engine import Rule
 
 POLICY_ID = "xxe"
@@ -52,7 +53,90 @@ POLICY_ID = "xxe"
 #   SYSTEM\s+"http    - an http-scheme external identifier
 # Case is not folded: the XML keywords are case-sensitive, so IGNORECASE would
 # match ordinary prose the parser would never read as a declaration.
-PATTERN = re.compile(r'(?:<!DOCTYPE[^>]*\[|<!ENTITY\b|SYSTEM\s+"file:|SYSTEM\s+"http)')
+#
+# The scanner below keeps the same acceptance set without rescanning a suffix
+# per marker. Each ``<!DOCTYPE`` checks the next ``>`` and ``[`` once (a ``[``
+# before the ``>`` -- or before end-of-text -- is the match); a failed DOCTYPE
+# consumes through its ``>``, so ``"<!DOCTYPE" * n`` is one pass. The ENTITY
+# branch tests the ``\b`` boundary; the two SYSTEM branches keep ``\s+``
+# anchored at each occurrence. Only ``<!DOCTYPE`` needs the precomputed next
+# ``>``/``[`` positions, built once per search.
+_XXE_SOURCE = r'(?:<!DOCTYPE[^>]*\[|<!ENTITY\b|SYSTEM\s+"file:|SYSTEM\s+"http)'
+_SYSTEM_FILE = re.compile(r'SYSTEM\s+"file:')
+_SYSTEM_HTTP = re.compile(r'SYSTEM\s+"http')
+
+
+def _next_character(text: str, char: str):
+    """``out[i]`` is the index of the first ``char`` at or after ``i`` (or len)."""
+    length = len(text)
+    out = [length] * (length + 1)
+    nxt = length
+    for index in range(length - 1, -1, -1):
+        if text[index] == char:
+            nxt = index
+        out[index] = nxt
+    return out
+
+
+class _XxeScanner:
+    """Linear stand-in for the XXE pattern whose source is ``pattern``."""
+
+    pattern = _XXE_SOURCE
+
+    def search(self, text: str):
+        best = self._doctype(text)
+        entity = self._entity(text)
+        if entity is not None and (best is None or entity[0] < best[0]):
+            best = entity
+        system = self._system(text)
+        if system is not None and (best is None or system[0] < best[0]):
+            best = system
+        return None if best is None else _LinearMatch(text, (best,))
+
+    @staticmethod
+    def _doctype(text: str):
+        position = text.find("<!DOCTYPE")
+        if position < 0:
+            return None
+        length = len(text)
+        next_gt = _next_character(text, ">")
+        while position >= 0:
+            after = position + 9  # len("<!DOCTYPE")
+            gt = next_gt[after]
+            # ``[^>]*`` is greedy, so the match ends at the *last* ``[`` before
+            # the first ``>`` (or before end-of-text when there is none).
+            bracket = text.rfind("[", after, gt)
+            if bracket >= 0:
+                return (position, bracket + 1)
+            if gt >= length:
+                return None
+            position = text.find("<!DOCTYPE", gt + 1)
+        return None
+
+    @staticmethod
+    def _entity(text: str):
+        position = text.find("<!ENTITY")
+        while position >= 0:
+            if not _is_word(text, position + 8):  # the trailing \b
+                return (position, position + 8)
+            position = text.find("<!ENTITY", position + 1)
+        return None
+
+    @staticmethod
+    def _system(text: str):
+        position = text.find("SYSTEM")
+        while position >= 0:
+            match = (
+                _SYSTEM_FILE.match(text, position)
+                or _SYSTEM_HTTP.match(text, position)
+            )
+            if match is not None:
+                return (position, match.end())
+            position = text.find("SYSTEM", position + 1)
+        return None
+
+
+PATTERN = _XxeScanner()
 
 
 def xxe_guard() -> Rule:

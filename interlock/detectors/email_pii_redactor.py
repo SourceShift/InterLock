@@ -37,6 +37,7 @@ from typing import Dict, Optional
 from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..masking import _LinearEmailPattern
 from ..policy.engine import Rule
 
 POLICY_ID = "email_redact"
@@ -47,8 +48,13 @@ MARKER = "[REDACTED EMAIL]"
 
 # Broad email shape: a local part of RFC-5322 atoms, an ``@``, a dotted domain,
 # and a TLD-leaning tail of two or more letters. Every match is masked; no
-# validation follows.
-PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+# validation follows. The linear scanner preserves this acceptance set (and its
+# spans) while scanning each local run once instead of rescanning from every
+# offset; ``subn`` keeps the same non-overlapping replacement semantics.
+PATTERN = _LinearEmailPattern(
+    re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    re.compile(r"[A-Za-z0-9._%+-]"),
+)
 
 # Egress action names this guard recognises. Kept to verbs that unambiguously
 # leave the process, so a same-named in-house tool is not shadowed.

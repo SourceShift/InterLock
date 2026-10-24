@@ -30,6 +30,7 @@ from typing import Optional
 
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..masking import _LinearMatch
 from ..policy.engine import Rule
 
 POLICY_ID = "markdown_link_injection"
@@ -43,10 +44,49 @@ POLICY_ID = "markdown_link_injection"
 # re.IGNORECASE: a model reads ``[Ignore Previous ...]`` exactly as it reads the
 # lowercase phrase, so one capital letter must not walk past the rule. Prose is
 # kept out by the link syntax the match requires, not by the letter case.
-PATTERN = re.compile(
-    r"\[[^\]]*(?:ignore previous|system prompt|you are now|exfiltrate)[^\]]*\]\([^)]*\)",
-    re.IGNORECASE,
+#
+# The scanner below preserves the regex's acceptance set in one forward pass.
+# A ``[`` can never start a match across a ``]``, so for each bracket run only
+# the first ``[`` (its window is the largest) is tested; the keyword must sit
+# between the opener and the next ``]``, that ``]`` must be followed by ``(``,
+# and the next ``)`` must exist. A failed opener/closer pair is consumed, so no
+# suffix is ever rescanned.
+_LINK_SOURCE = (
+    r"\[[^\]]*(?:ignore previous|system prompt|you are now|exfiltrate)"
+    r"[^\]]*\]\([^)]*\)"
 )
+_LINK_KEYWORD = re.compile(
+    r"ignore previous|system prompt|you are now|exfiltrate", re.IGNORECASE
+)
+
+
+class _MarkdownLinkScanner:
+    """Linear stand-in for the link pattern whose source is ``pattern``."""
+
+    pattern = _LINK_SOURCE
+
+    def search(self, text: str):
+        opener = -1
+        index = 0
+        length = len(text)
+        while index < length:
+            char = text[index]
+            if char == "[":
+                if opener < 0:
+                    opener = index
+            elif char == "]":
+                if opener >= 0 and index + 1 < length and text[index + 1] == "(":
+                    if _LINK_KEYWORD.search(text, opener + 1, index) is not None:
+                        closing = text.find(")", index + 2)
+                        if closing < 0:
+                            return None
+                        return _LinearMatch(text, ((opener, closing + 1),))
+                opener = -1
+            index += 1
+        return None
+
+
+PATTERN = _MarkdownLinkScanner()
 
 
 def markdown_link_injection_guard() -> Rule:

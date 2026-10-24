@@ -38,6 +38,7 @@ from typing import Iterable, Optional, Tuple
 from ..actions import command_values, joined_command
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..masking import _LinearMatch, _is_word
 from ..policy.engine import Rule
 from ..shell import read_command
 
@@ -53,11 +54,87 @@ CRITICAL_KINDS = frozenset(
 # spellings such as ``MKFS`` and ``CHMOD -R 777 /`` and so change which inputs
 # are caught rather than merely how they are written. A ``dd`` matches only when
 # its ``of=`` is a block device: ``dd if=/dev/zero of=scratch.img`` makes a file.
-PATTERN = re.compile(
+#
+# Six unrelated alternatives share this pattern; only the ``dd`` branch is
+# super-linear (it rescans a whole segment for every ``dd``). The scanner below
+# runs the other five over the whole text exactly as the original alternation
+# did -- ``\s`` crosses newlines, so they must not be split on segment
+# boundaries -- and handles ``dd`` with one pass per segment (segments split on
+# ``[;&|\n]``, as ``[^;&|\n]*`` requires). Device prefixes, case sensitivity and
+# the other five alternatives are unchanged.
+_DESTRUCTIVE_SOURCE = (
     r"(?:rm\s+-rf\s+/(?:\s|$)|\bmkfs\b"
     r"|\bdd\b[^;&|\n]*\bof=/dev/(?:r?disk\d|sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|md\d|dm-\d|mapper/|loop\d)"
     r"|:\(\)\s*\{\s*:\|:|>\s*/dev/sd|chmod\s+-R\s+777\s+/)"
 )
+_NON_DD_PATTERN = re.compile(
+    r"(?:rm\s+-rf\s+/(?:\s|$)|\bmkfs\b"
+    r"|:\(\)\s*\{\s*:\|:|>\s*/dev/sd|chmod\s+-R\s+777\s+/)"
+)
+_DEVICE_PATTERN = re.compile(
+    r"(?:r?disk\d|sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|md\d|dm-\d|mapper/|loop\d)"
+)
+
+
+class _DestructiveScanner:
+    """Linear stand-in for the destructive-command pattern; exposes ``search``."""
+
+    pattern = _DESTRUCTIVE_SOURCE
+
+    def search(self, text: str):
+        match = _NON_DD_PATTERN.search(text)
+        non_dd = None if match is None else match.span()
+        dd = self._dd_span(text)
+        if non_dd is None:
+            best = dd
+        elif dd is None:
+            best = non_dd
+        else:
+            best = non_dd if non_dd[0] <= dd[0] else dd
+        return None if best is None else _LinearMatch(text, (best,))
+
+    @staticmethod
+    def _dd_span(text: str):
+        length = len(text)
+        segment_start = 0
+        while segment_start <= length:
+            segment_end = segment_start
+            while segment_end < length and text[segment_end] not in ";&|\n":
+                segment_end += 1
+            span = _DestructiveScanner._dd_in_segment(text, segment_start, segment_end)
+            if span is not None:
+                return span
+            if segment_end >= length:
+                return None
+            segment_start = segment_end + 1
+        return None
+
+    @staticmethod
+    def _dd_in_segment(text: str, start: int, end: int):
+        position = start
+        while True:
+            position = text.find("dd", position, end)
+            if position < 0:
+                return None
+            if not _is_word(text, position - 1) and not _is_word(text, position + 2):
+                break
+            position += 1
+        search_from = position + 2
+        found = None
+        while True:
+            of_at = text.find("of=/dev/", search_from, end)
+            if of_at < 0:
+                # The original ``[^;&|\n]*`` is greedy, so its match ends at
+                # the rightmost ``of=/dev/<device>`` in the segment.
+                return found
+            if not _is_word(text, of_at - 1):  # the \b in \bof=
+                device = _DEVICE_PATTERN.match(text, of_at + 8)
+                if device is not None:
+                    found = (position, device.end())
+            search_from = of_at + 1
+
+
+PATTERN = _DestructiveScanner()
 
 
 def destructive_command_guard(
