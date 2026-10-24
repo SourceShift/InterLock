@@ -27,6 +27,11 @@ from .mcp import _enforce_result
 
 _log = logging.getLogger("interlock")
 
+#: View-only prefix that keeps a declared parameter reachable when a ``**kwargs``
+#: entry shadows it. A rewrite naming ``__declared__<name>`` addresses the
+#: declared slot; the key is reserved in the exposed view and never passed on.
+_DECLARED_PREFIX = "__declared__"
+
 # What each guarded callable was wrapped with, keyed "module.qualname". Read by
 # interlock.posture so attest() can say "these tools only observe".
 _MODES: Dict[str, str] = {}
@@ -47,14 +52,20 @@ def _exposed_arguments(
 ) -> Dict[str, Any]:
     """Shape a bound call so rules can see every argument by its caller name.
 
-    ``arguments`` is a fresh dict of the bound arguments; any mapping nested in
-    it is copied here, so a rule that edits ``event.args`` cannot reach the
-    caller's mapping or the call. A keyword-variadic mapping is flattened into
-    the top level (a declared parameter of the same name wins) while the
-    variadic parameter keeps the caller's mapping under its own key. A variadic
-    positional tuple made only of strings is exposed as one shell-joined
-    command; anything else stays the original sequence. The call itself is
-    untouched - this is only what a rule sees.
+    ``arguments`` is a fresh dict of the bound arguments; the top level and a
+    keyword-variadic mapping are copied here, so a rule that replaces an entry
+    cannot reach the caller's mapping or the call. A container nested *inside* a
+    value is still the caller's object and is not copied.
+
+    A keyword-variadic mapping is flattened into the top level while the
+    variadic parameter keeps the caller's mapping under its own key. When a
+    flattened key collides with a declared parameter (as ``def upload(path, /,
+    **extra)`` allows), the exposed name carries the variadic value - what the
+    callee's ``extra["path"]`` reads - and the declared value stays addressable
+    as ``__declared__<name>``, a reserved view-only key. A variadic positional
+    tuple made only of strings is exposed as one shell-joined command; anything
+    else stays the original sequence. The call itself is untouched - this is
+    only what a rule sees.
     """
     for param in sig.parameters.values():
         name = param.name
@@ -66,7 +77,28 @@ def _exposed_arguments(
             # Keep the variadic key, but never the caller's mapping object.
             arguments[name] = entries
             for key, value in entries.items():
-                arguments.setdefault(key, value)
+                if key == name:
+                    continue
+                if key.startswith(_DECLARED_PREFIX) and key not in sig.parameters:
+                    # The alias namespace is view-only: a caller cannot claim
+                    # it. The entry stays reachable in the variadic mapping.
+                    continue
+                declared = sig.parameters.get(key)
+                if (
+                    declared is not None
+                    and declared.kind
+                    not in (inspect.Parameter.VAR_KEYWORD,
+                            inspect.Parameter.VAR_POSITIONAL)
+                ):
+                    # A real declared parameter of this name is shadowed. Show
+                    # the variadic value (the fail-closed choice: the callee
+                    # may read it) and keep the declared one reachable.
+                    alias = _DECLARED_PREFIX + key
+                    if key in arguments and alias not in sig.parameters:
+                        arguments[alias] = arguments[key]
+                    arguments[key] = value
+                else:
+                    arguments.setdefault(key, value)
         elif param.kind is inspect.Parameter.VAR_POSITIONAL:
             value = arguments.get(name)
             if (
@@ -130,7 +162,7 @@ def _apply_modified_args(
     args: tuple,
     kwargs: Dict[str, Any],
     modified: Dict[str, Any],
-) -> Tuple[tuple, Dict[str, Any]]:
+) -> Tuple[tuple, Dict[str, Any], Optional[str]]:
     """Merge a MODIFY rewrite into the call, in the slot each argument came from.
 
     A rewrite names arguments, but the caller may have passed them positionally:
@@ -139,44 +171,115 @@ def _apply_modified_args(
     signature puts each rewritten value back where it belongs. A name the
     signature does not declare goes into ``**kwargs`` when the function takes
     one, and is otherwise passed as a keyword, exactly as before.
+
+    Returns ``(args, kwargs, refusal)``. ``refusal`` is the name of an argument
+    whose rewrite cannot be applied to this call - a ``dict`` aimed at the
+    positional-variadic parameter (that is the shape ``**kwargs`` uses), a
+    non-mapping aimed at ``**kwargs``, or a shell string that does not split -
+    so the caller can refuse rather than report a rewrite it did not make.
+
+    A positional-variadic rewrite is applied in the shape the rule was shown: a
+    string is split back with :func:`shlex.split` (the inverse of the
+    shell-joined view), a list/tuple becomes the argv, and any other scalar
+    becomes a one-item argv. When a ``**kwargs`` entry collides with a declared
+    parameter, a rewrite of that name lands in the variadic mapping (where the
+    exposed value came from) and a rewrite of ``__declared__<name>`` lands in
+    the declared parameter.
     """
     try:
         sig = inspect.signature(func)
-        bound = sig.bind_partial(*args, **kwargs)
     except (TypeError, ValueError):
-        # No signature, or a call that does not bind: keep the keyword merge.
+        # No signature: keep the keyword merge. Nothing here can be shape-checked.
         merged = dict(kwargs)
         merged.update(modified)
-        return args, merged
+        return args, merged, None
 
     var_keyword = next(
         (p.name for p in sig.parameters.values() if p.kind is p.VAR_KEYWORD), None
     )
+    # A *args parameter cannot be passed by keyword in a real call: a keyword
+    # of that name is either captured by **kwargs (and must stay there) or the
+    # call itself is invalid. Never reroute such a keyword into the *args slot.
+    try:
+        bound = sig.bind_partial(*args, **kwargs)
+    except (TypeError, ValueError):
+        # A call that does not bind: keep the keyword merge, as before.
+        merged = dict(kwargs)
+        merged.update(modified)
+        return args, merged, None
+
+    variadic: Optional[Dict[str, Any]] = None
+    if var_keyword is not None:
+        current = bound.arguments.get(var_keyword)
+        if isinstance(current, dict):
+            variadic = dict(current)
+    # Names a **kwargs entry shadowed: rewriting the name must reach the
+    # variadic mapping the exposed value came from, not the declared slot.
+    collisions = set()
+    for key in variadic or {}:
+        param = sig.parameters.get(key)
+        if param is not None and param.kind not in (
+            inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL,
+        ):
+            collisions.add(key)
+
     undeclared: Dict[str, Any] = {}
     for name, value in modified.items():
+        if name.startswith(_DECLARED_PREFIX) and sig.parameters.get(name) is None:
+            target = name[len(_DECLARED_PREFIX):]
+            if target in collisions:
+                bound.arguments[target] = value
+                continue
         param = sig.parameters.get(name)
         if param is not None and param.kind is inspect.Parameter.VAR_KEYWORD:
             # A rewrite naming the keyword-variadic parameter itself must stay
             # a mapping; merge it so the caller's other entries survive.
-            if isinstance(value, dict):
-                bound.arguments[name] = {
-                    **bound.arguments.get(name, {}), **value,
-                }
+            if not isinstance(value, dict):
+                return args, kwargs, name
+            variadic = {**(variadic or {}), **value}
+            bound.arguments[name] = variadic
         elif param is not None and param.kind is inspect.Parameter.VAR_POSITIONAL:
-            # A positional-variadic rewrite has no safe slot: a string would be
-            # spread character by character. Leave the call untouched (see the
-            # guard docstring); only a tuple can be applied.
-            if isinstance(value, (tuple, list)):
-                bound.arguments[name] = tuple(value)
+            if isinstance(value, dict):
+                return args, kwargs, name
+            if isinstance(value, str):
+                try:
+                    replacement = tuple(shlex.split(value))
+                except ValueError:
+                    return args, kwargs, name
+            elif isinstance(value, (tuple, list)):
+                replacement = tuple(value)
+            else:
+                replacement = (value,)
+            bound.arguments[name] = replacement
         elif param is not None:
-            bound.arguments[name] = value
+            if name in collisions and var_keyword is not None:
+                variadic = {**(variadic or {}), name: value}
+                bound.arguments[var_keyword] = variadic
+            else:
+                bound.arguments[name] = value
         elif var_keyword is not None:
-            bound.arguments[var_keyword] = {
-                **bound.arguments.get(var_keyword, {}), name: value,
-            }
+            variadic = {**(variadic or {}), name: value}
+            bound.arguments[var_keyword] = variadic
         else:
             undeclared[name] = value
-    return bound.args, {**bound.kwargs, **undeclared}
+    if variadic is not None and var_keyword is not None:
+        bound.arguments[var_keyword] = variadic
+    return bound.args, {**bound.kwargs, **undeclared}, None
+
+
+def _refuse_rewrite(decision: Decision, argument: str) -> Decision:
+    """Turn a MODIFY whose rewrite cannot be applied into a fail-closed BLOCK.
+
+    The argument name is kept as ``attributed_to`` (unless the rule named a
+    different argument) and the decision's ``policy_id`` is preserved, so the
+    refusal reads as the same policy decision rather than a new one.
+    """
+    return Decision.block(
+        "modified_args rewrite for {!r} cannot be applied to this call; "
+        "denied fail-closed".format(argument),
+        policy_id=decision.policy_id,
+        attributed_to=decision.attributed_to or argument,
+    )
 
 
 def _enforce(
@@ -189,12 +292,35 @@ def _enforce(
     engine: Any = None,
     elapsed_us: Optional[int] = None,
 ) -> Tuple[tuple, Dict[str, Any]]:
+    # Decide applicability before settle: settle writes the receipt, so a
+    # MODIFY it emits must be one this call can actually apply. An escalation
+    # may carry rewrites too (an approved call runs them), so check those now.
+    applied: Optional[Tuple[tuple, Dict[str, Any], Optional[str]]] = None
+    if (
+        decision.verdict in (Verdict.MODIFY, Verdict.ESCALATE)
+        and decision.modified_args
+    ):
+        applied = _apply_modified_args(func, args, kwargs, decision.modified_args)
+        if applied[2] is not None:
+            decision = _refuse_rewrite(decision, applied[2])
+            applied = None
     outcome = settle(
         event, decision, engine=engine if engine is not None else get_engine(),
         enforcement=enforcement, elapsed_us=elapsed_us,
     )
     if outcome.verdict == Verdict.MODIFY and outcome.modified_args:
-        args, kwargs = _apply_modified_args(func, args, kwargs, outcome.modified_args)
+        if applied is None:
+            applied = _apply_modified_args(func, args, kwargs, outcome.modified_args)
+        args, kwargs, refusal = applied
+        if refusal is not None:
+            # Only reachable if settle itself introduced a rewrite it did not
+            # see pre-settle. Refuse it with its own receipt rather than run
+            # unmodified under a MODIFY receipt.
+            settle(
+                event, _refuse_rewrite(outcome, refusal),
+                engine=engine if engine is not None else get_engine(),
+                enforcement=enforcement, elapsed_us=elapsed_us,
+            )
     if get_store() is not None:
         # Placeholders become secrets only now, after the decision is final.
         packed = substitute_call(event, [list(args), dict(kwargs)], enforcement=enforcement)
@@ -242,10 +368,21 @@ def guard(
     variadic parameter keeps the caller's mapping under its own name), and a
     ``*args`` tuple of strings as one shell-joined command. Only a string-only
     variadic positional tuple is joined; anything else stays the original
-    sequence. The event's argument map is a copy, so a rule that edits it
-    cannot change the call. The wrapped callable always receives exactly what
-    the caller passed. Rewriting the positional-variadic parameter itself with
-    ``modified_args`` is not supported.
+    sequence. When a ``**kwargs`` entry collides with a declared parameter, the
+    flattened name shows the variadic value and the declared value stays under
+    the reserved key ``__declared__<name>``.
+
+    The event's argument map is shallow-copied: its top level and a variadic
+    keyword mapping are new dicts, so replacing an entry cannot change the
+    call, but a container nested inside a value is still the caller's object.
+
+    A MODIFY applies ``modified_args`` in the slot the exposed value came from:
+    a string rewrite of the shell-joined ``*args`` is split back with
+    ``shlex.split``, a list/tuple becomes the argv, and any other scalar becomes
+    a one-item argv. A rewrite that cannot be applied (a ``dict`` aimed at
+    ``*args``, or a shell string that does not split) is refused as a block
+    rather than run unmodified. The wrapped callable otherwise receives exactly
+    what the caller passed.
     """
 
     def decorator(func: Callable) -> Callable:

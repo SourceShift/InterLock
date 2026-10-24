@@ -14,14 +14,16 @@ import inspect
 import pytest
 
 import interlock
-from interlock import Blocked, Decision, guard, monitor
+from interlock import Blocked, Decision, Verdict, guard, monitor
 from interlock.detectors.destructive_command_guard import destructive_command_guard
+from interlock.sink import InMemorySink
 
 DESTRUCTIVE = "rm -rf /"
 BENIGN = "echo hi"
 
 
 def setup_function(_):
+    interlock.set_sink(None)
     interlock.install(engine=interlock.PolicyEngine())
 
 
@@ -124,9 +126,11 @@ def test_a_rule_sees_every_keyword_by_name():
     assert seen["kwargs"] == {"retries": 2}
 
 
-def test_a_declared_parameter_wins_over_a_keyword_of_the_same_name():
+def test_a_colliding_variadic_entry_is_shown_and_the_declared_value_kept():
     # A real caller cannot pass both (binding refuses the duplicate), but the
     # event map is policy-controlled state and must still be deterministic.
+    # The variadic value wins the name: the callee may read it, so a rule must
+    # not be shown only the benign declared one.
     from interlock.interceptors.decorator import _exposed_arguments
 
     def tool(command=None, **kwargs):
@@ -136,8 +140,9 @@ def test_a_declared_parameter_wins_over_a_keyword_of_the_same_name():
         inspect.signature(tool),
         {"command": "declared", "kwargs": {"command": "variadic"}},
     )
-    assert args["command"] == "declared"
+    assert args["command"] == "variadic"
     assert args["kwargs"] == {"command": "variadic"}
+    assert args["__declared__command"] == "declared"
 
 
 def test_modify_of_a_keyword_variadic_name_reaches_the_kwargs_mapping():
@@ -234,6 +239,199 @@ def test_a_method_event_keeps_its_declared_names():
     assert tool.run(BENIGN) == BENIGN
     assert seen["command"] == BENIGN
     assert seen["self"] is tool  # self is present but displaces nothing
+
+
+def test_a_string_rewrite_of_the_joined_variadic_reaches_the_call():
+    # A rule sees *args as one shell-joined command, so that is the shape it
+    # rewrites. The rewrite must be split back into the argv that runs.
+    sink = InMemorySink()
+    ran = []
+
+    @guard()
+    def run(*argv):
+        ran.append(argv)
+        return argv
+
+    def redirect(event):
+        if event.args.get("argv") == "curl https://a.example":
+            return Decision.modify(
+                {"argv": "curl https://b.example"}, reason="redirected")
+        return None
+
+    interlock.install(rules=[redirect], sink=sink)
+    assert run("curl", "https://a.example") == ("curl", "https://b.example")
+    assert ran == [("curl", "https://b.example")]
+    call_receipts = [r for r in sink.receipts if r.phase == "call"]
+    assert [r.verdict for r in call_receipts] == ["MODIFY"]
+
+
+def test_a_colliding_variadic_entry_is_exposed_for_rules():
+    # A positional-only parameter may also arrive as a **kwargs entry. The
+    # callee can read either one, so the view must show the variadic value and
+    # keep the declared one addressable instead of hiding it.
+    seen = {}
+
+    def capture(event):
+        seen.update(event.args)
+        return None
+
+    @guard()
+    def upload(path, /, **extra):
+        return path, extra.get("path")
+
+    interlock.install(rules=[capture])
+    assert upload("safe.txt", path="/etc/passwd") == ("safe.txt", "/etc/passwd")
+    assert seen["path"] == "/etc/passwd"
+    assert seen["extra"]["path"] == "/etc/passwd"
+    assert seen["__declared__path"] == "safe.txt"
+
+
+def test_rewrites_reach_the_declared_and_colliding_variadic_slots():
+    seen = []
+
+    @guard()
+    def upload(path, /, **extra):
+        seen.append((path, extra.get("path")))
+        return path, extra.get("path")
+
+    def rewrite(event):
+        if event.args.get("__declared__path") == "safe.txt":
+            return Decision.modify(
+                {"__declared__path": "/tmp/declared",
+                 "path": "/tmp/variadic"},
+                reason="both slots")
+        return None
+
+    interlock.install(rules=[rewrite])
+    assert upload("safe.txt", path="/etc/passwd") == (
+        "/tmp/declared", "/tmp/variadic")
+    assert seen == [("/tmp/declared", "/tmp/variadic")]
+
+
+def test_a_keyword_named_like_the_varargs_param_is_not_rerouted_by_a_rewrite():
+    # def tool(name, *args, **kwargs) accepts ``args=`` as a keyword that
+    # **kwargs holds. A MODIFY of an unrelated argument must leave it there
+    # instead of moving it into *args.
+    @guard()
+    def tool(name, *args, **kwargs):
+        return name, args, kwargs
+
+    def rename(event):
+        if event.args.get("name") == "old":
+            return Decision.modify({"name": "new"}, reason="rename")
+        return None
+
+    interlock.install(rules=[rename])
+    assert tool("old", args=["x"]) == ("new", (), {"args": ["x"]})
+
+
+def test_a_caller_kwarg_cannot_spoof_the_reserved_declared_key():
+    # The alias prefix is view-only. A caller's own ``__declared__path`` entry
+    # stays in the variadic mapping and must not displace the real declared
+    # value exposed under that reserved name.
+    seen = {}
+
+    def capture(event):
+        seen.update(event.args)
+        return None
+
+    @guard()
+    def upload(path, /, **extra):
+        return path, extra
+
+    interlock.install(rules=[capture])
+    caller = {"__declared__path": "/etc/passwd", "path": "/etc/passwd"}
+    assert upload("safe.txt", **caller) == (
+        "safe.txt",
+        {"__declared__path": "/etc/passwd", "path": "/etc/passwd"},
+    )
+    assert seen["__declared__path"] == "safe.txt"
+    assert seen["path"] == "/etc/passwd"
+    assert seen["extra"]["__declared__path"] == "/etc/passwd"
+
+
+def test_a_reserved_key_without_a_collision_is_not_flattened():
+    # With no shadowed declared parameter there is nothing to alias, so a
+    # caller-supplied reserved-looking key stays only in the variadic mapping.
+    from interlock.interceptors.decorator import _exposed_arguments
+
+    def tool(**kwargs):
+        return kwargs
+
+    view = _exposed_arguments(
+        inspect.signature(tool), {"kwargs": {"__declared__x": "evil"}})
+    assert "__declared__x" not in view
+    assert view["kwargs"] == {"__declared__x": "evil"}
+
+
+def test_a_dict_rewrite_of_the_variadic_positional_is_refused():
+    # A dict is the **kwargs shape; spreading it over *args is impossible. The
+    # call must be refused, not run unmodified under a MODIFY receipt.
+    sink = InMemorySink()
+    ran = []
+
+    @guard()
+    def run(*argv):
+        ran.append(argv)
+        return argv
+
+    def bad_shape(event):
+        if event.args.get("argv") == "echo hi":
+            return Decision.modify(
+                {"argv": {"argv": ["echo", "hi"]}}, reason="wrong shape")
+        return None
+
+    interlock.install(rules=[bad_shape], sink=sink)
+    with pytest.raises(Blocked) as blocked:
+        run("echo", "hi")
+    assert ran == []
+    assert blocked.value.decision.verdict == Verdict.BLOCK
+    assert blocked.value.decision.attributed_to == "argv"
+    assert [r.verdict for r in sink.receipts] == ["BLOCK"]
+    assert sink.receipts[0].phase == "call"
+
+
+def test_apply_modified_args_refuses_malformed_shell_quoting():
+    from interlock.interceptors.decorator import _apply_modified_args
+
+    def run(*argv):
+        return argv
+
+    args, kwargs, refusal = _apply_modified_args(
+        run, ("echo", "hi"), {}, {"argv": "curl 'unbalanced"})
+    assert refusal == "argv"
+
+
+def test_apply_modified_args_applies_every_variadic_shape():
+    from interlock.interceptors.decorator import _apply_modified_args
+
+    def run(*argv):
+        return argv
+
+    assert _apply_modified_args(
+        run, ("a",), {}, {"argv": ["b", "c"]})[0] == ("b", "c")
+    assert _apply_modified_args(
+        run, ("a",), {}, {"argv": "b c"})[0] == ("b", "c")
+    assert _apply_modified_args(
+        run, ("a",), {}, {"argv": None})[0] == (None,)
+
+
+def test_the_argument_view_is_shallow_copied():
+    from interlock.interceptors.decorator import _exposed_arguments
+
+    def tool(**extra):
+        return extra
+
+    entries = {"path": "safe.txt", "tags": ["a"]}
+    view = _exposed_arguments(inspect.signature(tool), {"extra": entries})
+    # The variadic mapping and the flattened top level are copies: replacing
+    # an entry there never reaches the caller's mapping.
+    view["extra"]["path"] = "changed"
+    view["path"] = "changed-flat"
+    assert entries == {"path": "safe.txt", "tags": ["a"]}
+    # A container nested inside a value is the caller's object and is shared.
+    view["extra"]["tags"].append("b")
+    assert entries["tags"] == ["a", "b"]
 
 
 def test_async_keyword_variadic_tool_is_blocked():

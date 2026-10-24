@@ -128,9 +128,33 @@ appear by name; each `**kwargs` entry is also flattened to the top level (the
 variadic parameter's own key still holds the caller's mapping), so a rule can
 look a keyword up directly. A `*args` tuple made only of strings is exposed as
 one shell-joined command under the variadic parameter's name; a tuple with any
-non-string item is left as the original sequence. This view is a copy, and the
-function is always called with exactly what the caller passed. Rewriting the
-positional-variadic parameter with `modified_args` is not supported.
+non-string item is left as the original sequence.
+
+The view is *shallow*-copied: the top-level mapping and a variadic keyword
+mapping are new dicts, so replacing an entry in the view never reaches the
+caller. A container nested inside a value (a list or dict inside `event.args[...]`)
+is still the caller's object; a rule that wants to edit one must copy it first,
+because mutating it changes the call.
+
+When a `**kwargs` entry has the same name as a declared parameter — legal for a
+positional-only parameter, as in `def upload(path, /, **extra)` — the flattened
+name carries the **variadic** value, which is what the callee's
+`extra["path"]` reads. The declared value stays addressable as
+`__declared__<name>`, a reserved key that is view-only: a caller's own
+`__declared__…` keyword stays in the variadic mapping and cannot occupy it.
+The variadic parameter's own mapping keeps the caller's entry under its
+original name. A rewrite of `path` therefore lands in the variadic mapping,
+while a rewrite of `__declared__path` lands in the declared parameter.
+
+`modified_args` is applied in the slot each exposed value came from. A rewrite
+of the shell-joined `*args` string is split back into argv with `shlex.split`;
+a list or tuple becomes the argv, and any other scalar becomes a one-item
+argv. A rewrite that cannot be applied in that shape — a dict aimed at `*args`,
+or a shell string that does not split — is refused under blocking enforcement
+(`Blocked`, with the argument named) rather than running the call unmodified
+under a MODIFY receipt. Monitor mode records the would-be refusal and still
+does not intervene. Otherwise the function is called with exactly what the
+caller passed.
 
 `policy_id` labels every decision on this tool that doesn't name a policy of its
 own, on the call side and the result side, so it shows up in `Blocked`, logs, and
