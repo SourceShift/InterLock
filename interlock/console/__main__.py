@@ -9,6 +9,7 @@ process never binds at all when the host is wrong.
 from __future__ import annotations
 
 import argparse
+import re
 import signal
 import sys
 from pathlib import Path
@@ -89,6 +90,13 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         help="receipt MAC key: 64 hex characters or raw bytes (default: verify reports unverified)",
     )
     parser.add_argument(
+        "--receipts-head",
+        default=None,
+        metavar="MAC",
+        help="the mac the receipt log is expected to end at; with it, a rolled-back or "
+             "truncated log verifies broken (default: no anchor)",
+    )
+    parser.add_argument(
         "--policy",
         default=None,
         metavar="PATH",
@@ -137,6 +145,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return EXIT_BAD_HOST
 
+    receipts_head = None
+    if args.receipts_head is not None:
+        # The chain's macs are lowercase hexdigests; fold case rather than
+        # reject an anchor copied from a tool that uppercased it, so a valid
+        # anchor never reports a false rollback.
+        if re.fullmatch(r"[0-9a-fA-F]{64}", args.receipts_head) is None:
+            sys.stderr.write(
+                "interlock-console: --receipts-head must be 64 hex characters, "
+                "got {!r}\n".format(args.receipts_head)
+            )
+            return EXIT_BAD_KEY_FILE
+        receipts_head = args.receipts_head.lower()
+
     key = None
     if args.key_file is not None:
         try:
@@ -152,6 +173,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             static_dir,
             receipts_path=args.receipts,
             receipts_key=key,
+            receipts_head=receipts_head,
         )
     except OSError:
         sys.stderr.write(

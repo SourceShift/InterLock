@@ -16,6 +16,8 @@ import type { Actions } from "./vals";
 const POLL_FAST = 5000;
 const POLL_DOCTOR = 15000;
 const POLL_ACTIVITY = 10000;
+/** A receipt makes the chain badge stale; re-verify at most this often. */
+const VERIFY_REFRESH_MS = 2000;
 
 function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number) {
   let t: ReturnType<typeof setTimeout> | undefined;
@@ -38,6 +40,11 @@ export class ConsoleStore {
   private rootEl: HTMLDivElement | null = null;
   private copyT: ReturnType<typeof setTimeout> | undefined;
   private started = false;
+  /** When the last verify fetch started, for the re-verify throttle. */
+  private lastVerifyAt = 0;
+  private verifyTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Bumped on every receipt event, so a slow verify cannot clear a newer stale. */
+  private receiptSeq = 0;
 
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -85,6 +92,8 @@ export class ConsoleStore {
     this.source?.close();
     this.source = null;
     this.ro?.disconnect();
+    if (this.verifyTimer) clearTimeout(this.verifyTimer);
+    this.verifyTimer = undefined;
   }
 
   private async boot() {
@@ -191,11 +200,38 @@ export class ConsoleStore {
   }
 
   private async loadVerify() {
+    const seq = this.receiptSeq;
+    this.lastVerifyAt = Date.now();
     try {
-      this.data({ verify: await api.fetchVerify() });
+      const verify = await api.fetchVerify();
+      this.data({ verify });
+      // Only clear the badge if no receipt arrived while this fetch was in
+      // flight: its answer describes bytes from before that receipt.
+      if (seq === this.receiptSeq) this.set({ verifyStale: false });
     } catch {
-      /* unconfigured or down */
+      /* unconfigured or down: the badge keeps saying the chain is stale */
     }
+  }
+
+  /**
+   * Re-verify soon after a receipt, but no more than once per
+   * ``VERIFY_REFRESH_MS``. A stream of appended receipts must not turn into a
+   * stream of full-chain verifies; a receipt arriving inside the window
+   * schedules one trailing fetch at the end of it instead of being dropped.
+   */
+  private refreshVerifySoon() {
+    if (!this.D.session?.receipts_path) return;
+    const wait = Math.max(0, VERIFY_REFRESH_MS - (Date.now() - this.lastVerifyAt));
+    if (this.verifyTimer) clearTimeout(this.verifyTimer);
+    if (wait === 0) {
+      this.verifyTimer = undefined;
+      void this.loadVerify();
+      return;
+    }
+    this.verifyTimer = setTimeout(() => {
+      this.verifyTimer = undefined;
+      void this.loadVerify();
+    }, wait);
   }
 
   private async loadActivity() {
@@ -241,6 +277,7 @@ export class ConsoleStore {
   private refreshAfterReceipt = debounce(() => {
     if (this.S.route.path === "activity") void this.loadActivity();
     if (this.S.route.path === "audit" && this.S.live) void this.loadReceipts(false);
+    this.refreshVerifySoon();
   }, 700);
 
   private async loadSelected(index: number) {
@@ -419,16 +456,24 @@ export class ConsoleStore {
     this.set({ tail: "connecting" });
     source.addEventListener("hello", () => this.set({ tail: "live" }));
     source.addEventListener("receipt", () => {
+      // The badge describes the bytes the last verify saw; a new line means
+      // that answer is stale from this instant, whichever route is open.
+      this.receiptSeq++;
+      this.set({ verifyStale: true });
       if (this.S.tail !== "reset") this.set({ tail: "live" });
       if (!this.S.live) {
         this.set({ pausedNew: this.S.pausedNew + 1 });
         if (this.S.route.path === "activity") this.refreshAfterReceipt();
-        return;
+      } else {
+        this.refreshAfterReceipt();
       }
-      this.refreshAfterReceipt();
+      this.refreshVerifySoon();
     });
     source.addEventListener("reset", () => {
-      this.set({ tail: "reset" });
+      // The log was replaced wholesale: the old verdict is not stale, it is
+      // void. Verify immediately with no throttle.
+      this.set({ tail: "reset", verifyStale: false });
+      this.lastVerifyAt = 0;
       void this.loadReceipts(false);
       void this.loadVerify();
       void this.loadActivity();

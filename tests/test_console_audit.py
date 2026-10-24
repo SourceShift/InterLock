@@ -29,6 +29,17 @@ Each test is named for the claim it proves:
 - a ninth concurrent stream is refused 503 ``too_many_streams`` (AC12), and
   once 8 streams' clients go away their slots are free again well inside the
   2-second bound, with the cap still enforced against a new ninth (AC13).
+- a log rolled back to an earlier prefix after a cached intact verify is read
+  again on the next request: the list and verify follow the shorter file, and
+  the head reported is the last remaining receipt's (A18).
+- an anchored verify (``--receipts-head``) reports a rolled-back log ``broken``,
+  naming the expected head, while the same log without an anchor is intact -
+  a prefix of a valid chain is still a valid chain (A18).
+- a wrong-typed field (``policy_id`` list, ``ts`` string, ``observed`` string,
+  ``masked`` non-int value) renders as one ``unreadable`` line rather than
+  answering 500, and a policy filter excludes it (A18).
+- ``--receipts-head`` accepts 64 hex characters (case-folded) and refuses a
+  short or non-hex value with a usage error before a port is bound (A18).
 
 The server is hosted in-process, in a daemon thread, the same way
 :mod:`tests.test_console_server` hosts it for the health-endpoint tests.
@@ -44,6 +55,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Iterator, Optional
+
+import pytest
 
 from interlock.console import __main__ as console_main
 from interlock.console.__main__ import main
@@ -61,12 +74,14 @@ def _serve(
     *,
     receipts_path: Optional[str] = None,
     receipts_key: Optional[bytes] = None,
+    receipts_head: Optional[str] = None,
 ) -> Iterator[ConsoleServer]:
     server = ConsoleServer(
         ("127.0.0.1", 0),
         static_root,
         receipts_path=receipts_path,
         receipts_key=receipts_key,
+        receipts_head=receipts_head,
     )
     thread = threading.Thread(
         target=server.serve_forever, daemon=True, name="interlock-console-audit-test"
@@ -571,7 +586,7 @@ def test_verify_is_reused_only_while_the_bytes_are_unchanged(tmp_path, monkeypat
     calls = []
     original = audit._verify_without_partial_tail
     monkeypatch.setattr(audit, "_verify_without_partial_tail",
-                        lambda p, k: calls.append(1) or original(p, k))
+                        lambda p, k, head=None: calls.append(1) or original(p, k, head))
 
     def verify():
         handler = type("H", (), {"path": "/api/receipts/verify", "server": type(
@@ -592,3 +607,159 @@ def test_receipt_fields_match_asdict_without_the_deep_copy():
     r = Receipt(ts=1.0, action="x", verdict="MODIFY", masked={"EMAIL": 1}, tokens=3)
     assert audit._receipt_fields(r) == _dc.asdict(r)
     assert audit._receipt_fields(r)["masked"] is not r.masked
+
+
+# --- rollback, anchoring and wrong-typed fields (A18) ---------------------------
+
+def test_a_rolled_back_log_is_reread_after_a_cached_verify(tmp_path):
+    key = bytes.fromhex(KEYHEX)
+    receipts_path = tmp_path / "receipts.jsonl"
+    _write_fixture(receipts_path, key)
+    lines = receipts_path.read_bytes().splitlines(keepends=True)
+    first_two = b"".join(lines[:2])
+    remaining_head = json.loads(lines[1])["mac"]
+
+    with _serve(tmp_path, receipts_path=str(receipts_path), receipts_key=key) as server:
+        _, body = _request(server, "/api/receipts/verify")
+        assert json.loads(body)["status"] == "intact"
+        _, body = _request(server, "/api/receipts")
+        assert json.loads(body)["count_all"] == 3
+
+        # Restore an earlier prefix of the same log: a fingerprint match
+        # alone would call this an append and keep serving the cached view.
+        receipts_path.write_bytes(first_two)
+
+        _, body = _request(server, "/api/receipts")
+        listed = json.loads(body)
+        _, body = _request(server, "/api/receipts/verify")
+        verified = json.loads(body)
+
+    assert listed["count_all"] == 2
+    assert [r["index"] for r in listed["receipts"]] == [1, 0]
+    assert listed["receipts"][0]["mac"] == remaining_head
+    assert verified["status"] == "intact"
+    assert verified["count"] == 2
+    assert verified["head"] == remaining_head
+
+
+def test_an_anchored_verify_reports_a_rolled_back_log_broken(tmp_path):
+    key = bytes.fromhex(KEYHEX)
+    receipts_path = tmp_path / "receipts.jsonl"
+    _write_fixture(receipts_path, key)
+    lines = receipts_path.read_bytes().splitlines(keepends=True)
+    original_head = json.loads(lines[-1])["mac"]
+
+    with _serve(tmp_path, receipts_path=str(receipts_path), receipts_key=key,
+                receipts_head=original_head) as server:
+        _, body = _request(server, "/api/receipts/verify")
+        intact = json.loads(body)
+        assert intact["status"] == "intact"
+        assert intact["expected_head"] == original_head
+
+        receipts_path.write_bytes(b"".join(lines[:2]))
+
+        _, body = _request(server, "/api/receipts/verify")
+        verified = json.loads(body)
+
+    assert verified["status"] == "broken"
+    assert verified["count"] == 2
+    assert verified["expected_head"] == original_head
+    assert "head" in verified["problem"] or "cut from the end" in verified["problem"]
+    # verify_chain's head message does not match ^receipt (\d+): there is no
+    # row to jump to for a rollback, only the anchor mismatch to report.
+    assert verified["broken_index"] is None
+
+
+def test_a_same_length_edit_is_still_caught_after_a_cached_verify(tmp_path):
+    from interlock.console import audit
+    path = tmp_path / "receipts.jsonl"
+    key = bytes.fromhex(KEYHEX)
+    _write(path, ["a", "b"], key)
+
+    def verify():
+        handler = type("H", (), {"path": "/api/receipts/verify", "server": type(
+            "S", (), {"receipts_path": str(path), "receipts_key": key})()})()
+        return audit._handle_verify(handler)[1]
+
+    assert verify()["status"] == "intact"
+    raw = path.read_bytes()
+    edited = raw.replace(b'"r a"', b'"r z"')
+    assert len(edited) == len(raw)
+    path.write_bytes(edited)
+    assert verify()["status"] == "broken"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("policy_id", ["x"]),
+    ("ts", "abc"),
+    ("observed", "yes"),
+    ("masked", {"a": "b"}),
+])
+def test_a_wrong_typed_field_is_unreadable_instead_of_a_500(tmp_path, field, value):
+    key = bytes.fromhex(KEYHEX)
+    receipts_path = tmp_path / "receipts.jsonl"
+    _write_fixture(receipts_path, key)
+    bad = {
+        "ts": 1.0, "action": "bad_shape", "verdict": "ALLOW",
+        "prev": "0" * 64, "mac": "0" * 64,
+    }
+    bad[field] = value
+    with receipts_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(bad) + "\n")
+
+    with _serve(tmp_path, receipts_path=str(receipts_path), receipts_key=key) as server:
+        response, body = _request(server, "/api/receipts")
+        filtered_response, filtered_body = _request(
+            server, "/api/receipts?policy=no-such-policy")
+        verify_response, verify_body = _request(server, "/api/receipts/verify")
+
+    assert response.status == 200
+    payload = json.loads(body)
+    assert payload["count_all"] == 4
+    unreadable = [r for r in payload["receipts"] if r.get("unreadable")]
+    assert len(unreadable) == 1
+    assert unreadable[0]["index"] == 3
+    assert filtered_response.status == 200
+    assert json.loads(filtered_body)["receipts"] == []
+    # The shape check is viewer-only: verify_file still sees the line, so the
+    # chain stays broken rather than the log shrinking.
+    assert verify_response.status == 200
+    assert json.loads(verify_body)["status"] == "broken"
+
+
+def test_receipts_head_flag_accepts_64_hex_and_folds_case(tmp_path, monkeypatch, capsys):
+    seen = {}
+
+    class _FakeServer:
+        server_port = 0
+
+        def __init__(self, address, static_root, **kwargs):
+            seen.update(kwargs)
+
+        def serve_forever(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    monkeypatch.setattr(console_main, "ConsoleServer", _FakeServer)
+    monkeypatch.setattr(console_main, "configure",
+                        lambda *a, **k: type("G", (), {"code": "code"})())
+    monkeypatch.setattr(console_main, "_install_signal_handlers", lambda: None)
+
+    rc = main(["--port", "0", "--receipts-head", KEYHEX.upper()])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert seen["receipts_head"] == KEYHEX
+    assert "listening" in captured.out
+
+
+@pytest.mark.parametrize("bad", ["abc", "g" * 64, KEYHEX[:-1], KEYHEX + "0"])
+def test_receipts_head_flag_refuses_bad_values_before_binding(bad, capsys):
+    rc = main(["--port", "0", "--receipts-head", bad])
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert "receipts-head" in captured.err
+    assert "listening" not in captured.out

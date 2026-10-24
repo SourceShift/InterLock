@@ -94,6 +94,8 @@ export interface State {
   rf: string;
   q: string;
   shown: number;
+  /** True once a receipt has arrived since the last successful verify. */
+  verifyStale: boolean;
   // reviews
   revTab: "pending" | "approved" | "history";
   rejectReason: string;
@@ -205,6 +207,7 @@ export const initialState = (): State => ({
   rf: "all",
   q: "",
   shown: 200,
+  verifyStale: false,
   revTab: "pending",
   rejectReason: "",
   busy: null,

@@ -5,7 +5,7 @@
  * generated markup in `design/` reads nothing else, so TypeScript checks every
  * binding in it against what this returns.
  */
-import type { PolicyRule, ReadableReceipt, Review } from "./api";
+import type { PolicyRule, ReadableReceipt, Review, VerifyResponse } from "./api";
 import {
   V,
   ago,
@@ -119,6 +119,62 @@ const TOKEN_MEANING: Record<string, string> = {
 const ms = (seconds: number | null | undefined) => (seconds ? seconds * 1000 : 0);
 const readable = (r: { unreadable?: boolean }): r is ReadableReceipt => !r.unreadable;
 
+export interface ChainVals {
+  c: string;
+  bg: string;
+  bc: string;
+  bs: string;
+  mark: string;
+  word: string;
+  line: string;
+  broken: boolean;
+  notBroken: boolean;
+  brokenAt: string;
+  problem: string;
+}
+
+/**
+ * The chain badge, plus the underlying server status (`ck`).
+ *
+ * `verifyStale` means a receipt has arrived since the last successful verify,
+ * so an `intact` answer no longer describes the bytes on disk. It must never
+ * read "verified" then: the stale variant says the log changed since the last
+ * check. A broken chain still wins, and no answer at all keeps checking.
+ */
+export function chainVals(
+  verify: VerifyResponse | null,
+  verifyStale: boolean,
+  receiptsMissing: boolean,
+): { ck: string; chain: ChainVals } {
+  const problemText = verify?.problem ? verify.problem.replace(/^receipt \d+:\s*/, "") : "";
+  const brokenAt = verify?.broken_index != null
+    ? num(verify.broken_index)
+    : verify?.problem ? (/^receipt (\d+)/.exec(verify.problem)?.[1] ?? "?") : "?";
+  const ck = receiptsMissing ? "unverified" : !verify ? "checking" : verify.status === "intact" ? "verified" : verify.status;
+  const shown = ck === "verified" && verifyStale ? "stale" : ck;
+  const base: Record<string, Omit<ChainVals, "broken" | "notBroken" | "brokenAt" | "problem">> = {
+    verified: { ...tone("var(--il-allow)"), mark: "✓", word: "verified", bs: "solid", line: "Every receipt is signed and linked. Nothing was edited, deleted or reordered." },
+    stale: {
+      ...tone("var(--il-rewrite)"), mark: "!", word: "changed since last check", bs: "solid",
+      line: "A receipt arrived after the last verification. Re-checking the chain now; until it finishes, the badge describes the log as it was.",
+    },
+    unverified: {
+      c: "var(--il-fg2)", bg: "transparent", bc: "var(--il-rule2)", bs: "dashed", mark: "?", word: "unverified",
+      line: receiptsMissing ? "No receipt log: the console was started without --receipts." : "Can't tell: the console was started without --key-file.",
+    },
+    broken: { ...tone("var(--il-block)"), mark: "✗", word: "broken", bs: "solid", line: "Broken at receipt #" + brokenAt + ": " + problemText + "." },
+    checking: { c: "var(--il-fg2)", bg: "transparent", bc: "var(--il-rule2)", bs: "dashed", mark: "…", word: "checking", line: "Verifying the receipt chain…" },
+  };
+  const chain: ChainVals = {
+    ...base[shown],
+    broken: ck === "broken",
+    notBroken: ck !== "broken",
+    brokenAt,
+    problem: problemText ? problemText.charAt(0).toUpperCase() + problemText.slice(1) + "." : "",
+  };
+  return { ck, chain };
+}
+
 export function computeVals(S: State, D: Data, A: Actions) {
   const route = S.route;
   const path = route.path;
@@ -172,26 +228,7 @@ export function computeVals(S: State, D: Data, A: Actions) {
           line: failN + (failN === 1 ? " check" : " checks") + " failed: calls may not be guarded.",
         },
       }[doc.level];
-  const ver = D.verify;
-  const problemText = ver?.problem ? ver.problem.replace(/^receipt \d+:\s*/, "") : "";
-  const brokenAt = ver?.broken_index != null ? num(ver.broken_index) : ver?.problem ? (/^receipt (\d+)/.exec(ver.problem)?.[1] ?? "?") : "?";
-  const ck = receiptsMissing ? "unverified" : !ver ? "checking" : ver.status === "intact" ? "verified" : ver.status;
-  const chainBase = {
-    verified: { ...tone("var(--il-allow)"), mark: "✓", word: "verified", bs: "solid", line: "Every receipt is signed and linked. Nothing was edited, deleted or reordered." },
-    unverified: {
-      c: "var(--il-fg2)", bg: "transparent", bc: "var(--il-rule2)", bs: "dashed", mark: "?", word: "unverified",
-      line: receiptsMissing ? "No receipt log: the console was started without --receipts." : "Can't tell: the console was started without --key-file.",
-    },
-    broken: { ...tone("var(--il-block)"), mark: "✗", word: "broken", bs: "solid", line: "Broken at receipt #" + brokenAt + ": " + problemText + "." },
-    checking: { c: "var(--il-fg2)", bg: "transparent", bc: "var(--il-rule2)", bs: "dashed", mark: "…", word: "checking", line: "Verifying the receipt chain…" },
-  }[ck];
-  const chain = {
-    ...chainBase,
-    broken: ck === "broken",
-    notBroken: ck !== "broken",
-    brokenAt,
-    problem: problemText ? problemText.charAt(0).toUpperCase() + problemText.slice(1) + "." : "",
-  };
+  const { ck, chain } = chainVals(D.verify, S.verifyStale, receiptsMissing);
 
   const pendPill = pendingCount
     ? { ...tone("var(--il-escalate)"), label: pendingCount + " waiting" }

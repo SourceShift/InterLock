@@ -438,6 +438,7 @@ class ConsoleServer(ThreadingHTTPServer):
         *,
         receipts_path: Optional[str] = None,
         receipts_key: Optional[bytes] = None,
+        receipts_head: Optional[str] = None,
     ) -> None:
         host = address[0]
         if host not in LOOPBACK_HOSTS:
@@ -451,6 +452,10 @@ class ConsoleServer(ThreadingHTTPServer):
         #: ``--receipts``/``--key-file``. Read by ``interlock.console.audit``.
         self.receipts_path = receipts_path
         self.receipts_key = receipts_key
+        #: The mac the receipt log is expected to end at (``--receipts-head``),
+        #: or None. ``audit._handle_verify`` passes it to ``verify_file`` so a
+        #: rollback to a shorter, otherwise valid log is reported broken.
+        self.receipts_head = receipts_head
         #: Guards ``_open_streams`` (F16): the receipt streams this server
         #: is currently answering, so the cap is per server instance rather
         #: than process-wide - two ``ConsoleServer``s in one process (as in

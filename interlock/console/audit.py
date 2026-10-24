@@ -94,11 +94,81 @@ def _parse_receipt_line(raw_line: bytes, index: int) -> Dict[str, Any]:
     except UnicodeDecodeError:
         return {"index": index, "unreadable": True}
     try:
-        fields = _receipt_fields(Receipt.from_json(text.strip()))
+        receipt = Receipt.from_json(text.strip())
     except Exception:
         return {"index": index, "unreadable": True}
+    if _receipt_shape_error(receipt) is not None:
+        return {"index": index, "unreadable": True}
+    fields = _receipt_fields(receipt)
     fields["index"] = index
     return fields
+
+
+#: String fields every receipt carries. A missing one is already a parse
+#: error; these are the fields whose *type* the viewer relies on.
+_REQUIRED_STRING_FIELDS = (
+    "action",
+    "verdict",
+    "reason",
+    "phase",
+    "args_digest",
+    "prev",
+    "mac",
+)
+
+#: Optional string fields: absent (``None``) or a string, never another type.
+_OPTIONAL_STRING_FIELDS = (
+    "policy_id",
+    "attributed_to",
+    "principal",
+    "span_id",
+    "call_id",
+    "policy_epoch",
+    "policy_verdict",
+    "approval",
+    "outcome",
+    "enforcer",
+    "scope_document",
+)
+
+
+def _receipt_shape_error(receipt: Receipt) -> Optional[str]:
+    """Why ``receipt`` cannot be shown as a row, or ``None`` when it can.
+
+    ``Receipt.from_json`` does no type checking (it is shared with the writer
+    path and must stay that way), so a line carrying, say, a list for
+    ``policy_id`` parses fine and then makes the page's set of policy ids
+    unhashable. Checking shape here, at the viewer's parse boundary, turns
+    that line into the same ``unreadable`` placeholder a non-JSON line gets.
+
+    This deliberately does not run before :func:`interlock.sink.verify_file`:
+    a wrong-typed receipt is still verified (and so still reports the chain
+    broken); the check only decides what the viewer renders.
+    """
+    ts = receipt.ts
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+        return "ts is not a number"
+    for name in _REQUIRED_STRING_FIELDS:
+        if not isinstance(getattr(receipt, name), str):
+            return "{} is not a string".format(name)
+    if not isinstance(receipt.observed, bool):
+        return "observed is not a boolean"
+    for name in _OPTIONAL_STRING_FIELDS:
+        value = getattr(receipt, name)
+        if value is not None and not isinstance(value, str):
+            return "{} is not a string or null".format(name)
+    for name in ("elapsed_us", "tokens"):
+        value = getattr(receipt, name)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            return "{} is not an integer or null".format(name)
+    masked = receipt.masked
+    if masked is not None:
+        if not isinstance(masked, dict):
+            return "masked is not an object"
+        for key, value in masked.items():
+            if not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, int):
+                return "masked is not a map of counts"
+    return None
 
 
 def _receipt_fields(receipt: Receipt) -> Dict[str, Any]:
@@ -176,7 +246,12 @@ def _log_snapshot(path: str) -> "tuple[List[Dict[str, Any]], int, int, int]":
     except FileNotFoundError:
         raw = b""
     with log.lock:
-        if not raw.startswith(log.prefix):
+        # A prefix match alone cannot tell an append from a rollback to an
+        # earlier prefix: restoring an old copy can leave the new bytes a
+        # strict prefix of the parsed ones. The byte length is what
+        # distinguishes them, so a shorter file starts over and its cached
+        # verify is invalidated with it.
+        if len(raw) < len(log.prefix) or not raw.startswith(log.prefix):
             log.prefix, log.receipts, log.next_index = b"", [], 0
             log.generation += 1
         end = raw.rfind(b"\n") + 1
@@ -265,6 +340,9 @@ def _handle_verify(handler: Any) -> Any:
     receipts, end, _lines, generation = _log_snapshot(path)
     count = len(receipts)
     head = receipts[-1].get("mac", GENESIS) if receipts else GENESIS
+    # The anchor is the mac the operator recorded elsewhere; it is not the
+    # response's ``head``, which stays the last receipt actually on disk.
+    anchor = getattr(handler.server, "receipts_head", None)
 
     key = handler.server.receipts_key
     if key is None:
@@ -273,9 +351,10 @@ def _handle_verify(handler: Any) -> Any:
             "problem": "no key was configured to verify this log",
             "count": count,
             "head": head,
+            "expected_head": anchor,
         }
 
-    problem = _verify_cached(path, key, generation, end)
+    problem = _verify_cached(path, key, generation, end, anchor)
     status = "intact" if problem is None else "broken"
     broken_index = None
     if problem:
@@ -287,28 +366,31 @@ def _handle_verify(handler: Any) -> Any:
             ordered = readable if position < len(readable) else receipts
             broken_index = ordered[min(position, len(ordered) - 1)].get("index")
     return 200, {"status": status, "problem": problem, "count": count, "head": head,
-                 "broken_index": broken_index}
+                 "broken_index": broken_index, "expected_head": anchor}
 
 
-def _verify_cached(path: str, key: bytes, generation: int, end: int) -> Optional[str]:
+def _verify_cached(path: str, key: bytes, generation: int, end: int,
+                   head: Optional[str] = None) -> Optional[str]:
     """Verify the chain, or reuse the answer for bytes already verified.
 
     A verification reads and MACs every receipt; the result can only change
     when the log's bytes do, which a new generation (rewrite) or a new end
-    offset (append) both signal.
+    offset (append) both signal. The anchor is part of the key too: an
+    anchored and an unanchored answer must never share a slot.
     """
     log = _parsed_log(path)
     with log.lock:
         cached = log.verified
-    if cached is not None and cached[:3] == (generation, end, key):
-        return cached[3]
-    problem = _verify_without_partial_tail(path, key)
+    if cached is not None and cached[:4] == (generation, end, key, head):
+        return cached[4]
+    problem = _verify_without_partial_tail(path, key, head)
     with log.lock:
-        log.verified = (generation, end, key, problem)
+        log.verified = (generation, end, key, head, problem)
     return problem
 
 
-def _verify_without_partial_tail(path: str, key: bytes) -> Optional[str]:
+def _verify_without_partial_tail(path: str, key: bytes,
+                                 head: Optional[str] = None) -> Optional[str]:
     """``verify_file``, but never fed a trailing line with no newline yet.
 
     ``verify_file`` lives in ``interlock/sink.py``, which this deliverable
@@ -333,7 +415,7 @@ def _verify_without_partial_tail(path: str, key: bytes) -> Optional[str]:
         target, cleanup = tmp.name, tmp.name
     try:
         try:
-            return verify_file(target, key=key)
+            return verify_file(target, key=key, head=head)
         except UnicodeDecodeError:
             return "a receipt line is not valid UTF-8"
     finally:

@@ -82,6 +82,7 @@ agent's `curl` to them is blocked before it runs.
 | `--static` | `web/dist` next to the installed package | Where the built web app lives. A missing directory still serves the API, and the page names the build command. |
 | `--receipts` | none | The receipt log to read. Without it, Activity and the audit log explain how to point the console at one. |
 | `--key-file` | none | The receipt log's MAC key (64 hex characters, or raw bytes), to verify the chain. Without it the chain reads "unverified". The key never leaves the console process. |
+| `--receipts-head` | none | The mac the receipt log must end at (64 hex characters). With it, a rolled-back or truncated log verifies "broken" instead of "intact". |
 | `--policy` | `~/.interlock/policy.json` | The declarative policy the Policy screen reads and saves. |
 | `--reviews-db` | `~/.interlock/reviews.db` | The review queue. The console never creates it just by looking. |
 | `--four-eyes` | off | Refuse an approval by the account that filed the review. |
@@ -131,6 +132,25 @@ python3 -m interlock.console --receipts /tmp/il-demo/receipts.jsonl \
   --key-file /tmp/il-demo/receipts.key --policy /tmp/il-demo/policy.json \
   --reviews-db /tmp/il-demo/reviews.db
 ```
+
+## Verifying the receipt chain
+
+With `--key-file`, the Audit log and Activity screens report whether every
+receipt is signed and linked. Without an anchor, a shorter but otherwise valid
+log still verifies intact: a prefix of a valid chain is itself a valid chain,
+so truncation or a swap to an older signed copy is invisible to the chain
+alone. `--receipts-head` is what catches it — pass the mac of the last receipt
+you saw, and a log that no longer ends there reports "broken":
+
+```bash
+python -m interlock.console --receipts audit.jsonl --key-file receipt.key \
+  --receipts-head 6f1c…(64 hex)
+```
+
+The badge goes "changed since last check" as soon as a new receipt arrives,
+then re-verifies within a couple of seconds; it never keeps claiming "verified"
+for a log that changed after the last check. See also
+[a cut tail needs a recorded head](audit-log.md#limits).
 
 ## Watching a sidecar's receipt log
 
