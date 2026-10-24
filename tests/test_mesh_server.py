@@ -81,6 +81,31 @@ def test_end_to_end_reports_and_shares(servers):
     restored.server_close()
 
 
+def test_cli_report_build_and_submit_round_trip(servers, tmp_path, monkeypatch):
+    """The command line path: `report init`, `build`, `submit` against live collectors."""
+    from interlock.cli import main
+    from interlock.mesh.catalog import catalog_id
+    from interlock.sink import FileSink
+
+    mesh_dir = tmp_path / "mesh"
+    monkeypatch.setenv("INTERLOCK_MESH_DIR", str(mesh_dir))
+    consensus = servers("consensus", known_catalogs=(catalog_id(),), config={"min_orgs": 1, "min_trust": 0.1})
+    agg_a, agg_b = servers("aggregator"), servers("aggregator")
+    log = tmp_path / "receipts.jsonl"
+    sink = FileSink(str(log), key=b"k" * 32)
+    import time as _time
+    sink.write(Receipt(ts=_time.time() - 10, action="Bash", verdict="BLOCK", policy_id="destructive_command",
+                       reason="r", args_digest=digest_args({"command": "rm -rf /"})))
+    assert main(["mesh", "report", "init"]) == 0
+    out = tmp_path / "report.json"
+    assert main(["mesh", "report", "build", "--receipts", str(log), "--since", "24h", "--out", str(out)]) == 0
+    assert main(["mesh", "report", "submit", str(out), "--consensus", consensus.url,
+                 "--aggregator", agg_a.url, "--aggregator", agg_b.url]) == 0
+    stats = get(consensus.url + "/v1/stats")
+    assert stats["reporters"] == 1 and stats["indicators"] == {"active": 1}
+    assert len(get(agg_a.url + "/v1/manifest")["ids"]) == 1
+
+
 def test_rejections(servers):
     consensus = servers("consensus", known_catalogs=("cat1",), token="s3cret")
     key = ReporterKey(ed25519.generate_seed())

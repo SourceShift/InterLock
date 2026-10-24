@@ -376,7 +376,7 @@ def _report(args) -> int:
     from ..mesh.report import ReportError, ReporterKey
 
     import os
-    mesh_dir = args.dir or default_mesh_dir()
+    mesh_dir = getattr(args, "dir", None) or default_mesh_dir()  # `submit` has no --dir
     key_path = os.path.join(mesh_dir, "reporter.key")
     if args.report_command == "init":
         os.makedirs(mesh_dir, exist_ok=True)
@@ -540,13 +540,16 @@ def _serve(args) -> int:
     except (OSError, ValueError) as exc:
         sys.stderr.write("interlock mesh serve: {}\n".format(exc))
         return 2
+    # flush=True: a supervisor or script reading this line through a pipe must
+    # see the bound address before the server blocks in serve_forever.
     print("interlock mesh {} listening on {}{}".format(args.role, server.url,
                                                         " (state: {})".format(args.state) if args.state else
-                                                        " (serving {})".format(directory) if args.role == "mirror" else ""))
+                                                        " (serving {})".format(directory) if args.role == "mirror" else ""),
+          flush=True)
     if args.role == "consensus" and not args.known_catalog:
-        print("warning: no --known-catalog given; every report will be refused (unknown catalog)")
+        print("warning: no --known-catalog given; every report will be refused (unknown catalog)", flush=True)
     if args.role == "mirror":
-        print("peers add this URL as a mirror; they verify everything from their own pinned root")
+        print("peers add this URL as a mirror; they verify everything from their own pinned root", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

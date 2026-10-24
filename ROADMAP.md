@@ -1420,3 +1420,23 @@ Shipped in the `mo/roadmap-partials` campaign — all on `main` as of merge comm
   `Decision.modified_result`, `enforce_tool_result` (`9bb51b6`).
 - **R8** BRACE escape-resistance suite — the tested token matrix, and the
   unprivileged-egress rung recorded as a measured absence (`de1f971`).
+
+## M0–M3 · The mesh: a shared, open policy network
+
+From [`research/mesh-shared-policy-network.md`](research/mesh-shared-policy-network.md).
+Each phase shipped on its own and is usable without the next; usage is in
+[`docs/guides/mesh.md`](docs/guides/mesh.md).
+
+| # | Phase | Status | What shipped | Evidence |
+|---|---|---|---|---|
+| M0 | The commons, no telemetry | `shipped` | `"extends": "mesh:<pack>@<ring>"`; TUF-shaped root/targets/snapshot/timestamp with thresholds, expiry and rollback checks over any mirror; pure-Python Ed25519; rule `status`, ring ceilings, shadow-mode monitor window with timed reload; `interlock mesh keys\|publish\|verify`; `doctor` reports a stale subscription | `tests/test_mesh_ed25519.py`, `tests/test_mesh_metadata.py`, `tests/test_mesh_commons.py` |
+| M1 | Counting | `shipped` | `interlock mesh report init\|build\|submit`: rule counts, argument digests (never from redacting rules), false-positive sightings; additive secret shares to two aggregators; consensus with known-catalog check, reporter trust, distinct-org thresholds, demotion, expiry; `mesh_indicator_guard`; `interlock mesh serve` | `tests/test_mesh_report.py`, `tests/test_mesh_aggregate.py`, `tests/test_mesh_consensus.py`, `tests/test_mesh_server.py` |
+| M2 | Similarity and the forge | `shipped` | decision observers; LDP fingerprints (redact, dense SimHash, randomised response); campaigns and `mesh_similarity_guard`; `interlock mesh harness` (the R5 false-positive gate); `interlock mesh forge` writing gated proposals | `tests/test_mesh_fingerprint.py`, `tests/test_mesh_harness.py`, `tests/test_mesh_forge.py` |
+| M3 | Decentralise | `shipped` | RFC 6962/9162 transparency log with signed checkpoints, inclusion and consistency proofs; subscribers refuse unlogged or rewritten history; `interlock mesh log\|gossip`; `serve --role mirror` peer seeding; per-epoch membership credentials with revocation; `doctor` fails on a split view | `tests/test_mesh_log.py`, `tests/test_mesh_credential.py`, `tests/test_mesh_decentral.py` |
+
+Still open, and not code: who holds the root keys, who runs the two aggregators,
+the default reporting posture, the data licence for samples, and whether `block`
+ever ships through the mesh by default (research doc §11). Known upgrades the
+modules leave room for: range proofs on secret-shared counts (Prio3 / DAP), a
+semantic embedder behind the fingerprint API, and zero-knowledge membership in
+place of issuer-linkable certificates.

@@ -17,6 +17,18 @@ plus the primary documentation of twelve production systems that already
 crowdsource and distribute security decisions. Raw search data in
 [`data/mesh-libwit-search.json`](data/mesh-libwit-search.json).
 
+> **Implementation status (2026-10-25).** All four phases of §10 shipped as
+> `interlock.mesh` and `interlock mesh`; see [`docs/guides/mesh.md`](../docs/guides/mesh.md)
+> for usage and `CHANGELOG.md` for the per-phase summary. Where building it
+> changed a detail of this document: the lexical embedding is a *dense* SimHash
+> (a sparse feature hash made unrelated texts look alike, §3.1); the log's
+> origin is the first root ever published, not the current key (§5.2);
+> credentials are issuer-linkable pseudonyms per weekly epoch rather than the
+> zero-knowledge scheme of §6.2, with that scheme as the stated upgrade; and
+> counts are secret-shared without range proofs (§5.4), with the reconciliation
+> step and reporter rate limits as the interim defence. The open decisions in
+> §11 remain open: they are about who runs what, not about code.
+
 ---
 
 ## 1. The idea in one picture
