@@ -15,6 +15,9 @@ interlock itself and stop irreversible host damage:
 - ``self-protect-commands``: no ``interlock trust`` / ``install-hook`` /
   ``uninstall-hook`` from inside the agent, and no shell command, whatever the
   program, that names a path under ``~/.interlock``.
+- ``unreadable-commands``: a shell command the parser could only partly read
+  (an unclosed quote, nesting too deep to follow) is asked about, since it may
+  hide what the other rules exist to stop; an agent that cannot ask refuses it.
 - ``destructive-commands``: recursive delete or re-permission of ``/``, ``~``
   or a system directory, raw disk writes and formats - however spelled.
 
@@ -94,8 +97,13 @@ def coding_agent() -> Dict[str, Any]:
              "reason": "the agent may not change interlock's trust or hooks, or touch its "
                        "signing key, receipt log, review queue or policy",
              "when": {"intent": "interlock.tamper", "arg": "command"}},
+            # Before destructive-commands, which also escalates on a partly
+            # read command: the first ESCALATE names the receipt's rule.
+            {"id": "unreadable-commands", "locked": True, "on": "Bash",
+             "detector": "command_intent_guard",
+             "with": {"escalate": ["partial"], "keys": ["command"]}},
             {"id": "destructive-commands", "locked": True, "on": "Bash",
-             "detector": "destructive_command_guard"},
+             "detector": "destructive_command_guard", "with": {"keys": ["command"]}},
             # --- tunable defaults ---
             {"id": "fetch-and-execute", "verdict": "block", "on": "Bash",
              "reason": "running code fetched from the network (curl | sh) is refused",

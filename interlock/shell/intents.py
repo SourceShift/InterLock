@@ -82,17 +82,71 @@ def analyze(command: Union[str, ParsedCommand], cwd: Optional[str] = None) -> Tu
 
     ``cwd`` is the directory the command runs in (an agent hook's session
     directory); a relative path is resolved against it, or against this
-    process's directory when None.
+    process's directory when None. A literal ``cd`` moves that base for the
+    invocations after it (see :func:`_cd`).
     """
     parsed = parse(command) if isinstance(command, str) else command
+    invocations = parsed.invocations
+    # The base each invocation runs from, walking in order. A cd is classified
+    # against the base before it, so ``cd ~/.interlock`` still names the home.
+    bases: List[Optional[str]] = []
+    base = cwd
+    for inv in invocations:
+        bases.append(base)
+        base = _cd(inv, base)
     found: List[Intent] = []
-    for inv in parsed.invocations:
-        found.extend(_classify(inv, cwd))
-    found.extend(_fetch_exec(parsed.invocations))
+    for i, inv in enumerate(invocations):
+        found.extend(_classify(inv, bases[i]))
+        if "$()" in inv.via:
+            # A substitution is recorded before the commands of its own text,
+            # so before a cd that may run ahead of it: every later base counts.
+            for later in dict.fromkeys(bases[i + 1:] + [base]):
+                if later != bases[i]:
+                    found.extend(_tamper(inv, later))
+    found.extend(_fetch_exec(invocations))
     unique: Dict[Intent, None] = {}
     for intent in found:
         unique.setdefault(intent, None)
     return tuple(unique)
+
+
+def read_command(command: Union[str, ParsedCommand],
+                 cwd: Optional[str] = None) -> Tuple[Tuple[Intent, ...], bool]:
+    """:func:`analyze`'s intents, and whether the command was only partly read.
+
+    One parse serves both. A partly read command (an unclosed quote, nesting
+    deeper than the parser follows) may run more than its intents show: a rule
+    must not treat it as harmless. Input that is not a string is unread.
+    """
+    parsed = command if isinstance(command, ParsedCommand) else parse(command)
+    return analyze(parsed, cwd), parsed.partial
+
+
+def _cd(inv: Invocation, base: Optional[str]) -> Optional[str]:
+    """The directory after ``inv``: ``base`` unless ``inv`` is a readable ``cd``.
+
+    ``cd DIR`` with one operand expands ``~`` and ``$HOME``, joins a relative
+    DIR to ``base`` and resolves ``..``; a bare ``cd`` goes home. ``cd -``, a
+    DIR holding a variable, glob, brace, substitution or backtick, and more
+    than one operand leave ``base`` as it was: the target is not guessed.
+    """
+    if inv.name != "cd":
+        return base
+    operands = _flags(inv.args)[1]
+    if not operands:
+        return os.path.expanduser("~")
+    if len(operands) != 1 or operands[0] in ("", "-"):
+        return base
+    target = os.path.expanduser(_HOME_VAR.sub("~", operands[0]))
+    if len(target) > _PATH_MAX or re.search(r"[$`]", target) or _GLOB.search(target) \
+            or _BRACES.search(target) or target.startswith("~"):
+        return base
+    if not target.startswith("/"):
+        root = base or _getcwd()
+        if not root:
+            return base
+        target = posixpath.join(root, target)
+    return posixpath.normpath(re.sub(r"/+", "/", target))
 
 
 # --- critical paths ----------------------------------------------------------

@@ -16,6 +16,7 @@ from interlock.shell import (
     intents_in,
     is_critical_path,
     parse,
+    read_command,
 )
 
 
@@ -109,6 +110,14 @@ def test_recursion_is_bounded():
 def test_non_string_input():
     assert parse(None).partial  # type: ignore[arg-type]
     assert parse(b"rm -rf /").invocations == ()  # type: ignore[arg-type]
+
+
+def test_read_command_says_whether_the_string_was_partly_read():
+    intents, partial = read_command("rm -rf '/")
+    assert partial and [i.kind for i in intents] == ["fs.delete.recursive"]
+    assert read_command("rm -rf ./build") == (analyze("rm -rf ./build"), False)
+    assert read_command(parse('echo "x'))[1] is True
+    assert read_command(None) == ((), True)  # type: ignore[arg-type]
 
 
 def test_fuzz_never_raises_and_stays_fast():
@@ -230,3 +239,56 @@ def test_selector_matching():
 def test_intents_in_unions_several_strings():
     found = intents_in(["git push -f", "npm publish"])
     assert {i.kind for i in found} >= {"git.push.force", "pkg.publish"}
+
+
+# --- intents: a cd moves the base a relative path resolves against -------------
+
+
+def _home_reads(cmd, cwd="/work"):
+    return [i.targets for i in analyze(cmd, cwd=cwd) if i.kind == "interlock.tamper"]
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd {h} && cat .interlock/k",
+    "cd {h}/sub/../ && cat .interlock/k",
+    "cd ~ && cat .interlock/k",
+    "cd ${{HOME}}; cat .interlock/k",
+    "cd && cat .interlock/k",
+    "cd -L -- {h} && cat .interlock/k",
+    "cd / && cd {rel} && cat .interlock/k",
+    "bash -c 'cd {h}' && cat .interlock/k",  # over-approximated: the nested cd counts
+    "cd {h} | cat .interlock/k",
+    "cd {h} && echo \"$(cat .interlock/k)\"",  # recorded before the cd, run after it
+    "echo \"$(cat .interlock/k && cd /tmp)\" && cd {h}",  # every later base is tried
+])
+def test_a_literal_cd_moves_the_base(monkeypatch, tmp_path, cmd):
+    home = str(tmp_path / "home")
+    monkeypatch.setenv("HOME", home)
+    assert _home_reads(cmd.format(h=home, rel=home.lstrip("/"))), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat .interlock/k && cd {h}",
+    "cd - && cat .interlock/k",
+    "cd $DIR && cat .interlock/k",
+    "cd {h}/$X/.. && cat .interlock/k",
+    "cd $(echo {h}) && cat .interlock/k",
+    "cd `echo {h}` && cat .interlock/k",
+    "cd {h}? && cat .interlock/k",
+    "cd {h}{{,}} && cat .interlock/k",
+    "cd {h} /tmp && cat .interlock/k",
+    "cd '' && cat .interlock/k",
+    "cd ~nobody-by-this-name && cat .interlock/k",
+])
+def test_an_unresolved_cd_leaves_the_base_unchanged(monkeypatch, tmp_path, cmd):
+    home = str(tmp_path / "home")
+    monkeypatch.setenv("HOME", home)
+    assert _home_reads(cmd.format(h=home)) == [], cmd
+    assert _home_reads(cmd.format(h=home), cwd=home), cmd  # the session's cwd still counts
+
+
+def test_the_cd_itself_is_judged_against_the_base_before_it(monkeypatch, tmp_path):
+    home = str(tmp_path / "home")
+    monkeypatch.setenv("HOME", home)
+    assert _home_reads("cd .interlock", cwd=home) == [(".interlock",)]
+    assert _home_reads("cd ~/.interlock") == [("~/.interlock",)]

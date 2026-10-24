@@ -2,9 +2,12 @@
 
 Covers the BLOCK contract (the offending arg is named in the reason), the
 allow path (routine relative-path cleanup gets no opinion), each destructive
-fragment the pattern declares, non-string and non-dict input that must be
-skipped rather than crashed on, and end-to-end verdicts through the engine.
+fragment the pattern declares, a value the parser could only partly read
+(asked about, unless it also blocks), non-string and non-dict input that must
+be skipped rather than crashed on, and end-to-end verdicts through the engine.
 """
+import pytest
+
 from interlock import PolicyEngine, SensorEvent, Verdict
 from interlock.detectors.destructive_command_guard import (
     PATTERN,
@@ -91,6 +94,50 @@ def test_absolute_delete_of_a_named_path_is_not_a_root_wipe():
     assert destructive_command_guard()(_event(cmd="rm -rf /tmp/x")) is None
 
 
+# --- a value the parser could only partly read --------------------------------
+
+
+@pytest.mark.parametrize("payload", ['echo "unterminated', "ls 'src", "make && echo $(date",
+                                     "bash -c 'rm -r -f /"])  # the act the quote hides is asked about
+def test_a_partly_read_value_with_no_critical_intent_escalates(payload):
+    decision = destructive_command_guard()(_event(cmd=payload))
+    assert decision is not None and decision.verdict is Verdict.ESCALATE
+    assert decision.reason == "destructive_command: cmd could not be fully read"
+    assert decision.policy_id == POLICY_ID
+    assert decision.attributed_to == "cmd"
+
+
+@pytest.mark.parametrize("payload", ['rm -fr / && echo "x', "rm -rf ~ 'x", 'rm -rf / && echo "x',
+                                     'sudo rm -r -f ~ && echo "x'])
+def test_a_critical_intent_in_a_partly_read_value_still_blocks(payload):
+    decision = destructive_command_guard()(_event(cmd=payload))
+    assert decision is not None and decision.verdict is Verdict.BLOCK
+    assert decision.reason == "destructive_command: cmd"
+
+
+def test_a_later_value_that_blocks_beats_an_earlier_unreadable_one():
+    decision = destructive_command_guard()(_event(note="it's", cmd="rm -fr /"))
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.reason == "destructive_command: cmd"
+
+
+@pytest.mark.parametrize("payload", ["git commit -m \"it's done\"", "echo 'a' \"b\" $(date)"])
+def test_a_fully_read_value_with_no_match_is_still_no_opinion(payload):
+    assert destructive_command_guard()(_event(cmd=payload)) is None
+
+
+def test_parse_false_keeps_the_raw_check_alone_and_never_escalates():
+    assert destructive_command_guard(parse=False)(_event(cmd='echo "x')) is None
+
+
+def test_keys_scope_the_scan_to_the_named_arguments():
+    guard = destructive_command_guard(keys=["command"])
+    assert guard(_event(command="git status", description="Show the repo's status")) is None
+    assert guard(_event(command="ls", description="rm -rf /")) is None
+    assert guard(_event(command="rm -rf /")).verdict is Verdict.BLOCK
+    assert guard(_event(command='echo "x')).verdict is Verdict.ESCALATE
+
+
 # --- robustness: skip what it cannot handle, never raise --------------------
 
 
@@ -135,3 +182,6 @@ def test_engine_blocks_malicious_and_allows_benign():
 
     benign = SensorEvent(action="run", args={"cmd": "rm -rf ./build"})
     assert engine.evaluate(benign).verdict is Verdict.ALLOW
+
+    unreadable = SensorEvent(action="run", args={"cmd": "rm -rf './build"})
+    assert engine.evaluate(unreadable).verdict is Verdict.ESCALATE

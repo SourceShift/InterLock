@@ -4,10 +4,11 @@ import pytest
 
 from interlock import Blocked, NotApproved, PolicyEngine, SensorEvent, Verdict, install
 from interlock.approval import set_approver
-from interlock.detectors.command_intent_guard import POLICY_ID, command_intent_guard
+from interlock.detectors.command_intent_guard import PARTIAL, POLICY_ID, command_intent_guard
 from interlock.detectors.destructive_command_guard import destructive_command_guard
 from interlock.detectors.git_credential_guard import git_credential_guard
 from interlock.interceptors.mcp import enforce_tool_call
+from interlock.shell import MAX_DEPTH
 
 
 def _event(**args):
@@ -136,3 +137,63 @@ def test_engine_level_block_from_a_parsed_intent():
     assert engine.evaluate(_event(command="rm -fr ~")).verdict is Verdict.BLOCK
     with pytest.raises(Blocked):
         enforce_tool_call("run_shell", {"command": "rm -fr ~"}, engine=engine)
+
+
+# --- a command the parser could only partly read (A03) ---------------------------
+
+
+def _nested(cmd: str, depth: int) -> str:
+    for _ in range(depth):
+        cmd = "bash -c {}".format(repr(cmd))
+    return cmd
+
+
+UNREADABLE = ['echo "unterminated', "ls 'src", "git status && echo $(date",
+              _nested("echo hi", MAX_DEPTH + 2)]
+
+
+@pytest.mark.parametrize("cmd", UNREADABLE)
+def test_a_partly_read_command_with_no_block_match_escalates(cmd):
+    decision = command_intent_guard(block=["pkg.publish"])(_event(command=cmd))
+    assert decision is not None and decision.verdict is Verdict.ESCALATE
+    assert decision.reason == "command_intent: command could not be fully read"
+    assert decision.policy_id == POLICY_ID
+    assert decision.attributed_to == "command"
+
+
+def test_a_block_match_in_a_partly_read_command_still_blocks():
+    decision = command_intent_guard(block=["pkg.publish"])(_event(command='npm publish && echo "x'))
+    assert decision is not None and decision.verdict is Verdict.BLOCK
+    assert decision.reason == "command_intent: pkg.publish:publish in command"
+
+
+def test_a_later_argument_that_blocks_beats_an_earlier_unreadable_one():
+    decision = command_intent_guard(block=["pkg.publish"])(
+        _event(note='echo "x', command="npm publish"))
+    assert decision.verdict is Verdict.BLOCK and decision.attributed_to == "command"
+
+
+def test_an_escalate_match_in_a_partly_read_command_names_the_intent():
+    decision = command_intent_guard(escalate=["pkg.publish"])(_event(command='npm publish; echo "x'))
+    assert decision.verdict is Verdict.ESCALATE
+    assert decision.reason == "command_intent: pkg.publish:publish in command"
+
+
+@pytest.mark.parametrize("cmd", ["git status", "git commit -m \"it's done\"", "echo 'a' \"b\" $(date)"])
+def test_a_fully_read_command_with_no_match_is_still_no_opinion(cmd):
+    assert command_intent_guard(block=["pkg.publish"])(_event(command=cmd)) is None
+
+
+def test_the_reason_for_an_unreadable_command_never_contains_its_text():
+    decision = command_intent_guard(block=["pkg.publish"])(_event(command='echo "s3cr3t-otp'))
+    assert decision is not None and "s3cr3t" not in decision.reason
+
+
+def test_the_partial_selector():
+    asks = command_intent_guard(escalate=[PARTIAL], keys=["command"])
+    assert asks(_event(command='echo "x')).verdict is Verdict.ESCALATE
+    assert asks(_event(command="npm publish")) is None
+    assert asks(_event(command="git status", description="Show the repo's status")) is None
+    decision = command_intent_guard(block=[PARTIAL])(_event(command='echo "x'))
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.reason == "command_intent: command could not be fully read"

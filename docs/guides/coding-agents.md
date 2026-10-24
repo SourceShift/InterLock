@@ -91,6 +91,7 @@ full text):
 |---|---|---|
 | `self-protect-files` | block, **locked** | any read or write under `~/.interlock` (the signing key, receipt log, review queue and policy) by `Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `apply_patch`, or `Grep`/`Glob` pointed there |
 | `self-protect-commands` | block, **locked** | `interlock trust`/`install-hook`/`reviews approve`, the console's write API, and any shell command that names a path under `~/.interlock`. It matches on the target path, not the program: `cat`, a database client, an interpreter one-liner, a redirect, `tee`, `cp` and `install` all count |
+| `unreadable-commands` | ask, **locked** | a shell command the guard could only partly read: an unclosed quote, or nesting deeper than it follows. What it couldn't read may be what the other rules stop, so it is asked about; Codex, which can't ask, refuses it. A partly read command whose readable part is blocked is still blocked |
 | `destructive-commands` | block, **locked** | recursive delete or chmod of `/`, `~` or a system directory, raw disk writes, formats, however they're spelled |
 | `fetch-and-execute` | block | `curl ... \| sh`, `bash -c "$(curl ...)"`, `bash <(curl ...)` |
 | `secret-files` | block | reading or writing `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.netrc`, `~/.npmrc` and similar |
@@ -120,6 +121,13 @@ So `cat ~/.interlock/receipts.key`,
 `sqlite3 :memory: "ATTACH '/Users/me/.interlock/reviews.db' AS r"` and
 `cat ~/.inter*/receipts.key` are refused, while `cat ~/.interlock-notes.md`
 and a project's own `.interlock/policy.json` are not.
+
+A literal `cd` earlier in the same command moves the directory a later
+relative path resolves against: `cd ~ && cat .interlock/receipts.key` is
+refused, `cd /tmp && cat .interlock/receipts.key` is not. A `cd` inside a
+subshell, pipeline or `sh -c` counts for the rest of the command, and a
+`$(...)` is checked against every directory the command later moves to, so
+the guess errs toward refusing.
 
 ## Change the policy
 
@@ -216,13 +224,19 @@ Python it runs still exists (a deleted virtualenv would break every call).
   container) if it must be contained.
 - **Command parsing is best-effort.** Obfuscated commands (`$'\x72\x6d'`,
   base64, a downloaded script) get past it. The locked rules and the sandbox
-  are the backstop, not the parser.
+  are the backstop, not the parser. A command it can only partly read (an
+  unclosed quote, nesting deeper than it follows) is never passed as harmless:
+  it is asked about, and refused where the agent can't ask (Codex).
 - **Self-protection sees the paths a command names, not the ones it builds.**
   It does not catch:
   - a path assembled at run time, such as a shell variable set earlier or
     `Path.home() / ".interlock"`;
   - a file read through an input redirect (`cat < ~/.interlock/receipts.key`);
-  - a relative path after a `cd` in the same command;
+  - a relative path after a `cd` whose target isn't literal. `cd -`, a target
+    holding a variable, glob, brace, `$(...)` or backtick, and a `cd` with more
+    than one operand leave the directory where it was, so
+    `cd "$DIR" && cat .interlock/receipts.key` is judged from the session's
+    working directory. `pushd`, `CDPATH` and `env -C` aren't followed either;
   - a recursive read of a parent directory (`tar czf x.tgz ~`, or `Grep` over
     `~`);
   - a symlink made earlier.

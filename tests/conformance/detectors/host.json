@@ -716,6 +716,26 @@
             "command": "find . -name '*.tmp' -delete"
           }
         }
+      },
+      {
+        "name": "an unclosed quote hiding the delete is asked about, not allowed",
+        "expect": "ESCALATE",
+        "event": {
+          "action": "run_shell",
+          "args": {
+            "command": "bash -c 'rm -r -f /"
+          }
+        }
+      },
+      {
+        "name": "a partly read command whose readable part deletes / still blocks",
+        "expect": "BLOCK",
+        "event": {
+          "action": "run_shell",
+          "args": {
+            "command": "rm -fr / && echo \"x"
+          }
+        }
       }
     ]
   },

@@ -236,6 +236,15 @@ The parsed check only ever **adds** findings to the text pattern. Pass
 `parse=False` to `destructive_command_guard` or `git_credential_guard` to keep the
 text check alone.
 
+A command the parser could only partly read (an unclosed quote, nesting deeper
+than it follows) may run more than it shows, so it is never let through as
+harmless. When nothing it did read blocks, `destructive_command_guard` and
+`command_intent_guard` **ask** about it (ESCALATE), naming the argument; when
+something does, they block as before. A fully read command with no match still
+gets no opinion. Free-text arguments make this noisy: an apostrophe in a
+description is an unclosed quote. Name the arguments that hold commands with
+`keys=["command"]`, which both guards take.
+
 To block (or ask about) any act by name, use `command_intent_guard`:
 
 ```python
@@ -265,6 +274,25 @@ command_intent_guard(
 A selector names a kind or a prefix of one (`"git"` covers all `git.*`), and
 `:detail` or `:critical` narrows it. The same selectors work in
 [declarative policies](policies.md) as `{"intent": ...}`.
+
+`"partial"` is a selector of its own: `block=["partial"]` refuses a command
+that could only be partly read instead of asking, and `escalate=["partial"]`
+alone builds a rule that only asks about one. The coding-agent pack's locked
+`unreadable-commands` rule is `command_intent_guard(escalate=["partial"],
+keys=["command"])` on `Bash`. A declarative `{"intent": ...}` condition matches
+only what was read; pair it with that rule.
+
+A relative path is resolved against the event's working directory, moved by
+any literal `cd` earlier in the same command (`~` and `$HOME` expanded, `..`
+resolved, a bare `cd` going home). The limits:
+
+- `cd -`, a target holding a variable, glob, brace, `$(...)` or backtick, and a
+  `cd` with more than one operand leave the directory unchanged: the target is
+  not guessed. `pushd`, `CDPATH` and `env -C` aren't followed.
+- A `cd` in a subshell, pipeline or `sh -c` counts for the rest of the string,
+  though the shell would forget it. A `$(...)` is checked against every
+  directory the string later moves to, since the parser reads it before the
+  `cd` that may run ahead of it. Both err toward a match, not a miss.
 
 Parsing is best-effort and **not a boundary**: obfuscated commands
 (`$'\x72\x6d'`, base64, a downloaded script) get past it. Contain untrusted

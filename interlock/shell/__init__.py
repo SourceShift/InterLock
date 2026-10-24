@@ -4,7 +4,8 @@
 pipes, chains, wrappers such as ``sudo``, ``sh -c`` scripts, substitutions and
 inline interpreter code). ``analyze`` names what those invocations do -
 ``fs.delete.recursive``, ``git.push.force``, ``net.fetch_exec`` - so a rule can
-judge the act rather than its spelling. Pure standard library; never raises.
+judge the act rather than its spelling; ``read_command`` also says whether the
+string was only partly read. Pure standard library; never raises.
 """
 from .intents import (
     SYSTEM_DIRS,
@@ -13,12 +14,14 @@ from .intents import (
     first_match,
     intents_in,
     is_critical_path,
+    read_command,
 )
 from .parser import MAX_DEPTH, MAX_INPUT, MAX_INVOCATIONS, Invocation, ParsedCommand, parse
 
 __all__ = [
     "parse",
     "analyze",
+    "read_command",
     "intents_in",
     "first_match",
     "is_critical_path",
