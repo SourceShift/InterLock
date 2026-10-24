@@ -35,6 +35,7 @@ from __future__ import annotations
 import re
 from typing import Dict, Optional
 
+from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -60,6 +61,7 @@ EGRESS_ACTIONS = frozenset({
     "http_post", "http_get", "fetch", "request", "send", "upload",
     "log", "write",
 })
+EGRESS_ACTIONS = canonical_actions(EGRESS_ACTIONS | NODE_EGRESS_ACTIONS)
 
 # Argument keys that may carry outbound content. Destination keys are absent by
 # design; only a str under one of these is scanned.
@@ -80,7 +82,7 @@ def aws_arn_redactor() -> Rule:
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in EGRESS_ACTIONS:
+        if not action_matches(getattr(event, "action", None), EGRESS_ACTIONS):
             return None
 
         args = getattr(event, "args", None)

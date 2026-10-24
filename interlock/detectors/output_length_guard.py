@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -28,9 +29,9 @@ POLICY_ID = "output_length"
 
 # The output action names this guard recognises. Kept to unambiguous response
 # verbs so a same-named in-house tool is not shadowed.
-OUTPUT_ACTIONS = frozenset({
+OUTPUT_ACTIONS = canonical_actions(frozenset({
     "respond", "output", "return", "tool_result",
-})
+}))
 
 # Argument keys that may carry response content. Only the str value under one
 # of these is measured.
@@ -65,7 +66,7 @@ def output_length_guard(max_bytes: int = DEFAULT_MAX_BYTES) -> Rule:
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in OUTPUT_ACTIONS:
+        if not action_matches(getattr(event, "action", None), OUTPUT_ACTIONS):
             return None
 
         total = _output_bytes(getattr(event, "args", None))

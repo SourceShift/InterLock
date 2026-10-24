@@ -11,12 +11,14 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
 
 POLICY_ID = "mcp_elicitation"
 ELICITATION_ACTIONS = frozenset({"mcp.elicitation", "elicitation/create"})
+_elicitation_actions = canonical_actions(ELICITATION_ACTIONS)
 
 
 def mcp_elicitation_guard(allow_servers: Iterable[str] = ()) -> Rule:
@@ -24,7 +26,7 @@ def mcp_elicitation_guard(allow_servers: Iterable[str] = ()) -> Rule:
     allowed = frozenset(allow_servers)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if event.action not in ELICITATION_ACTIONS:
+        if not action_matches(event.action, _elicitation_actions):
             return None
         args = event.args if isinstance(event.args, dict) else {}
         origin = args.get("__origin__")

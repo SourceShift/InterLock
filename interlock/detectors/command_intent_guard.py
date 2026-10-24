@@ -39,6 +39,11 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
+from ..actions import (
+    action_matches,
+    canonical_actions,
+    command_values,
+)
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -80,20 +85,16 @@ def command_intent_guard(
     block_intents = tuple(s for s in block_selectors if s != PARTIAL)
     escalate_intents = tuple(s for s in escalate_selectors if s != PARTIAL)
     key_set = None if keys is None else frozenset(keys)
-    action_set = None if actions is None else frozenset(actions)
+    action_set = None if actions is None else canonical_actions(actions)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if action_set is not None and event.action not in action_set:
+        if action_set is not None and not action_matches(event.action, action_set):
             return None
         args = getattr(event, "args", None)
         if not isinstance(args, dict):
             return None
         unread = None
-        for name, value in args.items():
-            if not isinstance(value, str):
-                continue
-            if key_set is not None and name not in key_set:
-                continue
+        for name, value in command_values(args, key_set):
             try:
                 intents, partial = read_command(value, getattr(event, "cwd", None))
             except Exception:  # the parser never raises; an unread value is partial

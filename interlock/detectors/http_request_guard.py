@@ -38,6 +38,7 @@ import re
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -113,10 +114,10 @@ def http_request_guard(rules: Sequence[Mapping[str, Any]], *,
     compiled = [_HttpRule(r) for r in rules]
     if not compiled:
         raise ValueError("http_request_guard needs at least one rule")
-    action_set = None if actions is None else frozenset(actions)
+    action_set = None if actions is None else canonical_actions(actions)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if action_set is not None and event.action not in action_set:
+        if action_set is not None and not action_matches(event.action, action_set):
             return None
         args = getattr(event, "args", None)
         if not isinstance(args, dict):

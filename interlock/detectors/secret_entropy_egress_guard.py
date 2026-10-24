@@ -31,6 +31,7 @@ import math
 import re
 from typing import Dict, Optional
 
+from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -42,6 +43,7 @@ POLICY_ID = "secret_entropy"
 EGRESS_ACTIONS = frozenset({
     "http_post", "fetch", "request", "send", "upload",
 })
+EGRESS_ACTIONS = canonical_actions(EGRESS_ACTIONS | NODE_EGRESS_ACTIONS)
 
 # Argument keys that may carry outbound content. Only a str value under one of
 # these is tokenised.
@@ -91,7 +93,7 @@ def secret_entropy_egress_guard(
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in EGRESS_ACTIONS:
+        if not action_matches(getattr(event, "action", None), EGRESS_ACTIONS):
             return None
 
         args = getattr(event, "args", None)

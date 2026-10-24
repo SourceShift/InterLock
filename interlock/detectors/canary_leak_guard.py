@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional, Tuple
 
+from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -37,6 +38,7 @@ POLICY_ID = "canary_leak"
 EGRESS_ACTIONS = frozenset({
     "http_post", "fetch", "request", "send", "upload", "log",
 })
+EGRESS_ACTIONS = canonical_actions(EGRESS_ACTIONS | NODE_EGRESS_ACTIONS)
 
 # Argument keys that may carry outbound content. Only a str value under one of
 # these is scanned for a canary.
@@ -63,7 +65,7 @@ def canary_leak_guard(canaries: Iterable[str]) -> Rule:
     def rule(event: SensorEvent) -> Optional[Decision]:
         if not planted:
             return None
-        if getattr(event, "action", None) not in EGRESS_ACTIONS:
+        if not action_matches(getattr(event, "action", None), EGRESS_ACTIONS):
             return None
 
         args = getattr(event, "args", None)

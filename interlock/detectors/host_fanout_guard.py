@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import Optional, Set
 from urllib.parse import urlparse
 
+from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -50,6 +51,7 @@ _URL_KEY = "url"
 EGRESS_ACTIONS = frozenset({
     "http_post", "http_get", "fetch", "request", "send",
 })
+EGRESS_ACTIONS = canonical_actions(EGRESS_ACTIONS | NODE_EGRESS_ACTIONS)
 
 
 def _host_of(args: object) -> Optional[str]:
@@ -85,7 +87,7 @@ def host_fanout_guard(limit: int = DEFAULT_LIMIT) -> Rule:
     seen: Set[str] = set()
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in EGRESS_ACTIONS:
+        if not action_matches(getattr(event, "action", None), EGRESS_ACTIONS):
             return None
 
         host = _host_of(getattr(event, "args", None))

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from typing import Any, FrozenSet, Iterable, Optional
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -40,7 +41,9 @@ POLICY_ID = "pinned_context"
 # Actions that write into agent memory / agent state. Anything else is out of
 # scope, so the guard composes with the tool-level policies instead of
 # shadowing them.
-_MEMORY_ACTIONS = frozenset({"memory_write", "context_set", "set_state"})
+_MEMORY_ACTIONS = canonical_actions(
+    frozenset({"memory_write", "context_set", "set_state"})
+)
 
 # args keys carrying the target of the write, in priority order.
 _KEY_FIELDS = ("key", "name")
@@ -74,7 +77,7 @@ def pinned_context_guard(protected: Iterable[str]) -> Rule:
     pinned = _as_key_frozenset(protected)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in _MEMORY_ACTIONS:
+        if not action_matches(getattr(event, "action", None), _MEMORY_ACTIONS):
             return None
 
         args = getattr(event, "args", None)

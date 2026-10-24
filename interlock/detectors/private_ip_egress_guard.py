@@ -22,6 +22,7 @@ from typing import Any, Optional, Tuple
 
 from .._net import ip_literal
 from .._url import destination_host
+from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -38,6 +39,7 @@ _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 EGRESS_ACTIONS = frozenset({
     "http_post", "http_get", "fetch", "request", "send", "upload",
 })
+EGRESS_ACTIONS = canonical_actions(EGRESS_ACTIONS | NODE_EGRESS_ACTIONS)
 
 # Argument keys that may carry the destination, tried in this order.
 DESTINATION_KEYS = ("url", "endpoint", "uri", "host", "address")
@@ -88,7 +90,7 @@ def private_ip_egress_guard() -> Rule:
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in EGRESS_ACTIONS:
+        if not action_matches(getattr(event, "action", None), EGRESS_ACTIONS):
             return None
 
         dest = _destination(getattr(event, "args", None))

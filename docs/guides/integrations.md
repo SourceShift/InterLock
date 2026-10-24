@@ -205,6 +205,14 @@ process, and the tool map or runner of any model SDK. See
 [js/README.md](https://github.com/SourceShift/InterLock/blob/main/js/README.md) for setup and the
 [sidecar reference](../reference/sidecar.md) for every daemon flag.
 
+The Python policy sees each guarded effect under the Node client's namespaced
+action name - `http.fetch`, `fs.readFile`, `fs.open`, `child_process.exec`,
+`child_process.execFile`. Detectors normalise action names (case, separators and
+camelCase), so the same rule matches both spellings: `http.fetch` reaches a rule
+configured with `http_fetch`, and either spelling works in a configured action
+set. An `execFile(file, args)` call is judged as the one command it runs, not as
+the bare program name.
+
 ## Subprocesses
 
 When your agent runs a program (`subprocess.run`, a shell tool, generated code),

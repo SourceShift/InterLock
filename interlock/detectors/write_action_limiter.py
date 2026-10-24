@@ -7,8 +7,10 @@ Writes, deletes, updates and creates are the actions with irreversible effects
 and real cost - a runaway agent renaming files in a loop is a different failure
 from one reading them in a loop.
 
-This Rule counts only mutating actions (``action`` starting with ``write``,
-``delete``, ``update`` or ``create``) and keys the tally by ``event.principal``.
+This Rule counts only mutating actions - ``action`` starting with ``write``,
+``delete``, ``update`` or ``create``, or one of the Node client's namespaced
+mutating file effects (``fs.writeFile``, ``fs.rm``, ...) - and keys the tally
+by ``event.principal``.
 Non-mutating actions return None without touching the counter, so a principal's
 budget is spent only by the actions that consume it. Once a principal's running
 count exceeds ``limit`` the rule returns a BLOCK Decision; the boundary is
@@ -24,6 +26,7 @@ from __future__ import annotations
 import threading
 from typing import Dict, Optional
 
+from ..actions import NODE_WRITE_ACTIONS, canonical_action
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -49,6 +52,9 @@ def _is_mutating(action: object) -> bool:
     """
     if not isinstance(action, str):
         return False
+    canonical = canonical_action(action)
+    if canonical and canonical in NODE_WRITE_ACTIONS:
+        return True
     lowered = action.lower()
     return lowered.startswith(MUTATING_PREFIXES)
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, List, Mapping, Optional, Sequence, Union
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..masking import DEFAULT_THRESHOLD, Masker, MaskRule, summary
@@ -73,12 +74,12 @@ def data_masking_guard(
     key = hash_key.encode("utf-8") if isinstance(hash_key, str) else hash_key
     masker = Masker(_rules(rules, entities), threshold=threshold,
                     allow_list=allow_list, hash_key=key)
-    action_set = None if actions is None else frozenset(actions)
+    action_set = None if actions is None else canonical_actions(actions)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         if getattr(event, "phase", "call") != "result":
             return None
-        if action_set is not None and event.action not in action_set:
+        if action_set is not None and not action_matches(event.action, action_set):
             return None
         payload = getattr(event, "args", None)
         if not isinstance(payload, dict):

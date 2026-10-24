@@ -115,6 +115,9 @@ def mcp_trust_registry(trusted: Iterable[str]) -> Rule:
     registry = _as_origin_frozenset(trusted)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
+        # Exact membership, as before: canonical folding here would exempt the
+        # snake_case spelling of a protocol method that the pre-change rule
+        # denied, widening the hole it exists to close.
         if event.action in PROTOCOL_ACTIONS and _origin_from_args(event.args) is None:
             return None
         origin = _resolve_origin(event)

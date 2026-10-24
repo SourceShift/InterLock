@@ -135,8 +135,8 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
 #: Scoping the action-name scan cannot see: conventions on the arguments, and
 #: modules whose factories are scoped differently from one another.
 SCOPE_NOTES: Dict[str, str] = {
-    "data_egress": "egress verbs (`http_post`, `fetch`, `send_email`, +16 more); "
-                   "`sensitive_path_guard`: read verbs (`read_file`, `cat`, `open`, +8 more). "
+    "data_egress": "egress verbs (`http_post`, `fetch`, `send_email`, +17 more); "
+                   "`sensitive_path_guard`: read verbs (`read_file`, `cat`, `open`, +15 more). "
                    "Configurable",
     "mcp_tool_pinning": "calls to the tools you pinned; reads `args[\"__schema__\"]` "
                         "and blocks when it is missing",
@@ -157,6 +157,7 @@ SCOPE_NOTES: Dict[str, str] = {
     "token_budget_guard": "any call, estimated tokens counted per principal over a "
                           "rolling `window_s`",
     "tool_budget_limiter": "any call, counted per tool name",
+    "tool_policy": "any call",
     "runbook_guard": "calls carrying `command`/`cmd`/`argv` (or the `keys` you name); "
                      "everything else in those arguments must match a runbook",
     "secret_path_command_guard": "calls carrying `command`/`cmd` (or the `keys` you "

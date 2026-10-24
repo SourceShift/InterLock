@@ -48,6 +48,12 @@ import re
 import shlex
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from ..actions import (
+    action_matches,
+    canonical_actions,
+    command_values,
+    joined_command,
+)
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -192,18 +198,39 @@ def runbook_guard(
     if not compiled:
         raise ValueError("runbook_guard needs at least one runbook")
     key_set = None if keys is None else frozenset(keys)
-    action_set = None if actions is None else frozenset(actions)
+    action_set = None if actions is None else canonical_actions(actions)
     make = Decision.block if verdict == "block" else Decision.escalate
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if action_set is not None and event.action not in action_set:
+        if action_set is not None and not action_matches(event.action, action_set):
             return None
         args = getattr(event, "args", None)
         if not isinstance(args, dict):
             return None
+        # String commands first, with a split ``command`` + ``args`` pair joined
+        # by :func:`command_values`; then any argv already handed over as a
+        # list/tuple, which ``command_values`` deliberately does not produce.
+        # When the pair was joined, ``args["args"]`` is the tail of a command
+        # already judged in full, and the bare ``command`` is only the program
+        # name - judging either again as if it were the whole argv would reject
+        # a valid split command.
+        joined = joined_command(args)
+        joined_is_judged = joined is not None and (
+            key_set is None or "command" in key_set
+        )
+        candidates: List[Any] = [
+            (name, value)
+            for name, value in command_values(args, key_set)
+            if not (joined_is_judged and name == "command" and value != joined)
+        ]
         for name, value in args.items():
             if key_set is not None and name not in key_set:
                 continue
+            if isinstance(value, (list, tuple)):
+                if joined_is_judged and name == "args":
+                    continue
+                candidates.append((name, value))
+        for name, value in candidates:
             if isinstance(value, (list, tuple)):
                 if not value:
                     return make("runbook: {} is not a single plain command".format(name),

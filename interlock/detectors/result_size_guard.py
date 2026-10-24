@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Iterable, Optional
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -23,12 +24,12 @@ def result_size_guard(max_bytes: int = 256 * 1024, *,
     """Build a result-phase Rule blocking results over ``max_bytes``."""
     if max_bytes <= 0:
         raise ValueError("max_bytes must be positive")
-    action_set = None if actions is None else frozenset(actions)
+    action_set = None if actions is None else canonical_actions(actions)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         if getattr(event, "phase", "call") != "result":
             return None
-        if action_set is not None and event.action not in action_set:
+        if action_set is not None and not action_matches(event.action, action_set):
             return None
         payload = getattr(event, "args", None)
         try:

@@ -188,3 +188,14 @@ def test_engine_fails_closed_on_unresolvable_origin():
     decision = engine.evaluate(SensorEvent(action="bareword"))
     assert decision.verdict is Verdict.BLOCK
     assert decision.policy_id == POLICY_ID
+
+
+def test_protocol_actions_are_matched_exactly_not_canonically():
+    # Folding the protocol set would also exempt the snake_case spelling of a
+    # method the registry never listed; fail-closed means exact.
+    guard = mcp_trust_registry(trusted={"github"})
+    assert guard(_event(action="mcp.read_resource", args={})) is None
+    assert guard(_event(action="tools/list", args={})) is None
+    for action in ("mcp_read_resource", "tools_list"):
+        decision = guard(_event(action=action, args={}))
+        assert decision is not None and decision.verdict is Verdict.BLOCK, action

@@ -51,6 +51,23 @@ This is the mistake to avoid. Detectors fall into three groups:
 The **Scoped to** column of the [catalog](../reference/detectors.md) tells you
 which group each detector is in. Check it before you rely on one.
 
+### One action name, however it is spelled
+
+Detectors compare action names after a documented normalisation: the name is
+lowercased, the separators `.`, `:` and `/` become `_`, and a camelCase boundary
+becomes `_`. The Node client's namespaced effects therefore reach the same rules
+as their Python spellings - `http.fetch` is `http_fetch`, `fs.readFile` is
+`fs_read_file`, and `child_process.execFile` is `child_process_exec_file`. The
+built-in default sets carry those Node names, so the egress guards recognise
+`http.fetch`, the read guards `fs.readFile`, `fs.open`, `fs.createReadStream`
+and the rest, and the execution guard `child_process.*`.
+
+A set you configure accepts either spelling too: `egress_actions=["http_post"]`
+matches an event action of `http.post` as well as `http_post`. Command guards
+also judge a command split across `command` and an `args` list as the single
+command it would run, so `{"command": "rm", "args": ["-rf", "/"]}` is seen as
+`rm -rf /`.
+
 ### When your tool names don't match
 
 Some detectors let you pass your own names. `network_egress_guard` takes

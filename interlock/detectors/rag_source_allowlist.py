@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional, Set
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -32,7 +33,7 @@ POLICY_ID = "rag_source_allowlist"
 
 # The action names that denote a retrieval. Only these are this rule's concern;
 # anything else is not a retrieval and gets no opinion.
-RETRIEVAL_ACTIONS: Set[str] = {"retrieve", "rag_query", "search_docs"}
+RETRIEVAL_ACTIONS = canonical_actions({"retrieve", "rag_query", "search_docs"})
 
 
 def _render(source: object) -> str:
@@ -63,8 +64,7 @@ def rag_source_allowlist(allowed: Iterable[str]) -> Rule:
     permitted: Set[str] = {s for s in allowed if isinstance(s, str)}
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        action = getattr(event, "action", None)
-        if action not in RETRIEVAL_ACTIONS:
+        if not action_matches(getattr(event, "action", None), RETRIEVAL_ACTIONS):
             return None
 
         args = getattr(event, "args", None)

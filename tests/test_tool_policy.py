@@ -150,12 +150,21 @@ def test_none_config_is_safe():
     assert tool_denylist(None)(_event(action="read_file")) is None  # type: ignore[arg-type]
 
 
-def test_action_match_is_exact_and_case_sensitive():
+def test_action_match_is_exact_except_for_the_shared_node_names():
     # Least privilege: 'READ_FILE' is not the permitted 'read_file', so it is
-    # denied. Folding case would widen the list to spellings nobody approved.
+    # denied. Folding case or separators would widen the list to spellings
+    # nobody approved.
     guard = tool_allowlist(["read_file"])
     assert guard(_event(action="read_file")) is None
     assert guard(_event(action="READ_FILE")) is not None
+    assert guard(_event(action="read.file")) is not None
+    assert guard(_event(action="write_file")) is not None
+
+    # The Node client's namespaced name is the same action as its canonical
+    # spelling, so it reaches the entry the operator wrote.
+    node = tool_allowlist(["child_process_exec_file"])
+    assert node(_event(action="child_process.execFile")) is None
+    assert node(_event(action="child_process.spawn")) is not None
 
 
 def test_non_string_action_is_blocked_by_allowlist_and_ignored_by_denylist():
@@ -196,3 +205,17 @@ def test_engine_empty_allowlist_blocks_all_traffic():
         decision = engine.evaluate(_event(action=action))
         assert decision.verdict is Verdict.BLOCK
         assert decision.policy_id == "tool_allowlist"
+
+
+def test_a_generator_config_folds_the_same_node_names_as_a_list():
+    # A generator must be consumed once: the exact-name view and the canonical
+    # Node folding have to see the same entries, or the container type changes
+    # the policy.
+    allow = tool_allowlist(n for n in ["child_process_exec_file"])
+    assert allow(_event(action="child_process.execFile")) is None
+    assert allow(_event(action="read_file")) is not None
+
+    deny = tool_denylist(n for n in ["child_process_exec"])
+    decision = deny(_event(action="child_process.exec"))
+    assert decision is not None and decision.verdict is Verdict.BLOCK
+    assert deny(_event(action="read_file")) is None

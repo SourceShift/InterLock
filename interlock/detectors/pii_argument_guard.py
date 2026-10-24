@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, Optional
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..masking import DEFAULT_THRESHOLD, ENTITIES, Masker, MaskRule, summary
@@ -55,10 +56,10 @@ def pii_argument_guard(
     masker = Masker([MaskRule(entities=wanted, strategy=strategy)], threshold=threshold,
                     allow_list=allow_list, hash_key=hash_key)
     key_set = None if keys is None else frozenset(keys)
-    action_set = None if actions is None else frozenset(actions)
+    action_set = None if actions is None else canonical_actions(actions)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if action_set is not None and event.action not in action_set:
+        if action_set is not None and not action_matches(event.action, action_set):
             return None
         args = getattr(event, "args", None)
         if not isinstance(args, dict):

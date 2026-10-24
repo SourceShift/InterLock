@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from typing import Any, FrozenSet, Iterable, Optional, Tuple
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -49,6 +50,7 @@ POLICY_ID = "mcp_transport_guard"
 # to the two names the MCP adapters use so a same-named in-house tool is not
 # shadowed.
 CONNECT_ACTIONS = frozenset({"mcp.connect", "mcp.launch"})
+_connect_actions = canonical_actions(CONNECT_ACTIONS)
 
 # The argument keys that may carry the transport name, tried in this order.
 _TRANSPORT_KEYS = ("transport", "type")
@@ -203,7 +205,7 @@ def mcp_transport_guard(
     exceptions = _as_tuple(stdio_exceptions)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if event.action not in CONNECT_ACTIONS:
+        if not action_matches(event.action, _connect_actions):
             return None
         transport = _transport(event.args)
         if transport is not None and transport in allowed:

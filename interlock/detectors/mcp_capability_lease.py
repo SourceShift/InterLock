@@ -67,6 +67,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -79,11 +80,13 @@ _ORIGIN_KEY = "__origin__"
 # The MCP listing method; a listing names no capability, so it is never leased.
 # (A connect *is* leasable: "this server may be connected to until T".)
 _UNLEASED_ACTIONS = frozenset({"tools/list"})
+_unleased_actions = canonical_actions(_UNLEASED_ACTIONS)
 
 # MCP protocol methods whose dotted name is not a server: "mcp.read_resource" is
 # not a tool published by a server called "mcp". They are leased only when an
 # adapter labelled them with their server.
 _PROTOCOL_ACTIONS = frozenset({"mcp.connect", "mcp.read_resource", "mcp.sampling", "tools/list"})
+_protocol_actions = canonical_actions(_PROTOCOL_ACTIONS)
 
 # The action-name separator that introduces a dotted origin prefix.
 _ORIGIN_SEPARATOR = "."
@@ -257,7 +260,7 @@ def _resolve_subject(event: SensorEvent) -> Tuple[Optional[str], Optional[str]]:
     labelled = _origin_from_args(event.args)
     if labelled is not None:
         return labelled, _ORIGIN_KEY
-    if event.action in _PROTOCOL_ACTIONS:
+    if action_matches(event.action, _protocol_actions):
         return None, None
     return _origin_from_action(event.action), None
 
@@ -276,7 +279,7 @@ def mcp_capability_lease(registry: LeaseRegistry) -> Rule:
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if event.action in _UNLEASED_ACTIONS:
+        if action_matches(event.action, _unleased_actions):
             # A tool listing is not the use of a capability; it is the
             # surface baseline's event. Refusing it would make a lease rule and
             # mcp_surface_baseline unusable in the same engine.

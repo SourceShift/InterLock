@@ -31,6 +31,7 @@ from __future__ import annotations
 import threading
 from typing import Dict, Optional
 
+from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -38,7 +39,9 @@ from ..policy.engine import Rule
 POLICY_ID = "egress_rate"
 
 # Actions that send data off the process and therefore spend egress budget.
-DEFAULT_EGRESS_ACTIONS = frozenset({"http_post", "fetch", "send", "upload"})
+DEFAULT_EGRESS_ACTIONS = canonical_actions(
+    frozenset({"http_post", "fetch", "send", "upload"}) | NODE_EGRESS_ACTIONS
+)
 
 
 def egress_rate_limiter(
@@ -61,7 +64,7 @@ def egress_rate_limiter(
     lock = threading.Lock()
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if event.action not in DEFAULT_EGRESS_ACTIONS:
+        if not action_matches(event.action, DEFAULT_EGRESS_ACTIONS):
             return None
         principal = event.principal
         if not isinstance(principal, str):

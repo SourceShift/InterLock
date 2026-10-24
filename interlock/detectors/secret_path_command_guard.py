@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 from typing import Iterable, List, Optional, Sequence, Set
 
+from ..actions import command_values
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -96,11 +97,7 @@ def secret_path_command_guard(
         args = getattr(event, "args", None)
         if not isinstance(args, dict):
             return None
-        for name, value in args.items():
-            if key_set is not None and name not in key_set:
-                continue
-            if not isinstance(value, str):
-                continue
+        for name, value in command_values(args, key_set):
             parsed = parse(value)
             for word in _words(parsed):
                 candidate = _resolve(word)

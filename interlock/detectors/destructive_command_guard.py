@@ -35,6 +35,7 @@ from __future__ import annotations
 import re
 from typing import Iterable, Optional, Tuple
 
+from ..actions import command_values, joined_command
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -66,12 +67,18 @@ def destructive_command_guard(
 
     Every top-level str value of a dict ``args`` (or of the ``keys`` you name)
     is tested against :data:`PATTERN` and, unless ``parse=False``, parsed for a
-    critical intent in :data:`CRITICAL_KINDS`. On the first match the rule
-    returns a BLOCK naming the offending argument, so the caller can tell which
-    parameter carried the command. With no match, a value the parser could only
-    partly read returns an ESCALATE naming it. A non-dict ``args``, a dict with
-    no str values, and a dict whose str values are all benign and fully read
-    each return None (no opinion). The rule never raises.
+    critical intent in :data:`CRITICAL_KINDS`. A split ``command`` + ``args``
+    pair is also joined by :func:`interlock.actions.command_values` and judged
+    as the invocation it would run; that derived joined form is handed to the
+    parser only, because its words are argument data where a destructive phrase
+    can be inert (``grep rm -rf / notes``). The bare ``command`` value is still
+    tested by :data:`PATTERN`, so a whole command line carried there and
+    accompanied by an ``args`` list stays blocked. On the first match the rule returns a
+    BLOCK naming the offending argument, so the caller can tell which parameter
+    carried the command. With no match, a value the parser could only partly
+    read returns an ESCALATE naming it. A non-dict ``args``, a dict with no str
+    values, and a dict whose str values are all benign and fully read each
+    return None (no opinion). The rule never raises.
     """
     key_set = None if keys is None else frozenset(keys)
 
@@ -80,15 +87,25 @@ def destructive_command_guard(
         if not isinstance(args, dict):
             return None
 
+        joined = joined_command(args)
+        joined_is_judged = joined is not None and (
+            key_set is None or "command" in key_set
+        )
         unread = None
-        for name, value in args.items():
-            if not isinstance(value, str):
-                continue
-            if key_set is not None and name not in key_set:
-                continue
-            critical, partial = bool(PATTERN.search(value)), False
-            if not critical and parse:
-                critical, partial = _scan(value)
+        for name, value in command_values(args, key_set):
+            # The raw pattern is a lexical test for a command line. A joined
+            # ``command`` + ``args`` pair is an argv, where the same words can
+            # be harmless argument data (``grep rm -rf / file``), so it is
+            # judged by the parser below instead, which knows which word is the
+            # program.
+            if joined_is_judged and name == "command" and value == joined:
+                critical, partial = False, False
+                if parse:
+                    critical, partial = _scan(value)
+            else:
+                critical, partial = bool(PATTERN.search(value)), False
+                if not critical and parse:
+                    critical, partial = _scan(value)
             if critical:
                 return Decision.block(
                     reason="destructive_command: {}".format(name),

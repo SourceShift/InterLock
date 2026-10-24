@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -30,6 +31,7 @@ POLICY_ID = "data_volume_egress"
 EGRESS_ACTIONS = frozenset({
     "http_post", "fetch", "request", "send", "upload",
 })
+EGRESS_ACTIONS = canonical_actions(EGRESS_ACTIONS | NODE_EGRESS_ACTIONS)
 
 # Argument keys that may carry outbound content. Only the str value under one
 # of these is measured.
@@ -64,7 +66,7 @@ def data_volume_egress_guard(max_bytes: int = DEFAULT_MAX_BYTES) -> Rule:
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in EGRESS_ACTIONS:
+        if not action_matches(getattr(event, "action", None), EGRESS_ACTIONS):
             return None
 
         total = _payload_bytes(getattr(event, "args", None))

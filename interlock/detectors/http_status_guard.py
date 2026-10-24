@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional, Union
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -36,13 +37,13 @@ def http_status_guard(statuses: Iterable[Union[int, str]], *, verdict: str = "bl
             exact.add(int(text))
         else:
             raise ValueError("a status is a code (403) or a class ('5xx'), got {!r}".format(status))
-    action_set = None if actions is None else frozenset(actions)
+    action_set = None if actions is None else canonical_actions(actions)
     make = Decision.block if verdict == "block" else Decision.escalate
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         if getattr(event, "phase", "call") != "result":
             return None
-        if action_set is not None and event.action not in action_set:
+        if action_set is not None and not action_matches(event.action, action_set):
             return None
         payload = getattr(event, "args", None)
         if not isinstance(payload, dict):

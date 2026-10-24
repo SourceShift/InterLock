@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any, Optional, Tuple
 from urllib.parse import urlparse
 
+from ..actions import NODE_EGRESS_ACTIONS, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -36,6 +37,7 @@ POLICY_ID = "url_scheme"
 EGRESS_ACTIONS = frozenset({
     "http_post", "http_get", "fetch", "request", "send", "upload",
 })
+EGRESS_ACTIONS = canonical_actions(EGRESS_ACTIONS | NODE_EGRESS_ACTIONS)
 
 # Argument keys that may carry the destination, tried in this order.
 DESTINATION_KEYS = ("url", "endpoint", "uri", "host", "address")
@@ -83,7 +85,7 @@ def url_scheme_guard() -> Rule:
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in EGRESS_ACTIONS:
+        if not action_matches(getattr(event, "action", None), EGRESS_ACTIONS):
             return None
 
         dest = _destination(getattr(event, "args", None))

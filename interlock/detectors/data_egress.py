@@ -34,6 +34,12 @@ import re
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .._url import destination_host
+from ..actions import (
+    NODE_EGRESS_ACTIONS,
+    NODE_READ_ACTIONS,
+    action_matches,
+    canonical_actions,
+)
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..masking import card_number
@@ -47,17 +53,19 @@ PII_REDACTION_POLICY_ID = "pii_redaction"
 # network egress; bare verbs like "get"/"post" are deliberately excluded so the
 # guard does not shadow an unrelated in-house tool that happens to be named
 # "get". Callers extend this set for their own transport names.
-DEFAULT_EGRESS_ACTIONS = frozenset({
+DEFAULT_EGRESS_ACTIONS = canonical_actions(frozenset({
     "http_post", "http_get", "http_put", "http_delete", "http_request",
     "fetch", "upload", "download", "webhook", "curl", "wget",
     "send_email", "sendmail", "email", "smtp_send",
     "slack_post", "post_webhook", "publish_message", "notify_external",
-})
+}) | NODE_EGRESS_ACTIONS)
 
 # The network allowlist's own default set. It adds the PATCH verb the same
 # HTTP transport carries; ``DEFAULT_EGRESS_ACTIONS`` stays the frozen set PII
 # redaction shares so this guard's coverage does not widen that guard's scope.
-DEFAULT_NETWORK_EGRESS_ACTIONS = frozenset(DEFAULT_EGRESS_ACTIONS | {"http_patch"})
+DEFAULT_NETWORK_EGRESS_ACTIONS = canonical_actions(
+    DEFAULT_EGRESS_ACTIONS | frozenset({"http_patch"})
+)
 
 # Argument keys that carry a destination (a URL, host, or recipient address).
 # cc/bcc are blind recipients, proxy is the hop the request is sent through,
@@ -70,10 +78,10 @@ DEFAULT_DESTINATION_KEYS = (
 )
 
 # Read actions the sensitive-path guard watches.
-DEFAULT_READ_ACTIONS = frozenset({
+DEFAULT_READ_ACTIONS = canonical_actions(frozenset({
     "read_file", "read", "open", "cat", "load_file", "load",
     "fs_read", "get_file", "fetch_file", "readlines", "slurp",
-})
+}) | NODE_READ_ACTIONS)
 
 # Argument keys that carry a filesystem path.
 DEFAULT_PATH_KEYS = (
@@ -105,15 +113,6 @@ DEFAULT_SENSITIVE_PATHS = (
     "~/.ssh", "~/.aws/credentials", "~/.aws/config", "~/.gnupg",
     "~/.kube/config", "~/.netrc", ".env", "id_rsa",
 )
-
-
-def _as_name_set(names: Optional[Iterable[str]]) -> Set[str]:
-    """Collect str names into a set; a bare string is one name, not its chars."""
-    if names is None:
-        return set()
-    if isinstance(names, str):
-        return {names}
-    return {n for n in names if isinstance(n, str)}
 
 
 def _normalize_host(value: str) -> str:
@@ -172,11 +171,10 @@ def network_egress_guard(
     Non-egress actions get no opinion (None), leaving them to other rules.
     """
     allowed = {_normalize_host(h) for h in allowed_hosts if isinstance(h, str)}
-    actions = {name.lower() for name in _as_name_set(egress_actions)}
+    actions = canonical_actions(egress_actions)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        action = getattr(event, "action", None)
-        if not isinstance(action, str) or action.lower() not in actions:
+        if not action_matches(getattr(event, "action", None), actions):
             return None
         dests = _destinations(event.args, destination_keys)
         if not dests:
@@ -225,10 +223,10 @@ def sensitive_path_guard(
     path, and every non-read action, get no opinion.
     """
     patterns = tuple(p for p in sensitive_paths if isinstance(p, str))
-    actions = _as_name_set(read_actions)
+    actions = canonical_actions(read_actions)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if event.action not in actions:
+        if not action_matches(event.action, actions):
             return None
         for key in path_keys:
             val = event.args.get(key) if isinstance(event.args, dict) else None
@@ -330,7 +328,7 @@ def pii_redaction_guard(
     It masks structured secrets inside an otherwise legitimate message; it is not
     a substitute for the allowlist against a raw file dump to an attacker host.
     """
-    act = _as_name_set(actions)
+    act = canonical_actions(actions)
     keys = tuple(content_keys)
 
     def _redact_value(value: Any, depth: int = 0) -> Tuple[Any, bool]:
@@ -369,7 +367,7 @@ def pii_redaction_guard(
         return value, False
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if event.action not in act or not isinstance(event.args, dict):
+        if not action_matches(event.action, act) or not isinstance(event.args, dict):
             return None
         changed: dict = {}
         for key in keys:

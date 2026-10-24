@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from ..actions import action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -29,9 +30,9 @@ POLICY_ID = "memory_write_size"
 
 # The memory-write action names this guard recognises. Kept to unambiguous
 # context-storing verbs so a same-named in-house tool is not shadowed.
-MEMORY_ACTIONS = frozenset({
+MEMORY_ACTIONS = canonical_actions(frozenset({
     "memory_write", "context_set", "remember",
-})
+}))
 
 # Argument key carrying the value that would be stored.
 VALUE_KEY = "value"
@@ -62,7 +63,7 @@ def memory_write_size_guard(max_bytes: int = DEFAULT_MAX_BYTES) -> Rule:
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "action", None) not in MEMORY_ACTIONS:
+        if not action_matches(getattr(event, "action", None), MEMORY_ACTIONS):
             return None
 
         size = _value_bytes(getattr(event, "args", None))
