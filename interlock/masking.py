@@ -68,6 +68,19 @@ def luhn(number: str) -> bool:
     return total % 10 == 0
 
 
+def card_number(value: str) -> bool:
+    """True if ``value`` contains a card number, ignoring a trailing tail.
+
+    A card followed by a CVV (or any other digits) makes the whole run fail
+    :func:`luhn`, so here any 13-19 digit prefix that passes Luhn counts as a
+    card. Callers mask the whole match, so the tail is masked with it.
+    """
+    digits = _digits(value)
+    if luhn(digits):
+        return True
+    return any(luhn(digits[:size]) for size in range(13, min(19, len(digits) - 1) + 1))
+
+
 _IBAN_LENGTHS = {
     "AD": 24, "AE": 23, "AT": 20, "BE": 16, "BG": 22, "BR": 29, "CH": 21, "CY": 28, "CZ": 24,
     "DE": 22, "DK": 18, "EE": 20, "ES": 24, "FI": 18, "FR": 27, "GB": 22, "GR": 27, "HR": 21,
@@ -212,7 +225,7 @@ def _re(pattern: str, flags: int = 0) -> "re.Pattern[str]":
 
 ENTITIES: Dict[str, Entity] = {e.name: e for e in [
     Entity("EMAIL_ADDRESS", _re(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b"), 0.9),
-    Entity("CREDIT_CARD", _re(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)"), 1.0, luhn),
+    Entity("CREDIT_CARD", _re(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)"), 1.0, card_number),
     Entity("IBAN_CODE", _re(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]){11,30}\b"), 1.0, iban),
     Entity("US_SSN", _re(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"), 0.8, us_ssn,
            context=("ssn", "social security")),

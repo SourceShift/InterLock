@@ -12,11 +12,18 @@ from interlock import PolicyEngine, SensorEvent, Verdict
 from interlock.detectors.tool_output_secret_redactor import redact_text, tool_output_secret_redactor
 
 GITHUB_TOKEN = "gh" + "p_" + "A1b2C3d4E5" * 3 + "F6g7H8"
+GITHUB_PAT = "github" + "_pat_" + "A1b2C3d4E5" * 3 + "F6g7H8"
 AWS_LINE = "export AWS_SECRET_ACCESS_KEY=" + "wJalrXUtn" + "FEMIK7MDENG"
 
 
 def _result(text):
     return SensorEvent(action="Read", args={"result": text}, phase="result")
+
+
+def _redact_result(raw):
+    return PolicyEngine([tool_output_secret_redactor()]).evaluate(
+        SensorEvent(action="Read", args={"result": raw}, phase="result")
+    )
 
 
 @pytest.mark.parametrize("line", [
@@ -56,3 +63,45 @@ def test_the_rewrite_reports_how_many_of_each_kind_it_masked():
 def test_a_typescript_interface_passes_untouched():
     source = "interface BriefLinkRow {\n  link_token: string;\n  client_uuid: string;\n}\n"
     assert PolicyEngine([tool_output_secret_redactor()]).evaluate(_result(source)).verdict is Verdict.ALLOW
+
+
+# --- bytes and bytearray results (A19) --------------------------------------
+
+
+def test_bytes_result_is_redacted_and_stays_bytes():
+    raw = ("token " + GITHUB_PAT).encode()
+    decision = _redact_result(raw)
+    assert decision.verdict is Verdict.MODIFY
+    out = decision.modified_result
+    assert isinstance(out, bytes) and not isinstance(out, bytearray)
+    assert b"github_pat_" not in out
+    assert out == "token [REDACTED GITHUB_TOKEN]".encode()
+
+
+def test_bytearray_result_is_redacted_and_stays_bytearray():
+    raw = bytearray(("token " + GITHUB_PAT).encode())
+    decision = _redact_result(raw)
+    assert decision.verdict is Verdict.MODIFY
+    out = decision.modified_result
+    assert isinstance(out, bytearray)
+    assert b"github_pat_" not in bytes(out)
+    assert bytes(out) == "token [REDACTED GITHUB_TOKEN]".encode()
+
+
+def test_utf8_bytes_outside_the_match_are_byte_identical():
+    prefix = "héllo wörld ".encode("utf-8")
+    raw = prefix + ("token " + GITHUB_PAT).encode()
+    out = _redact_result(raw).modified_result
+    assert out.startswith(prefix)
+    assert out == prefix + "token [REDACTED GITHUB_TOKEN]".encode()
+
+
+def test_latin1_bytes_round_trip_exactly():
+    prefix = "café ".encode("latin-1")  # 0xE9 is not valid UTF-8 on its own
+    raw = prefix + ("token " + GITHUB_PAT).encode()
+    out = _redact_result(raw).modified_result
+    assert out == "café token [REDACTED GITHUB_TOKEN]".encode("latin-1")
+
+
+def test_bytes_without_a_secret_gets_no_opinion():
+    assert _redact_result(b"plain bytes, no credential").verdict is Verdict.ALLOW

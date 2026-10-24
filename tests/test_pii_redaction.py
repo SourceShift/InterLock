@@ -2,14 +2,21 @@
 blocking the send. Covers the MODIFY contract (only changed keys returned), the
 pattern set, the Luhn gate that keeps ordinary long numbers intact, list
 payloads, custom markers/patterns, and end-to-end merge through the engine."""
+from collections import namedtuple
+
+import pytest
+
 import interlock
 from interlock import SensorEvent, Verdict, enforce_tool_call
 from interlock.detectors.data_egress import (
+    DEFAULT_PII_PATTERNS,
     PII_REDACTION_POLICY_ID,
     _luhn_ok,
     network_egress_guard,
     pii_redaction_guard,
 )
+from interlock.detectors.tool_output_secret_redactor import PATTERNS as RESULT_PATTERNS
+from interlock.masking import Masker, MaskRule, card_number
 
 # A real Stripe-style test card (Luhn-valid) and a 16-digit non-card id.
 VALID_CARD = "4111 1111 1111 1111"
@@ -291,3 +298,126 @@ def test_network_egress_denies_an_action_with_no_destination():
 def test_network_egress_non_string_action_gets_no_opinion():
     guard = _egress_guard()
     assert guard(SensorEvent(action=3, args={"url": "https://evil.example/x"})) is None  # type: ignore[arg-type]
+
+
+# --- nested payloads (A19) ---------------------------------------------------
+
+
+def _nested(value, levels):
+    for _ in range(levels):
+        value = {"nested": value}
+    return value
+
+
+def test_nested_dict_payload_is_masked_with_keys_intact():
+    guard = pii_redaction_guard()
+    decision = guard(_event(body={"card": VALID_CARD, "note": "ok"}))
+    assert decision is not None and decision.verdict is Verdict.MODIFY
+    body = decision.modified_args["body"]
+    assert body["card"] == "[REDACTED CREDIT_CARD]"
+    assert body["note"] == "ok"
+    assert set(body) == {"card", "note"}
+
+
+def test_list_of_dicts_payload_is_masked():
+    guard = pii_redaction_guard()
+    decision = guard(_event(attachments=[{"card": VALID_CARD}, {"note": "ok"}]))
+    out = decision.modified_args["attachments"]
+    assert out[0]["card"] == "[REDACTED CREDIT_CARD]"
+    assert out[1]["note"] == "ok"
+
+
+def test_tuple_payload_stays_a_tuple():
+    guard = pii_redaction_guard()
+    decision = guard(_event(attachments=({"card": VALID_CARD}, "clean")))
+    out = decision.modified_args["attachments"]
+    assert isinstance(out, tuple)
+    assert out[0]["card"] == "[REDACTED CREDIT_CARD]"
+    assert out[1] == "clean"
+
+
+def test_a_namedtuple_payload_is_redacted_without_raising():
+    Point = namedtuple("Point", "card note")
+    guard = pii_redaction_guard()
+    decision = guard(_event(body=[Point(VALID_CARD, "ok")]))
+    out = decision.modified_args["body"]
+    # A tuple subclass cannot take an iterable in its constructor, so it is
+    # rebuilt as a list rather than raising out of the guard.
+    assert out[0][0] == "[REDACTED CREDIT_CARD]"
+    assert out[0][1] == "ok"
+
+
+def test_depth_bound_leaves_deeper_values_untouched():
+    guard = pii_redaction_guard()
+    # The content value is depth 0; five dicts put the card at depth 5.
+    assert guard(_event(body=_nested(VALID_CARD, 5))) is not None
+    # Six dicts put it at depth 6, which is past the bound: no MODIFY at all.
+    assert guard(_event(body=_nested(VALID_CARD, 6))) is None
+
+
+def test_clean_nested_payload_gets_no_opinion():
+    guard = pii_redaction_guard()
+    assert guard(_event(body={"card": NON_CARD_ID, "note": "ok"})) is None
+
+
+# --- a card number followed by a tail (A19) ---------------------------------
+
+
+def test_card_number_accepts_a_tail_but_a_plain_id_is_not_a_card():
+    assert card_number("4111 1111 1111 1111 123") is True
+    assert _luhn_ok("4111 1111 1111 1111 123") is True
+    assert card_number(NON_CARD_ID) is False
+
+
+@pytest.mark.parametrize("card_with_tail", [
+    "4111 1111 1111 1111 123",
+    "4111111111111111 123",
+])
+def test_card_followed_by_a_cvv_is_masked_whole(card_with_tail):
+    guard = pii_redaction_guard()
+    out = guard(_event(data="pay " + card_with_tail + " now")).modified_args["data"]
+    assert out == "pay [REDACTED CREDIT_CARD] now"
+
+
+def test_masker_entity_masks_a_card_and_its_cvv_tail():
+    masked, counts = Masker([MaskRule(entities=["CREDIT_CARD"])]).mask_text(
+        "pay 4111 1111 1111 1111 123 now"
+    )
+    assert masked == "pay [REDACTED:CREDIT_CARD] now"
+    assert counts == {"CREDIT_CARD": 1}
+
+
+# --- current vendor key prefixes (A19) --------------------------------------
+
+
+@pytest.mark.parametrize("token", [
+    "sk-proj-" + "a" * 24,
+    "sk-ant-api03-" + "b" * 24,
+    "github_pat_" + "c" * 30,
+    "gho_" + "d" * 20,
+])
+def test_current_vendor_key_prefixes_are_masked(token):
+    guard = pii_redaction_guard()
+    decision = guard(_event(data="token " + token))
+    assert decision is not None
+    assert token not in decision.modified_args["data"]
+
+
+@pytest.mark.parametrize("token", ["sk-short", "ghp_" + "e" * 10])
+def test_short_key_lookalikes_are_not_masked(token):
+    guard = pii_redaction_guard()
+    assert guard(_event(data="token " + token)) is None
+
+
+def test_the_three_key_prefix_tables_agree():
+    egress_kinds = {kind: regex for kind, regex, _ in DEFAULT_PII_PATTERNS}
+    result_kinds = {kind: regex for kind, regex, _ in RESULT_PATTERNS}
+    # (egress kind, masking kind, an accepted value)
+    cases = (
+        ("OPENAI_KEY", "API_KEY", "sk-proj-" + "f" * 24),
+        ("GITHUB_TOKEN", "GITHUB_TOKEN", "github_pat_" + "g" * 30),
+    )
+    for egress_kind, masking_kind, token in cases:
+        assert egress_kinds[egress_kind].search(token), egress_kind
+        assert result_kinds[masking_kind].search(token), masking_kind
+        assert Masker().find(token, [masking_kind]), masking_kind

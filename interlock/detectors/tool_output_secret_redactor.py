@@ -42,7 +42,9 @@ PATTERNS: List[Tuple[str, "re.Pattern[str]", int]] = [
     ("AWS_SECRET", re.compile(
         r"(?i)\b(?:aws_secret_access_key|aws_session_token)\b\s*[:=]\s*[\"']?([A-Za-z0-9/+=]{16,})"), 1),
     ("GITHUB_TOKEN", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"), 0),
-    ("API_KEY", re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}\b"), 0),
+    # {20,} matches masking.ENTITIES and data_egress.DEFAULT_PII_PATTERNS; the
+    # three key-prefix tables are meant to agree.
+    ("API_KEY", re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b"), 0),
     ("NPM_TOKEN", re.compile(r"\bnpm_[A-Za-z0-9]{30,}\b"), 0),
     ("SLACK_TOKEN", re.compile(r"\bxox[bpcsa]-[A-Za-z0-9-]{10,}\b"), 0),
     ("GOOGLE_API_KEY", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"), 0),
@@ -91,6 +93,23 @@ def redact_text(text: str) -> Tuple[str, List[str]]:
 
 
 def _redact(value: Any, depth: int, kinds: List[str]) -> Any:
+    if isinstance(value, (bytes, bytearray)):
+        raw = bytes(value)
+        try:
+            text = raw.decode("utf-8")
+            codec = "utf-8"
+        except UnicodeDecodeError:
+            # latin-1 maps every byte to a code point, so it never fails and
+            # re-encoding round-trips exactly. The marker is ASCII, so it
+            # encodes under either codec.
+            text = raw.decode("latin-1")
+            codec = "latin-1"
+        redacted, found = redact_text(text)
+        kinds.extend(found)
+        if not found:
+            return value
+        encoded = redacted.encode(codec)
+        return bytearray(encoded) if isinstance(value, bytearray) else encoded
     if isinstance(value, str):
         redacted, found = redact_text(value)
         kinds.extend(found)

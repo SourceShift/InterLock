@@ -36,6 +36,7 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence, Set, Tuple
 from .._url import destination_host
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..masking import card_number
 from ..policy.engine import Rule
 
 NETWORK_EGRESS_POLICY_ID = "network_egress"
@@ -90,6 +91,12 @@ DEFAULT_CONTENT_KEYS = (
 
 # The mask a redacted match is replaced with; ``{kind}`` names what was found.
 DEFAULT_REDACTION_MARKER = "[REDACTED {kind}]"
+
+# How deep the payload walk descends. The top-level content value is depth 0,
+# and a value at depth >= 6 is left unchanged. This matches
+# tool_output_secret_redactor._MAX_DEPTH; it is defined locally because
+# detectors do not import one another.
+REDACTION_MAX_DEPTH = 6
 
 # Paths that are secrets by definition. "~" is expanded per call.
 DEFAULT_SENSITIVE_PATHS = (
@@ -243,23 +250,13 @@ PiiPattern = Tuple[str, "re.Pattern[str]", Optional[Callable[[str], bool]]]
 
 
 def _luhn_ok(candidate: str) -> bool:
-    """True if the digits in ``candidate`` pass the Luhn checksum.
+    """True if ``candidate`` holds a card number, ignoring a trailing tail.
 
-    Card numbers pass; arbitrary 13-to-19-digit identifiers almost never do, so
-    this keeps the card pattern from redacting ordinary long numbers.
+    Delegates to :func:`interlock.masking.card_number`: a card followed by a
+    CVV (or other digits) still counts, and the whole match is masked, tail
+    included.
     """
-    digits = [int(c) for c in candidate if c.isdigit()]
-    if len(digits) < 13:
-        return False
-    checksum = 0
-    parity = len(digits) % 2
-    for i, digit in enumerate(digits):
-        if i % 2 == parity:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        checksum += digit
-    return checksum % 10 == 0
+    return card_number(candidate)
 
 
 # High-precision defaults: each is either structurally unambiguous (a vendor key
@@ -270,8 +267,14 @@ DEFAULT_PII_PATTERNS: Tuple[PiiPattern, ...] = (
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
         re.DOTALL), None),
     ("AWS_KEY", re.compile(r"\bAKIA[0-9A-Z]{16}\b"), None),
-    ("OPENAI_KEY", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), None),
-    ("GITHUB_TOKEN", re.compile(r"\bghp_[A-Za-z0-9]{36}\b"), None),
+    # The three key-prefix tables (here, masking.ENTITIES and
+    # tool_output_secret_redactor.PATTERNS) deliberately share one shape: the
+    # scope prefix (proj-/ant-) is optional and the body may carry -/_. Keeping
+    # them identical is the point; narrowing this table alone would reopen the
+    # sk-proj-... / github_pat_... gaps the other two already cover.
+    ("OPENAI_KEY", re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b"), None),
+    ("GITHUB_TOKEN", re.compile(
+        r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"), None),
     ("SLACK_TOKEN", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), None),
     ("BEARER_TOKEN", re.compile(r"\bBearer\s+[A-Za-z0-9._\-]{20,}"), None),
     ("SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), None),
@@ -330,17 +333,39 @@ def pii_redaction_guard(
     act = _as_name_set(actions)
     keys = tuple(content_keys)
 
-    def _redact_value(value: Any) -> Tuple[Any, bool]:
+    def _redact_value(value: Any, depth: int = 0) -> Tuple[Any, bool]:
+        # The top-level content value is depth 0; past the bound the walk
+        # stops and the value is returned unchanged. The gate sits before the
+        # type dispatch so a string at the bound is untouched too.
+        if depth >= REDACTION_MAX_DEPTH:
+            return value, False
         if isinstance(value, str):
             return _redact_text(value, patterns, marker)
+        if isinstance(value, dict):
+            # Keys are never rewritten; only their values are scanned.
+            out: dict = {}
+            hit = False
+            for key, item in value.items():
+                new_item, item_hit = _redact_value(item, depth + 1)
+                hit = hit or item_hit
+                out[key] = new_item
+            return (out, True) if hit else (value, False)
         if isinstance(value, (list, tuple)):
-            out: List[Any] = []
+            items: List[Any] = []
             hit = False
             for item in value:
-                new_item, item_hit = _redact_value(item)
+                new_item, item_hit = _redact_value(item, depth + 1)
                 hit = hit or item_hit
-                out.append(new_item)
-            return (out, hit) if hit else (value, False)
+                items.append(new_item)
+            if not hit:
+                return value, False
+            # Preserve a plain container's type; a clean payload keeps its
+            # identity. A subclass (a namedtuple, whose constructor takes the
+            # fields, not an iterable) cannot be rebuilt that way and would
+            # raise out of the guard, so it comes back as a list instead.
+            if type(value) in (list, tuple):
+                return type(value)(items), True
+            return items, True
         return value, False
 
     def rule(event: SensorEvent) -> Optional[Decision]:
