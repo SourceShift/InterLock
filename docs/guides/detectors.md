@@ -391,10 +391,17 @@ runbook_guard(runbooks=[
 ```
 
 A command must be a single invocation (no pipes, chains, redirects or
-substitutions) whose words match a template one for one. Parameters take
-`pattern`, `options`, `type` (`string`, `integer` with `min`/`max`, `path`),
-`minlength` and `maxlength`. An unspecified parameter accepts only
-`[A-Za-z0-9._:/@=+-]`. Anything else is blocked (or escalated with
+substitutions) whose words match a template one for one. The guard reads the
+`command`, `cmd` and `argv` arguments by default (or the `keys` you name). A
+string is parsed as shell; an already-split list or tuple is matched word for
+word with no shell parse - a non-string word, or an empty list, is refused as
+"not a single plain command". Parameters take `pattern`, `options`, `type`
+(`string`, `integer` with `min`/`max`, `path`), `allow_option`, `minlength`
+and `maxlength`. A value beginning with `-` is treated as an option-shaped
+placeholder and refused unless its spec sets `allow_option: true`; `type:
+path` always refuses a leading `-`. An unspecified parameter accepts only
+`[A-Za-z0-9._:/@=+-]` and may not begin with `-` either. Anything else is
+blocked (or escalated with
 `verdict="escalate"`), and the reason names the closest runbook and the
 parameter that failed. `load_runbooks(dir)` reads `*.runbook.json` files.
 

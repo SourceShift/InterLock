@@ -296,7 +296,14 @@ CALL_CASES = [
     ("secret-files", claude_pre("Read", {"file_path": "~/.config/gh/hosts.yml"}), BLOCK),
     ("secret-files", claude_pre("Write", {"file_path": "~/.ssh/authorized_keys", "content": "ssh-ed25519 AAAA"}), BLOCK),
     ("secret-files", claude_pre("Read", {"file_path": PROJECT + "/../../{home}/.ssh/id_ed25519"}), BLOCK),
+    ("secret-files", claude_pre("Grep", {"pattern": "PRIVATE", "path": "~/.ssh/id_rsa"}), BLOCK),
+    ("secret-files", claude_pre("Glob", {"pattern": "*", "path": "~/.aws/credentials"}), BLOCK),
     (None, claude_pre("Read", {"file_path": PROJECT + "/docs/ssh.md"}), ALLOW),
+
+    # secret-file-commands: the same stores reached through the shell
+    ("secret_path_command", bash("cat ~/.ssh/id_rsa"), BLOCK),
+    ("secret_path_command", bash("grep -r TOKEN ~/.aws"), BLOCK),
+    (None, bash("cat README.md"), ALLOW),
 
     # env-files: an .env read asks first; examples don't
     ("env-files", claude_pre("Read", {"file_path": PROJECT + "/.env"}), ESCALATE),
@@ -310,6 +317,8 @@ CALL_CASES = [
     ("agent-hook-settings", claude_pre("Write", {"file_path": "~/.claude/settings.json", "content": "{}"}), ESCALATE),
     ("agent-hook-settings", claude_pre("Edit", {"file_path": "~/.codex/hooks.json", "old_string": "a", "new_string": "b"}), ESCALATE),
     ("agent-hook-settings", claude_pre("Write", {"file_path": PROJECT + "/.claude/settings.local.json", "content": "{}"}), ESCALATE),
+    ("agent-hook-settings", claude_pre("apply_patch", {"command": "*** Begin Patch\n*** Update File: /{home}/.codex/config.toml\n@@\n-hooks = 1\n+hooks = 0\n*** End Patch"}), ESCALATE),
+    ("secret_path_command", bash("echo '{}' > ~/.claude/settings.json"), ESCALATE),
     (None, claude_pre("Read", {"file_path": "~/.claude/settings.json"}), ALLOW),
 ]
 
@@ -424,7 +433,10 @@ def test_a_case_variant_of_a_secret_path_is_still_that_path(engine, receipts, ho
     if not os.path.exists(variant):
         pytest.skip("case-sensitive volume: the variant is a different, missing file")
     expect(engine, receipts, claude_pre("Read", {"file_path": variant}), BLOCK, "secret-files")
-    expect(engine, receipts, bash("cat ~/.SSH/ID_RSA"), ALLOW, None)  # the call; its output is masked:
+    # The shell read is a read of the same store on a case-insensitive volume,
+    # so secret-file-commands now blocks it too. It used to be allowed and rely
+    # on masking the result afterwards, which still happens for the write-up.
+    expect(engine, receipts, bash("cat ~/.SSH/ID_RSA"), BLOCK, "secret_path_command")
     expect(engine, receipts, claude_post("Bash", {"command": "cat ~/.SSH/ID_RSA"},
                                          {"stdout": PEM, "stderr": "", "interrupted": False, "isImage": False}),
            MODIFY, "tool_output_secret_redact")
@@ -435,7 +447,9 @@ def test_every_rule_in_the_pack_has_a_case(engine):
 
     detector_ids = {"destructive-commands": "destructive_command", "git-credentials": "git_credential_read",
                     "result-injection": "tool_result_injection", "result-secrets": "tool_output_secret_redact",
-                    "unreadable-commands": "command_intent"}
+                    "unreadable-commands": "command_intent",
+                    "secret-file-commands": "secret_path_command",
+                    "agent-hook-settings-commands": "secret_path_command"}
     covered = {c[0] for c in CALL_CASES + AGENT_CASES + RESULT_CASES if c[0]}
     for rule in builtin_pack("coding-agent")["rules"]:
         assert detector_ids.get(rule["id"], rule["id"]) in covered, rule["id"]

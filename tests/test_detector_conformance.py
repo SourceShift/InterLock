@@ -19,6 +19,9 @@ ENTRIES = runner.load()
 #: by the module's own unit tests instead.
 NOT_JSON = {
     ("mcp_capability_lease", "mcp_capability_lease"): "takes a live LeaseRegistry holding issued grants",
+    ("secret_path_command_guard", "secret_path_command_guard"):
+        "paths are resolved against the process HOME, so its behaviour is pinned by "
+        "tests/test_secret_path_command_guard.py",
 }
 
 

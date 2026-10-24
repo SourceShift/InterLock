@@ -161,3 +161,33 @@ def test_engine_blocks_malicious_and_allows_benign():
 
     benign = SensorEvent(action="exec_code", args={"code": "import json"})
     assert engine.evaluate(benign).verdict is Verdict.ALLOW
+
+
+# --- NFKC identifiers -------------------------------------------------------
+
+
+def test_a_fullwidth_spelling_of_import_module_is_blocked():
+    decision = dynamic_import_guard()(
+        _event(code="ｉｍｐｏｒｔｌｉｂ.ｉｍｐｏｒｔ＿ｍｏｄｕｌｅ")
+    )
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.reason == "dynamic_import: code"
+
+
+def test_a_fullwidth_spelling_with_an_extra_underscore_is_blocked_too():
+    # The smoke check spells the attribute with two fullwidth underscores;
+    # the normalized name is the same dynamic-import shape.
+    decision = dynamic_import_guard()(
+        _event(code="ｉｍｐｏｒｔｌｉｂ.ｉｍｐｏｒｔ＿＿ｍｏｄｕｌｅ")
+    )
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+
+
+def test_a_fullwidth_non_primitive_gets_no_opinion():
+    assert dynamic_import_guard()(_event(code="Ｈｅｌｌｏ")) is None
+
+
+def test_the_ascii_spelling_is_unchanged():
+    assert dynamic_import_guard()(_event(code="importlib.import_module('os')")) is not None

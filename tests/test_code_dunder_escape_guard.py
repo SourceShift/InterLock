@@ -159,3 +159,22 @@ def test_engine_blocks_malicious_and_allows_benign():
 
     benign = SensorEvent(action="exec_code", args={"code": "result = sum(range(10))"})
     assert engine.evaluate(benign).verdict is Verdict.ALLOW
+
+
+# --- NFKC identifiers -------------------------------------------------------
+
+
+def test_a_fullwidth_spelling_of_a_dunder_is_blocked():
+    # ``＿＿ｇｌｏｂａｌｓ＿＿`` normalizes to ``__globals__``.
+    decision = code_dunder_escape_guard()(_event(code="＿＿ｇｌｏｂａｌｓ＿＿"))
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.reason == "code_dunder_escape: code"
+
+
+def test_a_fullwidth_non_dunder_gets_no_opinion():
+    assert code_dunder_escape_guard()(_event(code="Ｈｅｌｌｏ")) is None
+
+
+def test_the_ascii_spelling_is_unchanged():
+    assert code_dunder_escape_guard()(_event(code="x.__globals__")) is not None

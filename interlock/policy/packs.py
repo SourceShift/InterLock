@@ -27,6 +27,7 @@ that extends this pack.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Callable, Dict, List, Tuple
 
 from .declarative import register_tool_schema
@@ -51,6 +52,13 @@ WRITE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]
 FILE_TOOLS = ["Read"] + WRITE_TOOLS
 #: Tools that read a file or directory named in their ``path`` argument.
 SEARCH_TOOLS = ["Grep", "Glob"]
+
+#: Hook-settings files named inside a write tool's command text (``apply_patch``
+#: carries the patch body in ``command``), where the path is not in ``file_path``.
+_HOOK_SETTINGS_IN_COMMAND = (
+    r"(?:\.claude/settings(?:\.local)?\.json|\.codex/(?:hooks\.json|config\.toml)"
+    r"|\.cursor/hooks\.json)\b"
+)
 
 
 def _register() -> None:
@@ -132,9 +140,14 @@ def coding_agent() -> Dict[str, Any]:
              "reason": "running a command as another user (sudo, doas, su)",
              "when": {"intent": "priv.escalate", "arg": "command"}},
             {"id": "git-credentials", "on": "Bash", "detector": "git_credential_guard"},
-            {"id": "secret-files", "verdict": "block", "on": FILE_TOOLS,
+            {"id": "secret-files", "verdict": "block", "on": FILE_TOOLS + SEARCH_TOOLS,
              "reason": "credential stores (ssh, cloud, gpg, registry tokens) are off limits",
-             "when": _path_under(secret_dirs, secret_files)},
+             "when": _path_under(secret_dirs, secret_files,
+                                 ("file_path", "notebook_path", "path"))},
+            {"id": "secret-file-commands", "on": "Bash",
+             "detector": "secret_path_command_guard",
+             "with": {"prefixes": secret_dirs, "exact": secret_files,
+                      "keys": ["command"], "verdict": "block"}},
             {"id": "env-files", "verdict": "escalate", "on": "Read",
              "reason": "reading a .env file puts its secrets in the agent's context",
              "when": {"all": [
@@ -145,7 +158,12 @@ def coding_agent() -> Dict[str, Any]:
              "reason": "this file controls the agent's hooks; changing it can remove the guard",
              "when": {"any": [_path_under([], hook_settings),
                               {"arg": "file_path", "endswith": "/.claude/settings.json"},
-                              {"arg": "file_path", "endswith": "/.claude/settings.local.json"}]}},
+                              {"arg": "file_path", "endswith": "/.claude/settings.local.json"},
+                              {"arg": "command", "matches": _HOOK_SETTINGS_IN_COMMAND}]}},
+            {"id": "agent-hook-settings-commands", "on": "Bash",
+             "detector": "secret_path_command_guard",
+             "with": {"prefixes": [], "exact": hook_settings,
+                      "keys": ["command"], "verdict": "escalate"}},
             {"id": "result-injection", "detector": "tool_result_injection_guard"},
             {"id": "result-secrets", "detector": "tool_output_secret_redactor"},
         ],

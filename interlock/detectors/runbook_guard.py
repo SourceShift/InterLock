@@ -18,16 +18,23 @@ redirects or substitutions (checked with :mod:`interlock.shell`) - whose words
 match a template's words one for one, every ``{param}`` filled by a value that
 passes its spec:
 
-=============  ===========================================================
-``pattern``    a regular expression the whole value must match
-``options``    the value must be one of these
-``type``       ``string`` (default), ``integer`` (``min``/``max`` apply) or
-               ``path`` (no ``..``, no leading ``-``)
-``minlength``  / ``maxlength`` on the value's length
-=============  ===========================================================
+================  ===========================================================
+``pattern``       a regular expression the whole value must match
+``options``       the value must be one of these
+``type``          ``string`` (default), ``integer`` (``min``/``max`` apply) or
+                  ``path`` (no ``..``, no leading ``-``)
+``allow_option``  a value beginning with ``-`` is refused unless this is true
+``minlength``     / ``maxlength`` on the value's length
+================  ===========================================================
+
+An argument may be the command string or an already-split list/tuple (the
+``argv`` a tool was handed). A list's words are matched against the template
+words directly, with no shell parse; a non-string word, or an empty sequence,
+fails as "not a single plain command".
 
 An unspecified parameter accepts ``[A-Za-z0-9._:/@=+-]+`` only - no spaces, no
-shell characters. Anything that matches no runbook is blocked (or escalated,
+shell characters - and, like a declared one, may not begin with ``-``. Anything
+that matches no runbook is blocked (or escalated,
 with ``verdict="escalate"``); the reason names the closest runbook and the
 parameter that failed, never the value. Templates come from your policy or
 local files (:func:`load_runbooks`), never from the network.
@@ -48,7 +55,7 @@ from ..shell import parse
 
 POLICY_ID = "runbook"
 _SPEC_KEYS = frozenset({"pattern", "options", "type", "minlength", "maxlength", "min", "max",
-                        "description"})
+                        "description", "allow_option"})
 _DEFAULT_VALUE = re.compile(r"^[A-Za-z0-9._:/@=+-]+$")
 _PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -122,9 +129,13 @@ class _Runbook:
     def _check_param(self, pname: str, value: str) -> Optional[str]:
         spec = self.params.get(pname)
         if spec is None:
+            if value.startswith("-"):
+                return "{} may not start with an option".format(pname)
             return None if _DEFAULT_VALUE.match(value) else \
                 "{} has characters outside [A-Za-z0-9._:/@=+-]".format(pname)
         kind = spec.get("type", "string")
+        if value.startswith("-") and not spec.get("allow_option", False):
+            return "{} may not start with an option".format(pname)
         if kind == "integer":
             if not re.match(r"^-?\d+$", value):
                 return "{} must be an integer".format(pname)
@@ -164,14 +175,15 @@ def runbook_guard(
     runbooks: Sequence[Mapping[str, Any]],
     *,
     verdict: str = "block",
-    keys: Optional[Iterable[str]] = ("command", "cmd"),
+    keys: Optional[Iterable[str]] = ("command", "cmd", "argv"),
     actions: Optional[Iterable[str]] = None,
 ) -> Rule:
     """Build a Rule allowing only commands that match a runbook.
 
     runbooks: runbook objects (see the module docstring).
     verdict:  ``block`` (default) or ``escalate`` for anything else.
-    keys:     argument names holding the command; None reads every str argument.
+    keys:     argument names holding the command (a string or an already-split
+              list/tuple); None reads every string or sequence argument.
     actions:  tools the rule applies to (e.g. ``["Bash"]``); default every tool.
     """
     if verdict not in ("block", "escalate"):
@@ -190,16 +202,27 @@ def runbook_guard(
         if not isinstance(args, dict):
             return None
         for name, value in args.items():
-            if not isinstance(value, str) or (key_set is not None and name not in key_set):
+            if key_set is not None and name not in key_set:
                 continue
-            parsed = parse(value)
-            if parsed.partial or len(parsed.invocations) != 1 or parsed.invocations[0].redirects:
-                return make("runbook: {} is not a single plain command".format(name),
-                            POLICY_ID, attributed_to=name)
-            try:
-                argv = shlex.split(value)
-            except ValueError:
-                return make("runbook: {} does not parse".format(name), POLICY_ID, attributed_to=name)
+            if isinstance(value, (list, tuple)):
+                if not value:
+                    return make("runbook: {} is not a single plain command".format(name),
+                                POLICY_ID, attributed_to=name)
+                if not all(isinstance(word, str) for word in value):
+                    return make("runbook: {} holds a non-string word".format(name),
+                                POLICY_ID, attributed_to=name)
+                argv = list(value)
+            elif isinstance(value, str):
+                parsed = parse(value)
+                if parsed.partial or len(parsed.invocations) != 1 or parsed.invocations[0].redirects:
+                    return make("runbook: {} is not a single plain command".format(name),
+                                POLICY_ID, attributed_to=name)
+                try:
+                    argv = shlex.split(value)
+                except ValueError:
+                    return make("runbook: {} does not parse".format(name), POLICY_ID, attributed_to=name)
+            else:
+                continue
             closest: Tuple[int, str, Optional[str]] = (-1, "", None)
             for book in compiled:
                 ok, failure, hits = book.check(argv)

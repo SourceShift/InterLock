@@ -165,6 +165,10 @@ CASES = [
      lambda: dmod("runbook_guard").runbook_guard(runbooks=[
          {"name": "ls", "templates": ["ls {dir}"]}]),
      "Bash", {"command": "rm -rf /tmp/x"}, "command", Verdict.BLOCK),
+    ("secret_path_command_guard",
+     lambda: dmod("secret_path_command_guard").secret_path_command_guard(
+         prefixes=["/secrets/"]),
+     "Bash", {"command": "cat /secrets/id_rsa"}, "command", Verdict.BLOCK),
     ("http_request_guard",
      lambda: dmod("http_request_guard").http_request_guard(rules=[
          {"name": "no-admin", "resources": ["/admin/**"]}]),

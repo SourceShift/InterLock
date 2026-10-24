@@ -138,3 +138,24 @@ def test_engine_blocks_malicious_and_allows_benign():
         action="exec_code", args={"code": "x = [i*i for i in range(5)]"}
     )
     assert engine.evaluate(benign).verdict is Verdict.ALLOW
+
+
+# --- NFKC identifiers -------------------------------------------------------
+
+
+def test_a_fullwidth_spelling_of_the_builtin_is_blocked():
+    # Python normalizes identifiers to NFKC, so the fullwidth spelling of
+    # ``eval`` is the builtin to the interpreter; the guard must read it too.
+    decision = code_eval_exec_guard()(_event(code="ｅｖａｌ(1)"))
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.reason == "code_eval_exec: code"
+
+
+def test_a_fullwidth_non_builtin_gets_no_opinion():
+    # U+FF28 ... is ``Hello`` after normalization: a name, not a builtin.
+    assert code_eval_exec_guard()(_event(code="Ｈｅｌｌｏ")) is None
+
+
+def test_the_ascii_spelling_is_unchanged():
+    assert code_eval_exec_guard()(_event(code="eval(1)")) is not None

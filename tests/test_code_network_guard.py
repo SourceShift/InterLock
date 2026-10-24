@@ -159,3 +159,21 @@ def test_engine_blocks_malicious_and_allows_benign():
 
     benign = SensorEvent(action="exec_code", args={"code": "total = 2 + 2"})
     assert engine.evaluate(benign).verdict is Verdict.ALLOW
+
+
+# --- NFKC identifiers -------------------------------------------------------
+
+
+def test_a_fullwidth_spelling_of_socket_socket_is_blocked():
+    decision = code_network_guard()(_event(code="ｓｏｃｋｅｔ.ｓｏｃｋｅｔ"))
+    assert decision is not None
+    assert decision.verdict is Verdict.BLOCK
+    assert decision.reason == "code_network: code"
+
+
+def test_a_fullwidth_non_primitive_gets_no_opinion():
+    assert code_network_guard()(_event(code="Ｈｅｌｌｏ")) is None
+
+
+def test_the_ascii_spelling_is_unchanged():
+    assert code_network_guard()(_event(code="socket.socket")) is not None

@@ -61,7 +61,8 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
             "pem_private_key_redactor", "db_uri_redactor", "stripe_key_redactor",
             "slack_webhook_redactor", "s3_presigned_redactor", "output_secret_redactor",
             "secret_entropy_egress_guard", "env_secret_read_guard",
-            "git_credential_guard", "tool_output_secret_redactor", "data_masking_guard",
+            "git_credential_guard", "secret_path_command_guard",
+            "tool_output_secret_redactor", "data_masking_guard",
             "pii_argument_guard", "email_pii_redactor",
             "output_email_redactor",
             "iban_redactor", "ssn_redactor", "us_phone_redactor", "ipv4_redactor",
@@ -156,8 +157,10 @@ SCOPE_NOTES: Dict[str, str] = {
     "token_budget_guard": "any call, estimated tokens counted per principal over a "
                           "rolling `window_s`",
     "tool_budget_limiter": "any call, counted per tool name",
-    "runbook_guard": "calls carrying `command`/`cmd` (or the `keys` you name); "
+    "runbook_guard": "calls carrying `command`/`cmd`/`argv` (or the `keys` you name); "
                      "everything else in those arguments must match a runbook",
+    "secret_path_command_guard": "calls carrying `command`/`cmd` (or the `keys` you "
+                                 "name) whose words name a configured secret path",
     "http_request_guard": "calls with a `url`/`endpoint`/`uri` argument (or the `actions` "
                           "you name)",
     "mcp_elicitation_guard": "`mcp.elicitation` / `elicitation/create` events",

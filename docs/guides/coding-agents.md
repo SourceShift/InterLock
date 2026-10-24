@@ -94,7 +94,8 @@ full text):
 | `unreadable-commands` | ask, **locked** | a shell command the guard could only partly read: an unclosed quote, or nesting deeper than it follows. What it couldn't read may be what the other rules stop, so it is asked about; Codex, which can't ask, refuses it. A partly read command whose readable part is blocked is still blocked |
 | `destructive-commands` | block, **locked** | recursive delete or chmod of `/`, `~` or a system directory, raw disk writes, formats, however they're spelled |
 | `fetch-and-execute` | block | `curl ... \| sh`, `bash -c "$(curl ...)"`, `bash <(curl ...)` |
-| `secret-files` | block | reading or writing `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.netrc`, `~/.npmrc` and similar |
+| `secret-files` | block | reading or writing `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.netrc`, `~/.npmrc` and similar, with a file tool or a `Grep`/`Glob` search |
+| `secret-file-commands` | block | a shell command whose words name one of those paths: `cat ~/.ssh/id_rsa`, `grep -r TOKEN ~/.aws`, `curl --netrc-file $HOME/.netrc`, and redirects into one |
 | `git-credentials` | block | `git config --get ...password`, `git config --list`, `git credential fill` |
 | `force-push` | ask | force-push to a default branch, or with no branch named |
 | `push-delete`, `discard-work` | ask | deleting a remote branch; `reset --hard`, `clean -f`, `checkout .`, `branch -D` |
@@ -102,7 +103,8 @@ full text):
 | `shell-init-write`, `scheduled-jobs` | ask | writing `~/.zshrc` and friends; `crontab`, `launchctl load`, `systemctl enable` |
 | `privilege` | ask | `sudo`, `doas`, `su` |
 | `env-files` | ask | reading `.env` (but not `.env.example`) |
-| `agent-hook-settings` | ask | editing the agent's own hook settings |
+| `agent-hook-settings` | ask | editing the agent's own hook settings, through a file tool or a patch body |
+| `agent-hook-settings-commands` | ask | a shell command that writes one of those files, such as a redirect into `~/.claude/settings.json` |
 | `result-injection` | withhold | prompt injection in tool output |
 | `result-secrets` | redact | credentials in tool output |
 

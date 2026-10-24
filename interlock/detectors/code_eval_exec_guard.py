@@ -19,12 +19,18 @@ Only top-level string values of a dict ``args`` are scanned. An int, None, or
 nested container is skipped rather than stringified, and a non-dict ``args``
 yields no opinion - a detector must never raise on odd input. The first
 matching value blocks the call; no match returns None (no opinion).
+
+Identifiers are matched after NFKC normalization because that is how Python
+reads them: the fullwidth spelling ``ｅｖａｌ`` is the builtin ``eval`` to the
+interpreter, so it must be to this guard too. The raw text is scanned first,
+so the reason and attribution of an ordinary ASCII match do not change.
 """
 from __future__ import annotations
 
 import re
 from typing import Optional
 
+from .._unicode import nfkc
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -44,11 +50,11 @@ def code_eval_exec_guard() -> Rule:
     """Build a Rule that blocks a code argument calling eval/exec/compile/__import__.
 
     Every top-level str value of a dict ``args`` is tested against
-    :data:`PATTERN`. On the first match the rule returns a BLOCK naming the
-    offending argument, so the caller can tell which parameter carried the
-    payload. A non-dict ``args``, a dict with no str values, and a dict whose
-    str values are all clean each return None (no opinion). The rule never
-    raises.
+    :data:`PATTERN`, first as written and then in NFKC form. On the first
+    match the rule returns a BLOCK naming the offending argument, so the caller
+    can tell which parameter carried the payload. A non-dict ``args``, a dict
+    with no str values, and a dict whose str values are all clean each return
+    None (no opinion). The rule never raises.
     """
 
     def rule(event: SensorEvent) -> Optional[Decision]:
@@ -59,12 +65,15 @@ def code_eval_exec_guard() -> Rule:
         for name, value in args.items():
             if not isinstance(value, str):
                 continue
-            if PATTERN.search(value):
-                return Decision.block(
-                    reason="code_eval_exec: {}".format(name),
-                    policy_id=POLICY_ID,
-                    attributed_to=name,
-                )
+            if not PATTERN.search(value):
+                normalized = nfkc(value)
+                if normalized == value or not PATTERN.search(normalized):
+                    continue
+            return Decision.block(
+                reason="code_eval_exec: {}".format(name),
+                policy_id=POLICY_ID,
+                attributed_to=name,
+            )
 
         return None
 
