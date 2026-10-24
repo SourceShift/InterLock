@@ -174,11 +174,28 @@ class RemoteEngine:
 
     def _exchange(self, event: SensorEvent) -> Decision:
         op_id = "op-{}-{}".format(os.getpid(), next(self._ids))
+        # Encode before touching the socket. A request the daemon cannot accept
+        # is a refusal this client can establish on its own, so it must never be
+        # mistaken for an outage: opening the connection first would let the
+        # daemon's close race the reply and surface as EOF, which is classified
+        # unreachable. Nothing below sends a byte for a request refused here.
+        try:
+            payload = encode_frame(request_frame(op_id, event))
+        except Exception as exc:
+            raise WireError(
+                "bad_request",
+                "request could not be encoded: {}: {}".format(
+                    type(exc).__name__, exc
+                ),
+            )
+        if len(payload) > MAX_LINE:
+            raise WireError("too_large", "request exceeded the frame limit")
+
         sock = self._connect()
         reader = self._reader
         if reader is None:  # _connect installs it; unreachable in practice
             raise WireError("internal", "connection has no reader")
-        sock.sendall(encode_frame(request_frame(op_id, event)))
+        sock.sendall(payload)
         line = reader.readline(MAX_LINE + 1)
         if not line:
             raise WireError("bad_response", "daemon closed the connection")

@@ -201,6 +201,25 @@ without the daemon carry policy id `sidecar_unreachable` or `fallback/<rule>`. A
 daemon that is reachable but answers with an error frame is refusing, not
 unreachable: that always blocks.
 
+**A refusal is not an outage.** Only an absent, refused, timed-out, or hung-up
+daemon is an outage that follows the table above. These are refusals, and they
+block under *every* `unreachable` level - `deny`, `degraded`, and `allow` alike:
+
+- an **oversized or unencodable request**. The client encodes and bounds the
+  request before opening the socket, so a request over the 8 MiB frame limit or
+  a value the codec cannot represent is refused locally: no connection is
+  opened and the call blocks with `too_large` or `bad_request`;
+- an **undecodable or over-deep frame**. The daemon answers with an error frame
+  (`bad_request`, or `internal` for a document that exhausts the decoder's
+  stack) and keeps serving the same connection;
+- a **failed receipt write**. The decision is not sent; the daemon answers
+  `receipt_failed` and keeps serving. An audited decision is never retried
+  without its receipt.
+
+A client could not reach the fallback path for any of these even if it wanted
+to: the daemon (or the local encoder) has answered, so the failure is a
+refusal, and a refusal always blocks.
+
 The fallback file stores the policy as a JSON string and signs
 `"<written_at>\n<policy>"` with HMAC-SHA256, so the Python and Node.js clients
 verify the same bytes. It's limited to what both evaluate identically: `block`
@@ -299,11 +318,12 @@ An error frame carries no verdict, so **a client must treat it as a block.**
 |---|---|
 | `bad_request` | Not JSON, not UTF-8, unknown or missing keys, or a value of the wrong type. |
 | `bad_version` | `v` is not `1`. |
-| `too_large` | The line exceeded 8 MiB or wasn't terminated. The connection closes. |
+| `too_large` | The line exceeded 8 MiB or wasn't terminated. The connection closes. A client refuses its own oversized request before sending. |
 | `unrepresentable` | A value (often a rule's rewrite) can't be encoded. |
 | `unauthenticated_scope` | A request's `scope` overlay is unsigned, tampered, or otherwise doesn't verify under the daemon's key. |
 | `scope_mismatch` | A request's `scope` overlay verifies, but is not the scope document the daemon serves. |
-| `internal` | The daemon produced something it couldn't send. |
+| `receipt_failed` | The decision could not be written to the receipt sink. No verdict is sent and the connection keeps serving. |
+| `internal` | The daemon produced something it couldn't send, or a frame step raised unexpectedly. The connection keeps serving. |
 
 ### Values
 

@@ -108,33 +108,82 @@ class _Handler(socketserver.StreamRequestHandler):
                 # connection ends: the rest of a runaway line is not a frame.
                 self._reply(error_frame("", "too_large", "frame exceeded limit"))
                 return
+            self._serve_frame(line)
 
-            op_id = ""
-            try:
-                frame = decode_line(line)
-                if isinstance(frame.get("id"), str):
-                    op_id = frame["id"]
-                op_id, event = parse_request(frame)
-            except WireError as exc:
-                self._reply(error_frame(op_id, exc.code, str(exc)))
-                continue
+    def _serve_frame(self, line: bytes) -> None:
+        """Serve one line, answering every failure and returning to the loop.
 
+        A wire refusal keeps its own code. Anything else a per-frame step
+        raises - a ``RecursionError`` from a deeply nested document, an
+        unexpected error in a scope or decision step - is logged and answered
+        as ``internal`` rather than allowed to kill the connection. The frame
+        after a bad one must still be served: a connection that dies with no
+        reply looks like an outage to the client and can be downgraded by
+        ``unreachable="allow"``.
+        """
+        op_id = ""
+        try:
+            frame = decode_line(line)
+        except WireError as exc:
+            self._reply(error_frame(op_id, exc.code, str(exc)))
+            return
+        except Exception as exc:  # e.g. RecursionError from json.loads
+            self._internal(op_id, exc)
+            return
+        if isinstance(frame.get("id"), str):
+            op_id = frame["id"]
+        try:
+            op_id, event = parse_request(frame)
+        except WireError as exc:
+            self._reply(error_frame(op_id, exc.code, str(exc)))
+            return
+        except Exception as exc:
+            self._internal(op_id, exc)
+            return
+
+        try:
             # A scope overlay rides the request and must verify before the
             # engine sees the event: an unverified overlay has no decision, so
             # the far end is told to block rather than served a verdict under a
             # scope set this daemon did not agree to.
             scope_document = self._scope_for(frame, op_id)
             if scope_document is _REFUSED:
-                continue
+                return
 
             decision = self._decide(event)
+
             # Recorded before it is transmitted: the decision happened whether
-            # or not the answer could be encoded.
-            emit_receipt(event, decision, scope_document=scope_document)
+            # or not the answer could be encoded. A sink that cannot record it
+            # is a refusal, not an outage: the decision must not be made again
+            # without an audit trail by a caller's fallback path. Answer with no
+            # verdict and serve the next frame; the write is not retried.
+            try:
+                emit_receipt(event, decision, scope_document=scope_document)
+            except Exception as exc:
+                _log.exception("sidecar: receipt sink failed; refusing the call")
+                self._reply(error_frame(
+                    op_id, "receipt_failed",
+                    "receipt write failed: {}".format(type(exc).__name__),
+                ))
+                return
+
             try:
                 self._reply(response_frame(op_id, decision))
             except WireError as exc:
                 self._reply(error_frame(op_id, exc.code, str(exc)))
+        except WireError as exc:
+            self._reply(error_frame(op_id, exc.code, str(exc)))
+        except Exception as exc:
+            self._internal(op_id, exc)
+
+    def _internal(self, op_id: str, exc: BaseException) -> None:
+        _log.error(
+            "sidecar: unhandled error serving a frame; replying internal",
+            exc_info=exc,
+        )
+        self._reply(error_frame(
+            op_id, "internal", "internal error: {}".format(type(exc).__name__)
+        ))
 
     def _scope_for(self, frame: dict, op_id: str) -> Any:
         """Resolve this frame's scope-document identity, or :data:`_REFUSED`.
