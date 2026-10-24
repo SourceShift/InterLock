@@ -1,0 +1,72 @@
+# Dependency updates, one pull request per ecosystem and week.
+#
+# The Python package itself ships `dependencies = []`, so the pip surface is
+# development tooling (pytest, ruff, langchain-core) and the optional extras.
+# The other surfaces are the Node client, the console UI, the Rust crate and
+# the actions the workflows pin.
+#
+# Weekly and grouped on purpose: a security tool whose dependency diff is a
+# wall of version bumps gets reviewed carelessly, and an ungrouped Dependabot
+# on a repo this size opens enough PRs to drown the queue.
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:17"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/js"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:17"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      js:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/web"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:17"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      web:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: "/rust"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:17"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      rust:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:17"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]

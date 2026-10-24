@@ -9,3 +9,9 @@ contact_links:
   - name: Read the limits first
     url: https://github.com/SourceShift/InterLock/blob/main/docs/security-model.md
     about: interlock's known limits and weaken-the-protection settings. Many reports are one of these.
+  - name: Good first issues
+    url: https://github.com/SourceShift/InterLock/labels/good%20first%20issue
+    about: Small, self-contained changes with a clear stopping point — detector requests are usually a good first PR.
+  - name: Contributing guide
+    url: https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md
+    about: Setup, the test commands, merge rules, and how to add a detector.

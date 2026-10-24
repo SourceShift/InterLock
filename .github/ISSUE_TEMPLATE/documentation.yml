@@ -1,0 +1,58 @@
+name: Documentation correction
+description: A page is wrong, stale, or a snippet does not do what it says.
+title: "docs: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Docs claims are treated like code here: a snippet in `README.md` or
+        `docs/` is supposed to have been run, and its output is supposed to be
+        the output. If a page is wrong, you can also send the fix directly as a
+        pull request — see
+        [CONTRIBUTING.md](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md).
+
+        If what you found is a way to *get past* interlock, stop and report it
+        privately instead — see
+        [SECURITY.md](https://github.com/SourceShift/InterLock/blob/main/SECURITY.md).
+
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: The URL, or the path under docs/ (for example docs/guides/scopes.md).
+      placeholder: "docs/guides/scopes.md#delegation"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong
+      description: The sentence or snippet that is wrong, and what it should say or do. For a snippet, paste what you ran and what it printed.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of correction
+      options:
+        - A snippet does not run, or its output differs
+        - The page contradicts the current code
+        - Missing documentation for an existing behaviour
+        - Typo, broken link, or formatting
+        - Something else
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for the same correction.
+          required: true
+        - label: This is a documentation problem, not a private vulnerability report.
+          required: true

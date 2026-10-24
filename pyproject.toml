@@ -33,10 +33,20 @@ classifiers = [
 ]
 dependencies = []
 
+[project.urls]
+Homepage = "https://interlock.sourceshift.ai/"
+Documentation = "https://interlock.sourceshift.ai/"
+Repository = "https://github.com/SourceShift/InterLock"
+Issues = "https://github.com/SourceShift/InterLock/issues"
+Changelog = "https://github.com/SourceShift/InterLock/blob/main/CHANGELOG.md"
+Security = "https://github.com/SourceShift/InterLock/blob/main/SECURITY.md"
+
 [project.optional-dependencies]
 mcp = ["wrapt>=1.15"]
 langchain = ["langchain-core>=0.3,<0.4"]
-dev = ["pytest>=7", "langchain-core>=0.3,<0.4"]
+# ruff is pinned here too: CI pins it (an unpinned linter turns a green repo red
+# on a release schedule), and a contributor should run the same version as CI.
+dev = ["pytest>=7", "langchain-core>=0.3,<0.4", "ruff==0.16.9"]
 
 [project.scripts]
 interlock = "interlock.cli:main"
@@ -45,3 +55,7 @@ interlock-console = "interlock.console.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["interlock*"]
+
+[tool.setuptools.package-data]
+# PEP 561: ships the inline type hints to type checkers and IDEs.
+interlock = ["py.typed"]

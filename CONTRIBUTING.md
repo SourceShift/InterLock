@@ -4,6 +4,33 @@ Thanks for helping. This page covers setting up, running the tests, adding a
 detector, and keeping the docs accurate. For anything bigger than a bug fix or a
 detector, open an issue first so we can agree on the approach.
 
+## Where to start
+
+- **A detector request** is the easiest first PR: one module in
+  `interlock/detectors/`, one test file, one catalog line. See
+  [Adding a detector](#adding-a-detector).
+- [`good first issue`](https://github.com/SourceShift/InterLock/labels/good%20first%20issue)
+  and [`help wanted`](https://github.com/SourceShift/InterLock/labels/help%20wanted)
+  are triaged to be self-contained.
+- **A docs correction** can go straight to a PR; if you would rather report it,
+  use the documentation issue form.
+- **Anything larger** — a new adapter, a policy-language change, a console
+  screen — open an issue first, or check [ROADMAP.md](ROADMAP.md) to see whether
+  it is already planned.
+
+## What runs where
+
+| Surface | Path | Needs | Local gate |
+|---|---|---|---|
+| Python SDK | `interlock/`, `tests/` | Python 3.9–3.13 | `make check` |
+| Node client | `js/` | Node 20, 22 or 24 | `make check-js` |
+| Console UI | `web/` | Node ≥ 20.19 | `make check-web` |
+| Docs site | `docs/` | Python ≥ 3.11 (Zensical) | the Docs workflow |
+| Native scope store | `rust/` | Rust + maturin (optional) | `make check-rust` |
+
+You only need the toolchain for the surface you change. The gates are the same
+ones CI runs, and `make check-all` runs the first three.
+
 ## Set up
 
 ```bash
@@ -13,7 +40,14 @@ pip install -e ".[dev]"
 ```
 
 The package is pure Python with no build step and no runtime dependencies. The
-`dev` extra adds `pytest` and `langchain-core` (for the LangChain adapter tests).
+`dev` extra adds `pytest`, `langchain-core` (for the LangChain adapter tests),
+and the `ruff` version CI pins. Install the Node dependencies only for the
+surface you touched:
+
+```bash
+npm --prefix js ci
+npm --prefix web ci
+```
 
 ## Run the tests
 
@@ -28,11 +62,34 @@ between tests, so tests don't leak rules into each other. Some sandbox tests ski
 on hosts without the backend they need (bubblewrap on macOS, for example), and
 `-rs` names the reason.
 
-CI also runs a narrow lint over the package. Run it before you push:
+Before you push, run the same gate CI runs:
 
 ```bash
-pip install "ruff==0.16.9"
-ruff check --select E9,F interlock/
+make check        # ruff (E9,F), detector catalog --check, full pytest suite
+```
+
+`make check` needs only the Python toolchain. If your change touches `js/` or
+`web/`, run `make check-js` or `make check-web` too — both install from the
+lockfile, test, and build the artifact that ships:
+
+```bash
+make check-js     # npm ci, test, build for the Node client
+make check-web    # npm ci, typecheck, test, build for the console UI
+make check-all    # all three
+```
+
+## The console (`web/`)
+
+The console UI is a React/Vite app whose built bundle ships inside the Python
+package, so a type error is as user-visible as a Python bug. The dev server,
+the generated design screens, and how each screen binds to the API are covered
+in [the console guide](docs/guides/console.md#development).
+
+```bash
+npm --prefix web run dev        # dev server against a running console
+npm --prefix web run typecheck  # every binding checked against the view model
+npm --prefix web test           # vitest
+npm --prefix web run build      # web/dist/, the bundle the server serves
 ```
 
 The Node.js client has its own suite: see [js/README.md](js/README.md#development).
@@ -47,6 +104,28 @@ feat(mcp): capability leases that expire, enforced at call time
 fix(guard): apply MODIFY rewrites to positional arguments
 docs: explain rule order in concepts
 ```
+
+The **pull request title** is the squash commit on `main`, so give the PR the
+title you want in the history. A maintainer edits the title if it is not in this
+form rather than asking you to rename the branch.
+
+## How a pull request lands
+
+- **Squash and merge** is the default: one PR becomes one Conventional-Commits
+  commit on `main`, which keeps `git log --oneline main` readable and a revert
+  one command. If you split a series into commits that are each worth keeping
+  on their own, say so and we will rebase-merge instead. Merge commits are not
+  used on `main`.
+- **The required check is `ci-ok`**, the single job that aggregates Python,
+  Rust, Node, console and lint. A red `ci-ok` is not mergeable; the individual
+  job names tell you which half broke.
+- **One approving review** and resolved conversations, for anything that touches
+  `interlock/`, `js/`, `web/` or a workflow. Documentation-only PRs can land
+  with checks green.
+- **DCO, not a CLA.** Sign off your commits with `git commit -s`
+  (`Signed-off-by:` line) to certify you wrote or have the right to contribute
+  the change. There is no separate paperwork.
+- **Auto-merge is welcome** once `ci-ok` is green and the PR has its review.
 
 ## Adding a detector
 
@@ -155,6 +234,34 @@ These docs have drifted from the code before, so treat a docs claim like code:
   before how. Lead a guide with the problem it solves, show output after code,
   and end with an honest "Limits" section. Say what doesn't work as clearly as
   what does.
+
+## Changelog and releases
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+**A PR that changes user-visible behaviour adds a line under `## [Unreleased]`**
+in the matching heading (`Added`, `Changed`, `Fixed`, `Deprecated`, `Removed`,
+`Security`) as part of the same PR. Internal refactors, tests and CI do not need
+an entry.
+
+While the version is `0.x`, breaking changes land in the minor number; from 1.0
+the project follows Semantic Versioning. Maintainers cut a release from `main`
+by moving the `Unreleased` entries under a new version heading, bumping
+`version` in `pyproject.toml`, `js/package.json` and `web/package.json`, and
+publishing the Python package and Node client from that commit. Contributors do
+not bump versions.
+
+## Maintainer tooling (not needed to contribute)
+
+Two bits of this repo exist for the maintainer's agent-assisted workflow and are
+**not** part of a contributor's setup:
+
+- `.githooks/` plus `scripts/install-worktree-guards.sh` keep the primary
+  checkout a fast-forward of `main` for the maintainer's worktree loop. Do not
+  run the installer: the `pre-commit` guard refuses every commit made in the
+  primary checkout, which is not what you want on your own clone.
+- `.mini-ork/`, the vendored mini-ork engine, is git-ignored and local only.
+
+Your normal fork → branch → pull request flow is the supported path.
 
 ## Reporting a security issue
 

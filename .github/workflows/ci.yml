@@ -1,10 +1,11 @@
 name: CI
 
-# Three ecosystems live in this repo and each has to stand on its own:
+# Four ecosystems live in this repo and each has to stand on its own:
 #
 #   interlock/       the Python package (dependency-free; `dependencies = []`)
 #   rust/            the OPTIONAL native accelerator, `interlock_scopes`
 #   js/              the Node/TypeScript client, `interlock-guard`
+#   web/             the console UI (React/Vite), served by `interlock.console`
 #
 # The Rust crate is the interesting one to get right. It is optional by
 # contract -- `interlock/policy/scopes.py` falls back to the pure-Python tree
@@ -176,6 +177,37 @@ jobs:
         # shows up under src-only rootDir belongs to the release, not the test.
         run: npm run build
 
+  web:
+    name: web console
+    runs-on: ubuntu-latest
+    # The console ships as a prebuilt bundle inside the Python package
+    # (`web/dist/` is built at release time), so a type error or a failing
+    # component test reaches users exactly like a Python bug does. Typecheck,
+    # test and build are separate steps on purpose: each one names which half
+    # of the contract broke.
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build the shipped bundle
+        run: npm run build
+
   lint:
     name: lint
     runs-on: ubuntu-latest
@@ -207,7 +239,7 @@ jobs:
     # some branch-protection configurations, so the `if: always()` plus the
     # explicit result test is what makes this job meaningful.
     if: always()
-    needs: [python, rust, node, lint]
+    needs: [python, rust, node, web, lint]
     runs-on: ubuntu-latest
     steps:
       - name: Check every job succeeded
@@ -215,11 +247,13 @@ jobs:
           echo "python: ${{ needs.python.result }}"
           echo "rust:   ${{ needs.rust.result }}"
           echo "node:   ${{ needs.node.result }}"
+          echo "web:    ${{ needs.web.result }}"
           echo "lint:   ${{ needs.lint.result }}"
           for result in \
             "${{ needs.python.result }}" \
             "${{ needs.rust.result }}" \
             "${{ needs.node.result }}" \
+            "${{ needs.web.result }}" \
             "${{ needs.lint.result }}"
           do
             if [ "$result" != "success" ]; then
