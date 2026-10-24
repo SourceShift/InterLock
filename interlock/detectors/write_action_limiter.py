@@ -21,6 +21,7 @@ is not recognised as mutating and is skipped, so odd input never raises.
 """
 from __future__ import annotations
 
+import threading
 from typing import Dict, Optional
 
 from ..enforce import Decision
@@ -60,9 +61,15 @@ def write_action_limiter(limit: int = DEFAULT_LIMIT) -> Rule:
     by ``event.principal`` (falling back to ``"<anon>"`` when it is None or not
     a string). While a key's running count is <= *limit* the rule returns None;
     once it is strictly greater it returns a BLOCK Decision. Each call to this
-    factory returns a Rule with its own fresh counter.
+    factory returns a Rule with its own fresh counter. *limit* must be a
+    positive non-bool integer; anything else raises ``ValueError`` at
+    construction. The counter is incremented under a per-rule lock, so
+    concurrent calls cannot lose a count.
     """
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("limit must be a positive integer")
     counts: Dict[str, int] = {}
+    lock = threading.Lock()
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         action = getattr(event, "action", None)
@@ -73,8 +80,10 @@ def write_action_limiter(limit: int = DEFAULT_LIMIT) -> Rule:
         if not isinstance(principal, str):
             principal = ANON
 
-        counts[principal] = counts.get(principal, 0) + 1
-        if counts[principal] > limit:
+        with lock:
+            counts[principal] = counts.get(principal, 0) + 1
+            over_limit = counts[principal] > limit
+        if over_limit:
             return Decision.block(
                 reason="write_budget: limit {} exceeded".format(limit),
                 policy_id=POLICY_ID,

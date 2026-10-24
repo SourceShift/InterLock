@@ -23,6 +23,7 @@ event whose action is not a string has no name to key on and is skipped.
 """
 from __future__ import annotations
 
+import threading
 from typing import Dict, Optional
 
 from ..enforce import Decision
@@ -40,17 +41,25 @@ def tool_budget_limiter(limit: int = DEFAULT_LIMIT) -> Rule:
     The count is keyed by ``event.action`` and incremented on every event whose
     action is a string. While a tool's running count is <= *limit* the rule
     returns None; once it is strictly greater it returns a BLOCK Decision. Each
-    call to this factory returns a Rule with its own fresh counter.
+    call to this factory returns a Rule with its own fresh counter. *limit*
+    must be a positive non-bool integer; anything else raises ``ValueError`` at
+    construction. The counter is incremented under a per-rule lock, so
+    concurrent calls cannot lose a count.
     """
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("limit must be a positive integer")
     counts: Dict[str, int] = {}
+    lock = threading.Lock()
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         action = getattr(event, "action", None)
         if not isinstance(action, str):
             return None
 
-        counts[action] = counts.get(action, 0) + 1
-        if counts[action] > limit:
+        with lock:
+            counts[action] = counts.get(action, 0) + 1
+            over_limit = counts[action] > limit
+        if over_limit:
             return Decision.block(
                 reason="tool_budget: limit {} exceeded".format(limit),
                 policy_id=POLICY_ID,

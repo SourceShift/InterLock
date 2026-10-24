@@ -244,6 +244,31 @@ BUSINESS_RULES = [
 | `update_ticket(id=7, is_admin=True)` | blocked: `mass_assignment` |
 | `send_email(to=..., body="Your SSN 123-45-6789 is on file")` | rewritten: `Your SSN [REDACTED SSN] is on file` |
 
+### Budgets and rate limits
+
+The stateful rules that keep a running total — `cost_budget_guard`,
+`token_budget_guard`, `call_rate_limiter`, `egress_rate_limiter`,
+`write_action_limiter` and `tool_budget_limiter` — refuse a number they cannot
+compare against rather than absorbing it:
+
+- a `cost` that is an `int` or `float` but `NaN`, infinite, negative, or too
+  large to represent is blocked and **not** added to the running total, so a
+  malformed event cannot poison every later comparison or refund honest spend.
+  A missing, non-numeric, `None`, `bool`, container, or non-dict `args` still
+  counts as 0, as before.
+- `cost_budget_guard(budget=...)` rejects a non-finite or negative budget, and
+  `token_budget_guard(limit=..., window_s=...)` rejects a non-finite or
+  non-positive limit or window, at construction with `ValueError`.
+- the four per-call limiters require a positive integer `limit`: `bool`, `0`,
+  a negative number, `float('nan')` and `2.0` are all refused.
+- `token_budget_guard` clamps an event timestamp that is ahead of the wall clock
+  to now, so one future-stamped event cannot trim an earlier charge out of the
+  rolling window. An older timestamp is still honoured, which keeps replay
+  working.
+
+Each rule keeps its state per factory call and mutates it under a lock, so
+concurrent calls cannot lose a charge or a count.
+
 ## Parsed shell commands
 
 A detector that matches command text loses to respelling: `rm -rf /` is caught,

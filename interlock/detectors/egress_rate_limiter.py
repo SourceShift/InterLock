@@ -28,6 +28,7 @@ Out of scope, left to other rules: deciding which destinations are legitimate
 """
 from __future__ import annotations
 
+import threading
 from typing import Dict, Optional
 
 from ..enforce import Decision
@@ -49,9 +50,15 @@ def egress_rate_limiter(
     independent across rules. Returns None (no opinion) while a principal's
     running egress count is <= limit, and a BLOCK Decision once it exceeds it.
     Non-egress actions are ignored and do not consume budget; an event whose
-    principal is not a string is skipped.
+    principal is not a string is skipped. *limit* must be a positive non-bool
+    integer; anything else raises ``ValueError`` at construction. The counter
+    is incremented under a per-rule lock, so concurrent calls cannot lose a
+    count.
     """
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+        raise ValueError("limit must be a positive integer")
     counts: Dict[str, int] = {}
+    lock = threading.Lock()
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         if event.action not in DEFAULT_EGRESS_ACTIONS:
@@ -59,8 +66,10 @@ def egress_rate_limiter(
         principal = event.principal
         if not isinstance(principal, str):
             return None
-        counts[principal] = counts.get(principal, 0) + 1
-        if counts[principal] > limit:
+        with lock:
+            counts[principal] = counts.get(principal, 0) + 1
+            over_limit = counts[principal] > limit
+        if over_limit:
             return Decision.block(
                 "egress_rate: limit {} exceeded".format(limit),
                 policy_id=POLICY_ID,
