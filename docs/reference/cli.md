@@ -372,5 +372,9 @@ usage: interlock mesh verify [-h] [--root FILE] [--json] DIR
 usage: interlock mesh report [-h] ACTION ...
 usage: interlock mesh serve [-h] --role {consensus,aggregator} [--bind HOST:PORT] [--state FILE]
                             [--token TOKEN] [--known-catalog ID] [--min-orgs N]
+usage: interlock mesh harness [-h] --policy FILE --benign FILE [--samples FILE]
+                              [--max-fp-rate RATE] [--max-p95-us US] [--min-recall RATE] [--json]
+usage: interlock mesh forge [-h] --state FILE --benign FILE --out DIR [--samples FILE]
+                            [--max-fp-rate RATE] [--min-recall RATE]
 usage: interlock mesh consensus [-h] ACTION ...
 ```

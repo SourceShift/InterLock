@@ -401,8 +401,9 @@ def _attach_mesh(engine: "DeclarativeEngine") -> None:
     if not specs:
         return
     try:
-        from ..mesh.subscriber import watch_info
+        from ..mesh.subscriber import install_recorder, watch_info
         files, reload_at, sink = watch_info(specs)
+        install_recorder()
     except Exception as exc:  # the mesh is optional plumbing; never fail a load over it
         _log.warning("interlock: mesh watch not attached: %s", exc)
         return

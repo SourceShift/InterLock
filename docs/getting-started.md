@@ -129,7 +129,7 @@ anyway, because the event includes default values.
 
 ## 5. Add the built-in detection rules
 
-You don't have to write every rule yourself. interlock ships 120 detectors, small
+You don't have to write every rule yourself. interlock ships 121 detectors, small
 rules that each catch one kind of attack. Two useful ones:
 
 - `network_egress_guard` blocks calls that send data to hosts you didn't list.

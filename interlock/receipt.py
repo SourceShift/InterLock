@@ -93,10 +93,13 @@ import dataclasses
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import threading
 import time
 from typing import Any, Callable, Dict, Optional
+
+_log = logging.getLogger("interlock")
 
 from .enforce import Blocked, Decision
 from .event import SensorEvent
@@ -262,6 +265,34 @@ def catalog_id_stamp() -> Optional[str]:
     return _CATALOG_ID
 
 
+# Decision observers see (event, decision, receipt) after each receipt is
+# built, whether or not a sink is installed. They exist for components that
+# need the arguments at decision time and must not be rules (which may not
+# record anything): the mesh fingerprint recorder is one. An observer that
+# raises is logged and ignored; it can never change or block a decision.
+_OBSERVERS: list = []
+
+
+def add_decision_observer(observer: Callable[[SensorEvent, Decision, "Receipt"], None]) -> None:
+    if observer not in _OBSERVERS:
+        _OBSERVERS.append(observer)
+
+
+def remove_decision_observer(observer: Callable[[SensorEvent, Decision, "Receipt"], None]) -> None:
+    try:
+        _OBSERVERS.remove(observer)
+    except ValueError:
+        pass
+
+
+def _notify(event: SensorEvent, decision: Decision, receipt: "Receipt") -> None:
+    for observer in list(_OBSERVERS):
+        try:
+            observer(event, decision, receipt)
+        except Exception as exc:  # never let an observer touch the decision path
+            _log.warning("interlock: decision observer %r failed: %s", observer, exc)
+
+
 def signing_payload(receipt: Receipt) -> bytes:
     """The exact bytes a receipt's mac is computed over (every field but mac)."""
     canonical = json.dumps(
@@ -388,7 +419,7 @@ def emit_receipt(
                    masked=getattr(decision, "masked", None), elapsed_us=elapsed_us,
                    observed=observed)
     sink = get_sink()
-    if sink is None:
+    if sink is None and not _OBSERVERS:
         return
     # A token-accounting rule stamps the estimate onto the event as an int; a
     # bool is an int subclass but never a real token count, so it is dropped.
@@ -418,7 +449,10 @@ def emit_receipt(
         scope_document=scope_document,
         catalog=_CATALOG_ID,
     )
-    _write(sink, receipt, event.action)
+    if sink is not None:
+        _write(sink, receipt, event.action)
+    if _OBSERVERS:
+        _notify(event, decision, receipt)
 
 
 def _write(sink: Any, receipt: Receipt, action: str) -> None:

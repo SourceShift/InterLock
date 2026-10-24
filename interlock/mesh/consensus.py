@@ -68,6 +68,8 @@ class ConsensusEngine:
         self.sightings: Dict[str, Dict[str, Any]] = {}    # policy_id -> {kind: {orgs}}
         self.catalogs: Set[str] = set()
         self.canaries: Dict[str, str] = {}                # digest -> "bad" | "benign"
+        self.campaigns: Dict[str, Dict[str, Any]] = {}    # cluster id -> {fp, alpha, orgs, policy_ids, ...}
+        self.samples: Dict[str, List[Dict[str, Any]]] = {}  # policy_id -> redacted samples
         self.rejected = 0
 
     # --- maintainer inputs ------------------------------------------------------
@@ -155,8 +157,72 @@ class ConsensusEngine:
                 orgs = by_kind.setdefault(s.get("kind", "false_positive"), [])
                 if reporter not in orgs:
                     orgs.append(reporter)
+
+            campaigns_touched = self._ingest_fingerprints(reporter, body.get("fingerprints", []), now)
+            samples_kept = self._ingest_samples(reporter, body.get("samples", []), now)
             return {"accepted": True, "reporter": reporter, "digests_counted": counted,
+                    "campaigns": campaigns_touched, "samples": samples_kept,
                     "trust": round(self.trust(reporter), 3)}
+
+    def _ingest_fingerprints(self, reporter: str, entries: List[Dict[str, Any]], now: float) -> int:
+        """Cluster each fingerprint into a campaign (single link, both sides noised)."""
+        from . import fingerprint as fp
+
+        touched = 0
+        for entry in entries[: self.config["max_digests_per_report"]]:
+            try:
+                raw = bytes.fromhex(entry["fp"])
+                alpha = float(entry["alpha"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            if len(raw) != fp.BYTES or alpha <= 0:
+                continue
+            limit = fp.threshold(alpha, both_noisy=True)
+            home = None
+            for key, camp in self.campaigns.items():
+                try:
+                    if fp.hamming(raw, bytes.fromhex(camp["fp"])) <= limit:
+                        home = camp
+                        break
+                except ValueError:
+                    continue
+            if home is None:
+                key = entry["fp"][:32]
+                home = self.campaigns.setdefault(key, {
+                    "fp": entry["fp"], "alpha": alpha, "orgs": [], "policy_ids": [], "tool_classes": [],
+                    "first": now, "last": now, "members": 0})
+            if reporter not in home["orgs"]:
+                home["orgs"].append(reporter)
+            if entry["policy_id"] not in home["policy_ids"]:
+                home["policy_ids"].append(entry["policy_id"])
+            klass = entry.get("tool_class", "other")
+            if klass not in home["tool_classes"]:
+                home["tool_classes"].append(klass)
+            home["last"] = now
+            home["members"] = home.get("members", 0) + 1
+            touched += 1
+        return touched
+
+    def _ingest_samples(self, reporter: str, entries: List[Dict[str, Any]], now: float) -> int:
+        import hashlib
+
+        kept = 0
+        for entry in entries[:20]:
+            text = entry.get("text")
+            policy_id = entry.get("policy_id")
+            if not isinstance(text, str) or not text or not isinstance(policy_id, str):
+                continue
+            bucket = self.samples.setdefault(policy_id, [])
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+            if any(s["digest"] == digest for s in bucket):
+                continue
+            if sum(1 for s in bucket if s["reporter"] == reporter) >= 20 or len(bucket) >= 200:
+                continue
+            bucket.append({"digest": digest, "reporter": reporter, "text": text[:4096], "ts": now,
+                           "tool_class": str(entry.get("tool_class", "other")),
+                           "arg_names": [n for n in (entry.get("arg_names") or []) if isinstance(n, str)][:8]})
+            kept += 1
+        return kept
 
     @staticmethod
     def _new_reporter(now: float) -> Dict[str, Any]:
@@ -209,7 +275,54 @@ class ConsensusEngine:
                             "first": ind["first"], "last": ind["last"], "tool_classes": list(ind["tool_classes"])})
         return out
 
+    def campaign_status(self) -> List[Dict[str, Any]]:
+        """Every fingerprint cluster with its status, like :meth:`decisions`."""
+        now = self._now()
+        ttl = self.config["indicator_ttl_days"] * 86400
+        demoted = self.demoted_rules()
+        out = []
+        with self._lock:
+            for key, camp in sorted(self.campaigns.items()):
+                orgs = list(camp["orgs"])
+                trust_sum = sum(self.trust(o) for o in orgs)
+                if now - camp["last"] > ttl:
+                    status = "expired"
+                elif all(p in demoted for p in camp["policy_ids"]):
+                    status = "demoted"
+                elif len(orgs) >= self.config["min_orgs"] and trust_sum >= self.config["min_trust"]:
+                    status = "active"
+                else:
+                    status = "candidate"
+                out.append({"id": key, "fp": camp["fp"], "alpha": camp["alpha"], "orgs": len(orgs),
+                            "members": camp.get("members", 0), "trust": round(trust_sum, 3), "status": status,
+                            "policy_ids": list(camp["policy_ids"]), "tool_classes": list(camp["tool_classes"]),
+                            "first": camp["first"], "last": camp["last"]})
+        return out
+
     # --- exports -----------------------------------------------------------------------
+
+    def export_similarity(self) -> Dict[str, Any]:
+        """Active campaigns as a pack using ``mesh_similarity_guard`` (escalate)."""
+        active = [c for c in self.campaign_status() if c["status"] == "active"]
+        alphas = sorted({c["alpha"] for c in active}) or [1.5]
+        rules = []
+        for alpha in alphas:
+            fps = sorted(c["fp"] for c in active if c["alpha"] == alpha)
+            rules.append({
+                "id": "mesh-similarity-a{}".format(str(alpha).replace(".", "_")),
+                "status": self.config["pack_status"],
+                "detector": "mesh_similarity_guard.mesh_similarity_guard",
+                "with": {"fingerprints": fps, "alpha": alpha, "verdict": "escalate"},
+                "description": "{} active campaign fingerprint(s) at alpha {}".format(len(fps), alpha),
+            })
+        return {
+            "version": 1,
+            "name": self.config["pack_name"] + "-similarity",
+            "channel": self.config["pack_channel"],
+            "description": "fingerprints of attack payloads at least {} organisations' guards blocked; "
+                           "a similar live call is escalated to a human".format(self.config["min_orgs"]),
+            "rules": rules,
+        }
 
     def export_indicators(self) -> Dict[str, Any]:
         """The active indicators as a policy pack for the commons to publish."""
@@ -237,6 +350,9 @@ class ConsensusEngine:
         funnel: Dict[str, int] = {}
         for d in decisions:
             funnel[d["status"]] = funnel.get(d["status"], 0) + 1
+        campaign_funnel: Dict[str, int] = {}
+        for c in self.campaign_status():
+            campaign_funnel[c["status"]] = campaign_funnel.get(c["status"], 0) + 1
         demoted = self.demoted_rules()
         rules = {}
         with self._lock:
@@ -247,7 +363,9 @@ class ConsensusEngine:
                                     "last": rule["last"]}
             reporters = len(self.reporters)
         return {"generated": now, "reporters": reporters, "rejected_reports": self.rejected,
-                "indicators": funnel, "rules": rules, "demoted_rules": sorted(demoted),
+                "indicators": funnel, "campaigns": campaign_funnel,
+                "samples": {p: len(v) for p, v in sorted(self.samples.items())},
+                "rules": rules, "demoted_rules": sorted(demoted),
                 "config": {k: self.config[k] for k in ("min_orgs", "min_trust", "indicator_ttl_days", "fp_demote_orgs")}}
 
     # --- persistence ----------------------------------------------------------------------
@@ -256,7 +374,8 @@ class ConsensusEngine:
         with self._lock:
             state = {"version": 1, "config": self.config, "reporters": self.reporters,
                      "indicators": self.indicators, "rules": self.rules, "sightings": self.sightings,
-                     "catalogs": sorted(self.catalogs), "canaries": self.canaries, "rejected": self.rejected}
+                     "catalogs": sorted(self.catalogs), "canaries": self.canaries, "rejected": self.rejected,
+                     "campaigns": self.campaigns, "samples": self.samples}
         atomic_write(path, json.dumps(state, sort_keys=True).encode("utf-8"), mode=0o600)
 
     @classmethod
@@ -270,4 +389,6 @@ class ConsensusEngine:
         engine.catalogs = set(state.get("catalogs", []))
         engine.canaries = dict(state.get("canaries", {}))
         engine.rejected = int(state.get("rejected", 0))
+        engine.campaigns = dict(state.get("campaigns", {}))
+        engine.samples = dict(state.get("samples", {}))
         return engine

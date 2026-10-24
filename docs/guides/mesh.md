@@ -198,8 +198,73 @@ rings that caps it to an escalate, and the stable ring does not install it
 until a maintainer promotes the pack. The commons publishes it like any other
 pack, so indicators reach nodes through the same verified path.
 
+## Find similar attacks without sharing text
+
+An exact digest matches only the identical payload. Attacks arrive re-spelled,
+so a node can also record a **fingerprint** of what its guard blocked:
+
+```bash
+interlock mesh report enable --alpha 1.5                      # fingerprints only
+interlock mesh report enable --alpha 1.5 --sample tool_result_injection   # plus redacted samples for one rule
+interlock mesh report enable --off
+```
+
+A fingerprint is made inside the node, at decision time, by a recorder that
+sees the arguments and never writes a rule: redact (emails, card-shaped
+numbers, tokens, IPs, home directories), embed (a 768-dimensional SimHash of
+character and word n-grams by default; a semantic embedder can be plugged in
+through the Python API), keep one bit per dimension, then flip every bit with
+probability `1 / (1 + e^alpha)`. That last step is local differential privacy
+with budget `alpha` per fingerprint: the text cannot be reconstructed, and
+`alpha` is the dial between privacy and match quality. Smaller is more private
+and misses more variants. Fingerprints and samples are included by the next
+`report build` and shown in its summary before anything leaves.
+
+The consensus engine clusters fingerprints across organisations into
+**campaigns** and, once enough distinct reporters are in one, exports a pack
+using the `mesh_similarity_guard` detector: a node that installs it
+fingerprints each call's arguments the same way (without the noise) and
+**escalates** a call within Hamming distance of a published fingerprint.
+Similarity is evidence, not proof, so the default is to ask a human.
+
+A **sample** is the redacted text itself, kept only for rules you name, capped,
+and carrying the argument names it came from. Samples exist for the forge.
+
+## Measure a rule before you ship it
+
+```bash
+interlock mesh harness --policy pack.json --benign benign.jsonl --samples attacks.jsonl
+```
+
+`benign.jsonl` is a corpus of events your deployment considers fine, one JSON
+object per line (`{"action": "Bash", "args": {"command": "git status"}}`);
+record real tool calls from a trusted session, or start from the actions
+`interlock learn` saw allowed. The harness reports the false-positive rate
+overall and per rule, p50 and p95 evaluation latency, recall over the attack
+samples, and a pass or fail against budgets (`--max-fp-rate`, `--max-p95-us`,
+`--min-recall`). The same gates run inside the forge and belong in a commons'
+CI, so a human merge cannot skip them.
+
+## The forge
+
+```bash
+interlock mesh forge --state consensus.json --benign benign.jsonl --out proposals/
+```
+
+The forge never publishes. It reads a consensus state and writes one
+**proposal** directory per candidate, shaped like a pull request: `pack.json`
+(every rule `experimental`), `tests.json` (the samples it must catch and benign
+events it must not), `evidence.json` and a `PROPOSAL.md` with the
+organisations behind it, the false-positive rate, recall and cost. Candidates
+are the active exact-match indicators, the active campaign fingerprints, and,
+for a rule whose redacted samples came from several organisations, the longest
+fragment most samples share as an `escalate` rule on the argument names the
+samples named. A `drafter` callable (an LLM behind a validation loop) can be
+plugged in through the Python API; whatever it returns runs through the same
+gates. A human reviews the proposal and opens the pull request.
+
 ## What is not here yet
 
-Phases 2 and 3 of the design, private fingerprints for paraphrased variants,
-the forge that drafts rules from reports, and the transparency log with
-monitors and peer seeding, land in their own sections of this guide.
+Phase 3 of the design, the transparency log with monitors and gossip, peer
+seeding of the verified cache, and membership credentials for the early ring,
+lands in its own section of this guide.

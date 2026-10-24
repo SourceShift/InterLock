@@ -132,8 +132,8 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
     ),
     (
         "Community indicators",
-        "Exact-match indicators the mesh publishes from what other deployments' guards refused.",
-        ["mesh_indicator_guard"],
+        "Exact-match indicators and private fingerprints the mesh publishes from what other deployments' guards refused.",
+        ["mesh_indicator_guard", "mesh_similarity_guard"],
     ),
 ]
 

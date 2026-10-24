@@ -37,6 +37,20 @@ breaking changes land.
   false-positive sightings, expires stale indicators, and exports a public
   stats document and an indicator pack. The `mesh_indicator_guard` detector
   blocks (or escalates) a call whose argument digest is a published indicator.
+- The mesh, phase 2: similarity and the forge. `interlock mesh report enable`
+  installs a decision observer (`interlock.receipt.add_decision_observer`, a
+  new hook that sees event, decision and receipt and can never change a
+  decision) that records private fingerprints of what the guard blocked:
+  redact, SimHash-embed, quantise to 768 bits, randomised response with budget
+  `alpha` (local differential privacy), plus opt-in redacted samples per rule.
+  The consensus engine clusters fingerprints into campaigns and exports a pack
+  for the new `mesh_similarity_guard` detector, which escalates a live call
+  within Hamming distance of a published fingerprint. `interlock mesh harness`
+  measures a policy's false-positive rate, latency percentiles and recall over
+  a benign corpus and attack samples (the roadmap's R5 gate); `interlock mesh
+  forge` drafts gated, reviewable proposals (indicators, campaigns, and shared
+  fragments from multi-organisation samples; an optional drafter hook) and
+  writes them as pull-request-shaped directories, never publishing.
 
 - The console (`python -m interlock.console`, `interlock-console`): a local
   web app on loopback for the person running the agent - activity, the review

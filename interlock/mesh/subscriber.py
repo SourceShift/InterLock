@@ -80,18 +80,27 @@ class Config:
     def __init__(self, mirrors: Sequence[str] = (), ring: str = DEFAULT_RING,
                  monitor_days: float = DEFAULT_MONITOR_SECONDS / 86400,
                  ceilings: Optional[Dict[str, Optional[str]]] = None,
-                 max_bundle_bytes: int = 1024 * 1024, refresh_seconds: int = 3600) -> None:
+                 max_bundle_bytes: int = 1024 * 1024, refresh_seconds: int = 3600,
+                 recorder: Optional[Dict[str, Any]] = None) -> None:
         self.mirrors = [m.rstrip("/") for m in mirrors]
         self.ring = ring
         self.monitor_days = float(monitor_days)
         self.ceilings = dict(DEFAULT_CEILINGS) if ceilings is None else dict(ceilings)
         self.max_bundle_bytes = int(max_bundle_bytes)
         self.refresh_seconds = int(refresh_seconds)
+        # The fingerprint recorder (phase 2): off until the operator enables it.
+        self.recorder: Dict[str, Any] = {"enabled": False, "alpha": 1.5, "sample_rules": []}
+        if recorder:
+            self.recorder.update({k: recorder[k] for k in ("enabled", "alpha", "sample_rules") if k in recorder})
 
     def to_dict(self) -> Dict[str, Any]:
         return {"version": 1, "mirrors": list(self.mirrors), "ring": self.ring,
                 "monitor_days": self.monitor_days, "ceilings": self.ceilings,
-                "max_bundle_bytes": self.max_bundle_bytes, "refresh_seconds": self.refresh_seconds}
+                "max_bundle_bytes": self.max_bundle_bytes, "refresh_seconds": self.refresh_seconds,
+                "recorder": dict(self.recorder)}
+
+    def save(self, path: str) -> None:
+        atomic_write(path, json.dumps(self.to_dict(), indent=1, sort_keys=True).encode("utf-8"), mode=0o600)
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -104,7 +113,8 @@ class Config:
         return cls(mirrors=raw.get("mirrors", []), ring=ring,
                    monitor_days=raw.get("monitor_days", DEFAULT_MONITOR_SECONDS / 86400),
                    ceilings=raw.get("ceilings"), max_bundle_bytes=raw.get("max_bundle_bytes", 1024 * 1024),
-                   refresh_seconds=raw.get("refresh_seconds", 3600))
+                   refresh_seconds=raw.get("refresh_seconds", 3600),
+                   recorder=raw.get("recorder") if isinstance(raw.get("recorder"), dict) else None)
 
 
 class Fetcher:
@@ -460,6 +470,36 @@ def resolve_extends(spec: str, mesh_dir: Optional[str] = None) -> Tuple[Dict[str
     pack, ring = parse_spec(spec, default_ring=config.ring)
     doc, path, _details = subscriber.resolve(pack, ring)
     return doc, "{}{}@{}".format(SPEC_PREFIX, pack, ring), path
+
+
+_RECORDER: Optional[Any] = None
+
+
+def install_recorder(mesh_dir: Optional[str] = None) -> Optional[Any]:
+    """Install (or remove) the fingerprint recorder according to the node's
+    config, and stamp receipts with the catalog id. Idempotent; returns the
+    recorder in force, or None."""
+    global _RECORDER
+    from ..receipt import add_decision_observer, remove_decision_observer, set_catalog_id
+    from .catalog import catalog_id
+
+    subscriber = Subscriber(mesh_dir)
+    try:
+        config = subscriber.config()
+    except SubscriberError:
+        return None
+    set_catalog_id(catalog_id())
+    if _RECORDER is not None:
+        remove_decision_observer(_RECORDER)
+        _RECORDER = None
+    settings = config.recorder
+    if not settings.get("enabled"):
+        return None
+    from .fingerprint import Recorder
+    _RECORDER = Recorder(subscriber.dir, alpha=float(settings.get("alpha", 1.5)),
+                         sample_rules=settings.get("sample_rules", []))
+    add_decision_observer(_RECORDER)
+    return _RECORDER
 
 
 def watch_info(specs: Sequence[str], mesh_dir: Optional[str] = None) -> Tuple[List[str], Optional[float], Callable[[Dict[str, Any]], None]]:

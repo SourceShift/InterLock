@@ -3,7 +3,7 @@
 [![CI](https://github.com/SourceShift/InterLock/actions/workflows/ci.yml/badge.svg)](https://github.com/SourceShift/InterLock/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/SourceShift/InterLock/actions/workflows/codeql.yml/badge.svg)](https://github.com/SourceShift/InterLock/actions/workflows/codeql.yml)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue)
-![Detectors: 120](https://img.shields.io/badge/detectors-120-blue)
+![Detectors: 121](https://img.shields.io/badge/detectors-121-blue)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
 **Stop a bad tool call before your AI agent makes it.**
@@ -71,7 +71,7 @@ watches what it *does*, at the last moment you can still say no.
 - **One policy everywhere.** The same rules guard decorated functions, MCP
   sessions, LangChain tools, your own tool loop, Node.js agents, and coding
   agents: **Claude Code, Codex and Cursor**, through their hooks.
-- **120 ready-made detectors** for prompt injection, SQL and shell injection,
+- **121 ready-made detectors** for prompt injection, SQL and shell injection,
   secret and PII redaction, SSRF, egress, MCP server trust, budgets, and loops.
   Shell rules judge **what a command does**, not its spelling: `rm -fr ~`,
   `bash -c 'rm -rf /'` and `sudo /bin/rm -Rf /` are the same act.
@@ -226,7 +226,7 @@ somewhere other than a checkout? Pass `--static /path/to/web/dist`.
 | Credentials | The agent writes `{{secret:id}}`; the value is filled in after the decision, only where allowed | [Credentials](docs/guides/credentials.md) |
 | Databases and APIs | SQL judged by its effects and tables (`WITH … DELETE` is a delete), checksum-validated data masking on results, runbooks, HTTP path and method rules | [Databases](docs/guides/databases.md) |
 | Review queue | Refuse now with a review id; the identical retry runs once after a human approves; quorum and expiry | [Reviews](docs/guides/reviews.md) |
-| Detectors | 120 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
+| Detectors | 121 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
 | MCP trust | Allowlist servers, pin tool schemas, catch changed tool listings, time-limited grants | [MCP](docs/guides/mcp.md) |
 | Scopes | Per-tenant and per-agent policies; sub-agents can't exceed their parent | [Scopes](docs/guides/scopes.md) |
 | Audit log | Chained, signed receipts of every decision; arguments hashed, not stored; `interlock report` summarizes them | [Audit log](docs/guides/audit-log.md) |

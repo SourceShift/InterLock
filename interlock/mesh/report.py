@@ -115,10 +115,23 @@ def _private_rule(policy_id: str) -> bool:
     return any(marker in lowered for marker in PRIVATE_POLICY_MARKERS)
 
 
+MAX_FINGERPRINTS = 500
+MAX_SAMPLES = 20
+MAX_SAMPLE_TEXT = 4096
+FINGERPRINT_HEX = 192  # 96 bytes
+
+
 def build_report(receipts: Iterable[Receipt], *, since: float, until: float, catalog_id: str,
                  reporter_id: str, include_digests: bool = True, max_digests: int = MAX_DIGESTS,
-                 sightings: Sequence[Mapping[str, Any]] = ()) -> Dict[str, Any]:
-    """Project receipts in ``[since, until)`` into an unsigned report body."""
+                 sightings: Sequence[Mapping[str, Any]] = (),
+                 fingerprints: Sequence[Mapping[str, Any]] = (),
+                 samples: Sequence[Mapping[str, Any]] = ()) -> Dict[str, Any]:
+    """Project receipts in ``[since, until)`` into an unsigned report body.
+
+    ``fingerprints`` and ``samples`` come from the mesh recorder
+    (:class:`interlock.mesh.fingerprint.Recorder`), which saw the arguments at
+    decision time; they are passed through with caps and shape checks.
+    """
     counts: Dict[tuple, int] = {}
     digests: List[Dict[str, Any]] = []
     seen_digests = set()
@@ -156,6 +169,31 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
             raise ReportError("a sighting needs a policy_id")
         clean_sightings.append({"policy_id": policy_id, "kind": str(s.get("kind", "false_positive")),
                                 "n": int(s.get("n", 1))})
+    clean_fps: List[Dict[str, Any]] = []
+    for f in fingerprints:
+        fp_hex = f.get("fp")
+        policy_id = f.get("policy_id")
+        if not isinstance(fp_hex, str) or len(fp_hex) != FINGERPRINT_HEX or not isinstance(policy_id, str):
+            continue
+        if _private_rule(policy_id):
+            continue
+        ts = f.get("ts", since)
+        clean_fps.append({"policy_id": policy_id, "fp": fp_hex.lower(), "alpha": float(f.get("alpha", 1.5)),
+                          "tool_class": str(f.get("tool_class", "other")),
+                          "bucket": int(float(ts) // BUCKET_SECONDS) * BUCKET_SECONDS if isinstance(ts, (int, float)) else 0})
+        if len(clean_fps) >= MAX_FINGERPRINTS:
+            break
+    clean_samples: List[Dict[str, Any]] = []
+    for s in samples:
+        text = s.get("text")
+        policy_id = s.get("policy_id")
+        if not isinstance(text, str) or not text or not isinstance(policy_id, str) or _private_rule(policy_id):
+            continue
+        names = [n for n in (s.get("arg_names") or []) if isinstance(n, str)][:8]
+        clean_samples.append({"policy_id": policy_id, "tool_class": str(s.get("tool_class", "other")),
+                              "text": text[:MAX_SAMPLE_TEXT], "arg_names": names})
+        if len(clean_samples) >= MAX_SAMPLES:
+            break
     return {
         "version": REPORT_VERSION,
         "reporter": reporter_id,
@@ -165,7 +203,8 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
         "counts": rows,
         "digests": digests,
         "sightings": clean_sightings,
-        "fingerprints": [],
+        "fingerprints": clean_fps,
+        "samples": clean_samples,
     }
 
 
@@ -210,6 +249,15 @@ def verify_report(envelope: Any, *, max_bytes: int = MAX_ENVELOPE) -> Dict[str, 
     for c in body["counts"]:
         if not isinstance(c, dict) or not isinstance(c.get("n"), int) or c["n"] < 0:
             raise ReportError("malformed count entry")
+    for f in body.get("fingerprints", []):
+        if (not isinstance(f, dict) or not isinstance(f.get("policy_id"), str)
+                or not isinstance(f.get("fp"), str) or len(f["fp"]) != FINGERPRINT_HEX
+                or not isinstance(f.get("alpha"), (int, float)) or f["alpha"] <= 0):
+            raise ReportError("malformed fingerprint entry")
+    for s in body.get("samples", []):
+        if (not isinstance(s, dict) or not isinstance(s.get("policy_id"), str)
+                or not isinstance(s.get("text"), str) or len(s["text"]) > MAX_SAMPLE_TEXT):
+            raise ReportError("malformed sample entry")
     return body
 
 

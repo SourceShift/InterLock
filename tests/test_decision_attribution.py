@@ -591,6 +591,7 @@ ADDITIVE = "MODIFY adds a stamp field to the event; nothing in the input tripped
 
 KNOWN_GAPS = {
     "mesh_indicator_guard": AGGREGATE,  # the digest covers the whole argument set, no single argument
+    "mesh_similarity_guard": AGGREGATE,  # the fingerprint covers every string argument at once
     "call_rate_limiter": STATEFUL,
     "content_digest_stamp": ADDITIVE,
     "cost_budget_guard": STATEFUL,

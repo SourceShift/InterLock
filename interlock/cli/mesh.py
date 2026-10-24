@@ -89,6 +89,13 @@ def add_arguments(parser) -> None:
     report_build.add_argument("--no-digests", action="store_true", help="counts only, no argument digests")
     report_build.add_argument("--dir", default=None, metavar="DIR")
     report_build.add_argument("--json", action="store_true", help="print the envelope instead of a summary")
+    report_enable = report_sub.add_parser("enable", help="record fingerprints (and opt-in samples) of what the guard stops")
+    report_enable.add_argument("--alpha", type=float, default=1.5, metavar="A",
+                               help="privacy budget per fingerprint; smaller is more private (default 1.5)")
+    report_enable.add_argument("--sample", action="append", default=[], metavar="RULE_ID",
+                               help="also keep redacted samples for this rule, for the forge; repeatable")
+    report_enable.add_argument("--off", action="store_true", help="stop recording")
+    report_enable.add_argument("--dir", default=None, metavar="DIR")
     report_submit = report_sub.add_parser("submit", help="send a built report to the collectors")
     report_submit.add_argument("file", metavar="FILE", help="an envelope written by `report build --out`")
     report_submit.add_argument("--consensus", required=True, metavar="URL", help="the consensus service")
@@ -104,6 +111,23 @@ def add_arguments(parser) -> None:
     serve.add_argument("--known-catalog", action="append", default=[], metavar="ID",
                        help="consensus: accept reports from this detector catalog id; repeatable")
     serve.add_argument("--min-orgs", type=int, default=None, metavar="N")
+
+    harness = sub.add_parser("harness", help="measure a policy's false-positive rate and cost on a benign corpus")
+    harness.add_argument("--policy", required=True, metavar="FILE", help="a policy or pack document")
+    harness.add_argument("--benign", required=True, metavar="FILE", help="JSONL of benign events: {action, args}")
+    harness.add_argument("--samples", default=None, metavar="FILE", help="JSONL of attack events, for recall")
+    harness.add_argument("--max-fp-rate", type=float, default=0.001, metavar="RATE")
+    harness.add_argument("--max-p95-us", type=int, default=5000, metavar="US")
+    harness.add_argument("--min-recall", type=float, default=0.8, metavar="RATE")
+    harness.add_argument("--json", action="store_true")
+
+    forge_cmd = sub.add_parser("forge", help="draft gated, reviewable proposals from a consensus state")
+    forge_cmd.add_argument("--state", required=True, metavar="FILE", help="a consensus state file")
+    forge_cmd.add_argument("--benign", required=True, metavar="FILE", help="JSONL of benign events")
+    forge_cmd.add_argument("--out", required=True, metavar="DIR", help="proposals are written under here")
+    forge_cmd.add_argument("--samples", default=None, metavar="FILE", help="JSONL of attack events, for recall")
+    forge_cmd.add_argument("--max-fp-rate", type=float, default=0.001, metavar="RATE")
+    forge_cmd.add_argument("--min-recall", type=float, default=0.8, metavar="RATE")
 
     consensus = sub.add_parser("consensus", help="work with a consensus state file offline")
     consensus_sub = consensus.add_subparsers(dest="consensus_command", metavar="ACTION")
@@ -135,9 +159,70 @@ def run(args) -> int:
         return _serve(args)
     if command == "consensus":
         return _consensus(args)
+    if command == "harness":
+        return _harness(args)
+    if command == "forge":
+        return _forge(args)
     sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, keys, publish, verify, "
-                     "report, serve, consensus\n")
+                     "report, serve, consensus, harness, forge\n")
     return 64
+
+
+def _harness(args) -> int:
+    from ..mesh.harness import gate, load_corpus, measure, recall
+
+    try:
+        with open(args.policy, "r", encoding="utf-8") as fh:
+            policy = json.load(fh)
+        benign = load_corpus(args.benign)
+        samples = load_corpus(args.samples) if args.samples else []
+    except (OSError, ValueError) as exc:
+        sys.stderr.write("interlock mesh harness: {}\n".format(exc))
+        return 3
+    measured = measure(policy, benign, source=args.policy)
+    recalled = recall(policy, samples, source=args.policy) if samples else None
+    ok, reasons = gate(measured, max_fp_rate=args.max_fp_rate, max_p95_us=args.max_p95_us,
+                       recalled=recalled, min_recall=args.min_recall if recalled else 0.0)
+    if args.json:
+        sys.stdout.write(json.dumps({"passed": ok, "reasons": reasons, "measured": measured, "recall": recalled},
+                                    indent=2, sort_keys=True) + "\n")
+    else:
+        print("{}: {} benign event(s), {} false positive(s) ({:.4%}), p50 {} us, p95 {} us".format(
+            args.policy, measured["evaluated"], measured["false_positives"], measured["fp_rate"],
+            measured["latency_us"]["p50"], measured["latency_us"]["p95"]))
+        for rule, info in measured["per_rule"].items():
+            print("  {}: {} hit(s) on benign traffic ({:.4%})".format(rule, info["hits"], info["rate"]))
+        if recalled:
+            print("  recall: {} of {} sample(s) caught ({:.1%})".format(recalled["caught"], recalled["samples"],
+                                                                        recalled["recall"]))
+        print("gate: {}".format("PASS" if ok else "FAIL: " + "; ".join(reasons)))
+    return 0 if ok else 1
+
+
+def _forge(args) -> int:
+    from ..mesh.consensus import ConsensusEngine
+    from ..mesh.forge import forge
+    from ..mesh.harness import load_corpus
+
+    try:
+        engine = ConsensusEngine.load(args.state)
+        benign = load_corpus(args.benign)
+        samples = load_corpus(args.samples) if args.samples else []
+    except (OSError, ValueError) as exc:
+        sys.stderr.write("interlock mesh forge: {}\n".format(exc))
+        return 3
+    proposals = forge(engine, benign=benign, out_dir=args.out, attack_samples=samples,
+                      max_fp_rate=args.max_fp_rate, min_recall=args.min_recall)
+    if not proposals:
+        print("nothing to propose: no active indicators, campaigns, or multi-organisation samples")
+        return 0
+    for p in proposals:
+        print("{} [{}] {}: {}".format("PASS" if p.passed else "FAIL", p.evidence["source"], p.id,
+                                      p.pack.get("description", "")[:80]))
+        for reason in p.reasons:
+            print("    {}".format(reason))
+    print("proposals written under {}; a human reviews and opens the pull request".format(args.out))
+    return 0
 
 
 def _report(args) -> int:
@@ -160,8 +245,35 @@ def _report(args) -> int:
         return _report_build(args, key_path)
     if args.report_command == "submit":
         return _report_submit(args)
-    sys.stderr.write("interlock mesh report: choose an action: init, build, submit\n")
+    if args.report_command == "enable":
+        return _report_enable(args)
+    sys.stderr.write("interlock mesh report: choose an action: init, enable, build, submit\n")
     return 64
+
+
+def _report_enable(args) -> int:
+    from ..mesh.subscriber import Subscriber, SubscriberError, install_recorder
+
+    node = Subscriber(args.dir)
+    try:
+        config = node.config()
+    except SubscriberError as exc:
+        sys.stderr.write("interlock mesh report: {}\n".format(exc))
+        return 2
+    if args.alpha <= 0:
+        sys.stderr.write("interlock mesh report: --alpha must be positive\n")
+        return 64
+    config.recorder = {"enabled": not args.off, "alpha": float(args.alpha), "sample_rules": sorted(set(args.sample))}
+    config.save(node.config_path)
+    install_recorder(node.dir)
+    if args.off:
+        print("recording off")
+    else:
+        print("recording fingerprints of blocked and escalated calls (alpha {:g}){}".format(
+            args.alpha, "; redacted samples for: " + ", ".join(config.recorder["sample_rules"])
+            if config.recorder["sample_rules"] else ""))
+        print("they are included by the next `interlock mesh report build`; nothing leaves until `submit`")
+    return 0
 
 
 def _report_build(args, key_path: str) -> int:
@@ -186,11 +298,16 @@ def _report_build(args, key_path: str) -> int:
         return 3
     now = time.time()
     since = now - (since_seconds or 0) if since_seconds else 0.0
+    from ..mesh.fingerprint import read_records
+    mesh_dir = os.path.dirname(key_path)
+    fingerprints = read_records(os.path.join(mesh_dir, "fingerprints.jsonl"), since, now, 500)
+    samples = read_records(os.path.join(mesh_dir, "samples.jsonl"), since, now, 20)
     try:
         key = ReporterKey.load_or_create(key_path)
         body = build_report(receipts, since=since, until=now, catalog_id=catalog_id(), reporter_id=key.keyid,
                             include_digests=not args.no_digests,
-                            sightings=[{"policy_id": r, "kind": "false_positive"} for r in args.false_positive])
+                            sightings=[{"policy_id": r, "kind": "false_positive"} for r in args.false_positive],
+                            fingerprints=fingerprints, samples=samples)
         envelope = sign_report(body, key)
     except ReportError as exc:
         sys.stderr.write("interlock mesh report: {}\n".format(exc))
@@ -203,8 +320,10 @@ def _report_build(args, key_path: str) -> int:
         sys.stdout.write(text + "\n")
     else:
         total = sum(c["n"] for c in body["counts"])
-        print("report by {}: {} decision(s) in {} count row(s), {} digest(s), {} sighting(s); catalog {}".format(
-            key.keyid[:12], total, len(body["counts"]), len(body["digests"]), len(body["sightings"]), body["catalog"]))
+        print("report by {}: {} decision(s) in {} count row(s), {} digest(s), {} fingerprint(s), {} sample(s), "
+              "{} sighting(s); catalog {}".format(
+                  key.keyid[:12], total, len(body["counts"]), len(body["digests"]), len(body["fingerprints"]),
+                  len(body["samples"]), len(body["sightings"]), body["catalog"]))
         if bad:
             print("  {} unreadable line(s) in the log were skipped".format(len(bad)))
         print("  carries: rule ids, verdicts, tool classes, hour buckets, argument digests. Never arguments, "
