@@ -30,9 +30,9 @@ code. A condition is one of:
 - ``{"intent": SELECTOR}`` - a shell intent (see :mod:`interlock.shell`) in
   any string argument, or only in ``"arg"`` when given
 - ``{"sql": SELECTOR}`` - what a SQL argument does (see :mod:`interlock.sql`):
-  ``"delete"``, ``"ddl"``, ``"write:customers"``, ``"unbounded"`` ... in the
-  SQL-named arguments (``sql``, ``query``, ...), or only in ``"arg"``;
-  ``"dialect"`` picks the lexing rules
+  ``"delete"``, ``"ddl"``, ``"write:customers"``, ``"function:purge_*"``,
+  ``"unbounded"`` ... in the SQL-named arguments (``sql``, ``query``, ...), or
+  only in ``"arg"``; ``"dialect"`` picks the lexing rules
 - ``{"a2a": SELECTOR}`` - an agent-to-agent call (see
   :mod:`interlock.detectors.a2a_policy`): ``"peer"`` or ``"peer:<glob>"``
   matches the ``"peer"`` argument, ``"card"`` or ``"card.<field>[:<glob>]``
@@ -1157,12 +1157,14 @@ def _sql_condition(selector: Any, arg: Any, dialect: Any, where: str,
             isinstance(s, str) for s in selectors):
         raise PolicyError("'sql' must be a selector or a list of selectors", where)
     for sel in selectors:
-        kind, sep, _ = sel.partition(":")
-        if not ((sep and kind in ("read", "write", "table"))
-                or sel in OPERATIONS or sel in GROUPS or sel in FLAGS):
+        kind, sep, glob = sel.partition(":")
+        valid = (sel in OPERATIONS or sel in GROUPS or sel in FLAGS or sel == "function"
+                 or (sep and kind in ("read", "write", "table", "function") and bool(glob)))
+        if not valid:
             raise PolicyError("unknown sql selector {!r}; use an operation, ddl/dml/write/"
-                              "control, a flag (unbounded, opaque, external, multi) or "
-                              "read:/write:/table:<glob>".format(sel), where)
+                              "control, a flag (unbounded, opaque, external, multi), "
+                              "function or read:/write:/table:/function:<glob>".format(sel),
+                              where)
     if dialect != "generic" and dialect not in DIALECTS:
         raise PolicyError("'dialect' must be generic or one of {}".format(
             ", ".join(sorted(DIALECTS))), where)

@@ -34,6 +34,14 @@ breaking changes land.
   operation loses its origin, and the security model says so.
   `network_egress_guard(block_origins=...)` applies the same check to every
   egress action, even to an allowlisted host.
+- SQL function names: `analyze_sql(...)` now reports every `name(` the
+  statement calls, so `SELECT purge_everything()` is no longer "just a
+  select". A policy can refuse one by name with the new selectors
+  `"function"` and `"function:<glob>"` (in `sql_statement_guard(block=...)`
+  and in the declarative `{"sql": ...}` condition); names are qualified
+  (`pg_catalog.pg_read_file`) and matched against the last part too. What a
+  named function *does* is still unknown to the lexer — the selector names
+  calls, it does not classify arbitrary functions as writes.
 - `interlock.attach()` / `detach()` / `uncovered()`: the opt-in import hook
   (ROADMAP R11). `attach()` patches
   `mcp.client.session.ClientSession.call_tool` at the class - immediately when

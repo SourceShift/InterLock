@@ -153,12 +153,15 @@ What the DAP path does and does not assume:
   `MAX_ARGS` is 4,096, and past either the command is marked partial and
   escalated rather than half-read (the cost of this bound is measured in
   `benchmarks/fp/README.md`). Contain untrusted commands with BRACE.
-- **SQL analysis and masking are best-effort.** The SQL analyzer is a lexer:
-  a function called from a `SELECT` list is invisible to it. Masking detects
-  formats and checksums, not meaning: names and places aren't detected, and a
-  value transformed before it's returned (base64, say) isn't recognised.
-  Database permissions and least-privilege credentials stay the boundary.
-  **Accepted:** semantic SQL and PII understanding is out of scope.
+- **SQL analysis and masking are best-effort.** The SQL analyzer is a lexer.
+  It names every function the text calls — a `SELECT purge_everything()` is a
+  select by verb but reports `functions == ("purge_everything",)`, and a
+  `function:` selector can refuse it — but it cannot say what a function does
+  without the catalog, so an unlisted call is not classified as a write.
+  Masking detects formats and checksums, not meaning: names and places aren't
+  detected, and a value transformed before it's returned (base64, say) isn't
+  recognised. Database permissions and least-privilege credentials stay the
+  boundary. **Accepted:** semantic SQL and PII understanding is out of scope.
 - **The review queue is only as strong as its key directory.** Every row is
   signed with an HMAC key kept beside the database (`reviews.key`, 0600), so a
   process that can edit `reviews.db` alone can no longer approve a call,

@@ -139,10 +139,49 @@ def test_specific_dialects_read_literally():
     ("read:customers", "SELECT * FROM customers", True),
     ("table:audit.*", "SELECT * FROM audit.events", True),
     ("unknown", "CALL x()", True),
+    ("function", "SELECT purge_everything()", True),
+    ("function", "SELECT 1", False),
+    ("function:purge_*", "SELECT purge_everything()", True),
+    ("function:purge_*", "SELECT count(*) FROM t", False),
+    ("function:pg_read_file", "SELECT pg_catalog.pg_read_file('/etc/passwd')", True),
     ("bogus", "SELECT 1", False),
 ])
 def test_selectors(selector, sql, hit):
     assert analyze_sql(sql).matches(selector) is hit
+
+
+def test_a_function_call_is_named_even_when_it_is_not_the_verb():
+    """`SELECT purge_everything()` is a select by verb; the call is what runs."""
+    analysis = analyze_sql("SELECT purge_everything()")
+
+    assert analysis.operation == "select"
+    assert analysis.functions == ("purge_everything",)
+
+
+@pytest.mark.parametrize("sql", [
+    "INSERT INTO t (a, b) VALUES (1, 2)",
+    "CREATE TABLE t (id int(11), name varchar(255))",
+    "CREATE INDEX i ON t (a)",
+    "SELECT 1 WHERE EXISTS (SELECT 1)",
+])
+def test_object_names_and_keyword_groups_are_not_calls(sql):
+    assert analyze_sql(sql).functions == ()
+
+
+def test_calls_are_found_in_subqueries_ctes_and_expressions():
+    analysis = analyze_sql(
+        "WITH x AS (SELECT f(1)) "
+        "UPDATE t SET a = h(2) WHERE id IN (SELECT g(3) FROM x) "
+        "RETURNING CASE WHEN a THEN b(4) ELSE 5 END")
+
+    assert set(analysis.functions) == {"f", "g", "h", "b"}
+
+
+def test_the_function_list_is_bounded():
+    """A hostile query cannot grow the analysis without limit."""
+    sql = "SELECT " + ", ".join("f{}(1)".format(i) for i in range(200))
+
+    assert len(analyze_sql(sql).functions) == 64
 
 
 def test_never_raises_and_stays_fast():
@@ -186,6 +225,16 @@ def test_guard_escalates():
     assert guard(ev(sql="DROP TABLE t; DELETE FROM t WHERE id = 1")).verdict is Verdict.BLOCK
 
 
+def test_guard_blocks_a_function_by_name():
+    guard = sql_statement_guard(block=["function:purge_*"])
+
+    decision = guard(ev(query="SELECT purge_everything()"))
+
+    assert decision is not None and decision.verdict is Verdict.BLOCK
+    assert decision.attributed_to == "query"
+    assert guard(ev(query="SELECT count(*) FROM t")) is None
+
+
 @pytest.mark.parametrize("sql, allowed", [
     ("SELECT * FROM t", True), ("SHOW TABLES", True), ("BEGIN", True),
     ("INSERT INTO t VALUES (1)", False), ("CALL x()", False),
@@ -223,11 +272,23 @@ def test_policy_sql_condition():
     assert engine.evaluate(ev(query="SELECT 1")).verdict is Verdict.ALLOW
 
 
+def test_policy_sql_condition_reads_function_names():
+    engine = load_policy({"rules": [
+        {"id": "no-purge", "verdict": "block",
+         "when": {"sql": "function:purge_*"}},
+    ]})
+
+    assert engine.evaluate(ev(query="SELECT purge_everything()")).verdict is Verdict.BLOCK
+    assert engine.evaluate(ev(query="SELECT count(*) FROM t")).verdict is Verdict.ALLOW
+
+
 def test_policy_sql_condition_validates_selectors():
     engine = load_policy({"rules": [
         {"id": "bad", "verdict": "block", "when": {"sql": "deletes"}},
         {"id": "bad-dialect", "verdict": "block", "when": {"sql": "drop", "dialect": "db2"}},
+        {"id": "empty-function", "verdict": "block", "when": {"sql": "function:"}},
     ]})
     assert engine.policy_ids == []
     assert "unknown sql selector" in engine.quarantined[0]
     assert "'dialect'" in engine.quarantined[1]
+    assert "unknown sql selector" in engine.quarantined[2]

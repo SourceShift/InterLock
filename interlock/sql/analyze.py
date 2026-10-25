@@ -28,11 +28,15 @@ MySQL and SQL Server lexing rules and unions the results, so a statement whose
 meaning depends on the dialect is judged by its most dangerous reading. Pass a
 specific dialect when you know it.
 
-This is a lexer and a shallow parser, not a database: it never raises, it marks
-what it cannot read ``partial``, and functions called from a ``SELECT`` list
-(``SELECT purge_everything()``) are invisible to it, as they are to any SQL
-reader without the catalog. It is a policy aid, not a boundary - database
-permissions are the boundary.
+A function called from a ``SELECT`` list (``SELECT purge_everything()``) does
+not change the statement's verb, but its name is reported: ``functions`` lists
+every ``name(`` the text calls, qualified as written, and a policy can select
+one with ``"function:purge_*"``. What that function *does* is not known - that
+is the catalog's job, not a lexer's.
+
+This is a lexer and a shallow parser, not a database: it never raises and it
+marks what it cannot read ``partial``. It is a policy aid, not a boundary -
+database permissions are the boundary.
 """
 from __future__ import annotations
 
@@ -78,6 +82,40 @@ _PL_EFFECT_WORDS = {"insert": "insert", "update": "update", "delete": "delete",
                     "drop": "drop", "truncate": "truncate", "alter": "alter",
                     "create": "create", "grant": "grant", "revoke": "revoke",
                     "merge": "update"}
+#: A function call is ``name(``; these words are followed by a parenthesised
+#: group for other reasons (a clause, a subquery, a definition, a type's
+#: parameters), so recording them as calls would bury the real names.
+_NON_CALL_WORDS = frozenset({
+    "all", "alter", "and", "any", "apply", "array", "as", "by", "case", "check",
+    "column", "constraint", "create", "cross", "default", "delete", "distinct",
+    "drop", "else", "except", "exists", "filter", "for", "foreign", "from",
+    "group", "having", "in", "index", "inner", "insert", "intersect", "into",
+    "join", "lateral", "left", "like", "limit", "materialized", "not", "offset",
+    "on", "only", "or", "order", "outer", "over", "partition", "primary",
+    "procedure", "references", "returning", "right", "schema", "select", "set",
+    "some", "table", "then", "to", "trigger", "truncate", "type", "union",
+    "unique", "update", "using", "values", "view", "when", "where", "while",
+    "with", "within",
+    # Type names take a length or precision in parentheses: int(11),
+    # varchar(255), decimal(10,2). They are not calls.
+    "bigint", "binary", "bit", "blob", "boolean", "char", "date", "datetime",
+    "decimal", "double", "enum", "float", "int", "integer", "interval", "json",
+    "money", "nchar", "numeric", "nvarchar", "real", "serial", "smallint", "text",
+    "time", "timestamp", "tinyint", "uuid", "varbinary", "varchar", "year",
+})
+#: A bound on names kept per statement, so a hostile query cannot grow the
+#: analysis without limit (mirrors the other bounded parsers here).
+_MAX_FUNCTIONS = 64
+_MAX_FUNCTION_NAME = 128
+#: A word here before ``name(`` means ``name`` is an object being defined or
+#: named, not a call: ``CREATE TABLE t (…)``, ``INSERT INTO t (…)``,
+#: ``CREATE INDEX i ON t (…)``. Clause words that open an *expression*
+#: (``SELECT``, ``WHERE``, ``ON`` in a join condition) are deliberately absent.
+_NON_CALL_BEFORE = frozenset({
+    "add", "alter", "column", "constraint", "create", "drop", "function", "index",
+    "into", "on", "procedure", "references", "replace", "schema", "table",
+    "trigger", "truncate", "type", "update", "using", "view",
+})
 
 
 @dataclass(frozen=True)
@@ -97,6 +135,7 @@ class Statement:
     unbounded: bool = False
     opaque: bool = False
     external: bool = False
+    functions: Tuple[str, ...] = ()
 
     @property
     def tables(self) -> Tuple[str, ...]:
@@ -118,6 +157,7 @@ class SqlAnalysis:
     multi: bool = False
     partial: bool = False
     dialect: str = "generic"
+    functions: Tuple[str, ...] = ()
 
     @property
     def tables(self) -> Tuple[str, ...]:
@@ -128,9 +168,10 @@ class SqlAnalysis:
 
         Selectors: an operation (``"delete"``), a group (``"ddl"``, ``"dml"``,
         ``"write"``, ``"control"``), a flag (``"unbounded"``, ``"opaque"``,
-        ``"external"``, ``"multi"``, ``"partial"``), or a table:
-        ``"write:customers"``, ``"read:payments*"``, ``"table:audit.*"`` (globs,
-        case-insensitive, matched against the full name and its last part).
+        ``"external"``, ``"multi"``, ``"partial"``), a table
+        (``"write:customers"``, ``"read:payments*"``, ``"table:audit.*"``,
+        globs, case-insensitive, matched against the full name and its last
+        part), or a called function (``"function"``, ``"function:purge_*"``).
         """
         selector = selector.strip().lower()
         if selector in FLAGS:
@@ -141,7 +182,11 @@ class SqlAnalysis:
             return bool(GROUPS[selector] & set(self.effects))
         if selector in OPERATIONS:
             return selector in self.effects or (selector == "unknown" and self.opaque)
+        if selector == "function":
+            return bool(self.functions)
         kind, sep, pattern = selector.partition(":")
+        if sep and kind == "function":
+            return any(_glob(name, pattern) for name in self.functions)
         if sep and kind in ("read", "write", "table"):
             for rel in self.relations:
                 if kind != "table" and rel.access != kind:
@@ -173,11 +218,13 @@ def analyze_sql(sql: str, dialect: str = "generic") -> SqlAnalysis:
 def _merge(sql: str, runs: Sequence[SqlAnalysis]) -> SqlAnalysis:
     effects: Set[str] = set()
     relations: Dict[str, str] = {}
+    functions: List[str] = []
     for run in runs:
         effects.update(run.effects)
         for rel in run.relations:
             if relations.get(rel.name) != "write":
                 relations[rel.name] = rel.access
+        functions.extend(f for f in run.functions if f not in functions)
     worst = max(runs, key=lambda r: SEVERITY.get(r.operation, 0))
     return SqlAnalysis(
         source=sql, statements=worst.statements,
@@ -186,6 +233,7 @@ def _merge(sql: str, runs: Sequence[SqlAnalysis]) -> SqlAnalysis:
         unbounded=any(r.unbounded for r in runs), opaque=any(r.opaque for r in runs),
         external=any(r.external for r in runs), multi=any(r.multi for r in runs),
         partial=any(r.partial for r in runs), dialect="generic",
+        functions=tuple(functions),
     )
 
 
@@ -209,6 +257,12 @@ class _Acc:
         self.unbounded = False
         self.opaque = False
         self.external = False
+        self.functions: List[str] = []
+
+    def func(self, name: str) -> None:
+        name = name.strip().lower()[:_MAX_FUNCTION_NAME]
+        if name and name not in self.functions and len(self.functions) < _MAX_FUNCTIONS:
+            self.functions.append(name)
 
     def rel(self, name: Optional[str], access: str) -> None:
         if not name:
@@ -226,6 +280,7 @@ def _analyze(sql: str, dialect: Dialect) -> SqlAnalysis:
     statements: List[Statement] = []
     effects: Set[str] = set()
     relations: Dict[str, str] = {}
+    functions: List[str] = []
     for piece in pieces:
         acc = _Acc()
         _walk(piece, acc, dialect, 0)
@@ -236,7 +291,9 @@ def _analyze(sql: str, dialect: Dialect) -> SqlAnalysis:
             text=" ".join(t.value for t in piece)[:2000], operation=_worst(acc.effects),
             effects=tuple(sorted(acc.effects, key=_order)), relations=rels,
             unbounded=acc.unbounded, opaque=acc.opaque, external=acc.external,
+            functions=tuple(acc.functions),
         ))
+        functions.extend(f for f in acc.functions if f not in functions)
         effects.update(acc.effects)
         for rel in rels:
             if relations.get(rel.name) != "write":
@@ -249,6 +306,7 @@ def _analyze(sql: str, dialect: Dialect) -> SqlAnalysis:
         opaque=any(s.opaque for s in statements),
         external=any(s.external for s in statements),
         multi=len(statements) > 1, partial=not complete, dialect=dialect.name,
+        functions=tuple(functions),
     )
 
 
@@ -304,6 +362,36 @@ def _is(tok: Optional[Token], *words: str) -> bool:
     return tok is not None and tok.kind == "word" and tok.value in words
 
 
+def _scan_functions(top: List[Token], acc: _Acc) -> None:
+    """Record every ``name(`` in a flattened token list as a call.
+
+    The analyzer cannot know what a function *does* - that is the catalog's
+    job - but it can answer *what is called*, which is what a policy needs to
+    refuse ``SELECT purge_everything()`` and other effects that never appear
+    as a statement verb. Names are kept qualified
+    (``pg_catalog.pg_read_file``) and bounded; a selector matches the last
+    part too, so ``function:pg_read_file`` finds the qualified form.
+    """
+    for index, tok in enumerate(top):
+        if tok.kind not in ("word", "ident"):
+            continue
+        if tok.kind == "word" and tok.value in _NON_CALL_WORDS:
+            continue
+        following = top[index + 1] if index + 1 < len(top) else None
+        if following is None or following.kind != "group":
+            continue
+        start = index
+        while (start >= 2 and top[start - 1].kind == "punct"
+               and top[start - 1].value == "."
+               and top[start - 2].kind in ("word", "ident")):
+            start -= 2
+        before = top[start - 1] if start else None
+        if before is not None and before.kind == "word" and before.value in _NON_CALL_BEFORE:
+            continue  # "INSERT INTO t (cols)", "CREATE TABLE t (cols)", "… ON t (cols)"
+        parts = [t.value for t in top[start:index + 1] if t.kind in ("word", "ident")]
+        acc.func(".".join(parts))
+
+
 def _walk(tokens: List[Token], acc: _Acc, dialect: Dialect, depth: int) -> None:
     if depth > _MAX_NEST:
         acc.opaque = True
@@ -312,6 +400,7 @@ def _walk(tokens: List[Token], acc: _Acc, dialect: Dialect, depth: int) -> None:
     top, groups = _flatten(tokens)
     if not top:
         return
+    _scan_functions(top, acc)
     # Subqueries and CTE bodies anywhere in the statement run too.
     for index, tok in enumerate(top):
         if tok.kind == "group":
@@ -344,6 +433,7 @@ def _group(inner: List[Token], acc: _Acc, dialect: Dialect, depth: int) -> None:
         _walk(inner, acc, dialect, depth + 1)
         return
     top, groups = _flatten(inner)
+    _scan_functions(top, acc)
     for index, tok in enumerate(top):
         if tok.kind == "group":
             _group(groups[int(tok.value)], acc, dialect, depth + 1)

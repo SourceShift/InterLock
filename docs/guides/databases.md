@@ -44,6 +44,7 @@ Selectors:
 | `select`, `insert`, `update`, `delete`, `create`, `drop`, `alter`, `truncate`, `grant`, `revoke`, `unknown` | that operation anywhere in the text |
 | `ddl`, `dml`, `write`, `control` | a group (`write` also matches any table written) |
 | `read:customers`, `write:pay*`, `table:audit.*` | a table read, written, or either (globs; the full name or its last part) |
+| `function`, `function:purge_*` | a function the statement calls, whatever its verb (globs; `pg_catalog.pg_read_file` matches `function:pg_read_file`) |
 | `unbounded` | `UPDATE`/`DELETE` with no `WHERE` |
 | `opaque` | `DO`, `CALL`, `EXEC`, `EXECUTE`, a PL block, or an unrecognised statement |
 | `external` | `COPY … PROGRAM`, server-side file I/O, `INTO OUTFILE`, `LOAD DATA INFILE`, `xp_cmdshell`, `pg_read_file`, `dblink` … |
@@ -60,10 +61,11 @@ statement hidden by one reading is still found by another. If you know your
 database, pass `dialect="postgres"` (or `mysql`, `mssql`, `sqlite`).
 
 **Limits.** This is a lexer, not a database. A function called from a `SELECT`
-list (`SELECT purge_everything()`) is invisible to it, as it is to anything
-without the catalog. It never raises, and text it can't fully read is reported
-`partial`. Database permissions are the boundary; this is the policy aid in
-front of them.
+list (`SELECT purge_everything()`) is reported by name, but what it *does* is
+not knowable without the catalog: `function:` selectors let you name the ones
+you refuse, they do not classify arbitrary calls as writes. It never raises,
+and text it can't fully read is reported `partial`. Database permissions are
+the boundary; this is the policy aid in front of them.
 
 ## Mask what comes back
 
