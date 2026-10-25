@@ -121,7 +121,9 @@ small signed file (`<key>.head` by default, mode 0600) recording how many writes
 the queue has committed. Opening a database whose counter is behind the mark is
 refused as a rollback. The mark is written *after* the SQLite commit, so a crash
 between the two leaves the database ahead of the mark; that direction heals (the
-mark catches up) rather than blocking the queue.
+mark catches up) rather than blocking the queue. The mark only ever rises: with
+several processes on one database, a writer holding a staler counter adopts the
+higher value another process already wrote instead of overwriting it.
 
 The mark is only as good as its storage. A backup that restores the database,
 the key and the mark together is invisible to it, so point `head_path=` (or

@@ -30,8 +30,8 @@ def request_for(cmd="npm publish"):
     return make_request(event, Decision.escalate("publishing", "publish"), "epoch1")
 
 
-def filed(queue, now=1000.0):
-    request = request_for()
+def filed(queue, now=1000.0, cmd="npm publish"):
+    request = request_for(cmd)
     return queue.lookup_or_file(binding_hash(request), request, now=now).id
 
 
@@ -141,6 +141,19 @@ def test_a_state_change_advances_the_mark_once(tmp_path):
     queue.claim(review_id, now=1002)
     assert seq(path) == 3
     assert head(queue.head_path)["seq"] == 3
+
+
+def test_the_mark_never_moves_backwards(tmp_path):
+    """A second writer that commits first must not be overwritten by a stale one."""
+    path = str(tmp_path / "reviews.db")
+    slow = ReviewQueue(path, pending_ttl=60, approval_ttl=30)
+    fast = ReviewQueue(path, pending_ttl=60, approval_ttl=30)
+    filed(fast, now=1000.0)                       # seq 1
+    filed(fast, now=1001.0, cmd="npm publish --tag next")   # seq 2, mark 2
+    assert head(slow.head_path)["seq"] == 2
+
+    slow._advance(1)                              # the stale write a race produces
+    assert head(slow.head_path)["seq"] == 2
 
 
 def test_an_expiry_counts_as_a_change(tmp_path):

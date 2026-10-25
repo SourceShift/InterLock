@@ -433,8 +433,21 @@ class ReviewQueue:
         return current + 1
 
     def _advance(self, seq: int) -> None:
-        """Record a committed change in memory and in the mark."""
+        """Record a committed change in memory and in the mark.
+
+        The mark only ever rises. Between this process's commit and this call,
+        another process may have committed and written a higher one; writing a
+        stale value here would move the mark backwards and could make a
+        perfectly good database look like it is *ahead* of its mark - which
+        heals, but a crash before the heal leaves the rollback undetected. So
+        read the current mark first, adopt it when it is higher, and skip the
+        write when there is nothing to add.
+        """
         self._seq = max(self._seq, seq)
+        recorded = self._read_head()
+        if recorded is not None and recorded >= self._seq:
+            self._seq = recorded
+            return
         self._write_head(self._seq)
 
     @staticmethod
