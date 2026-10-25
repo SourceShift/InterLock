@@ -288,11 +288,13 @@ Start with [getting started](docs/getting-started.md), then
 
 ## Status
 
-**Alpha (v0.0.1).** The core API is stable and covered by over 2,700 tests. Not
-yet on PyPI or npm. Next on the [roadmap](ROADMAP.md): a committed benign corpus
-and published false-positive numbers (`interlock mesh harness` measures them
-today), rules over data flow between tools, automatic interception of MCP
-clients and model SDKs, and signed PyPI/npm releases.
+**Alpha (v0.0.1).** The core API is stable and covered by over 4,700 tests. Not
+yet on PyPI or npm. The default coding-agent pack is measured against a
+committed benign corpus (0 false positives over 70 events, gated in CI). Next
+on the [roadmap](ROADMAP.md): per-detector false-positive numbers for other
+policies, rules over data flow between tools, an import monitor that notices a
+guarded client changing underneath (MCP client sessions already attach with
+`interlock.attach()`), and signed PyPI/npm releases.
 
 ## Contributing
 

@@ -183,6 +183,12 @@ breaking changes land.
 
 ### Changed
 
+- One command string is analyzed once per event. `PolicyEngine.evaluate` opens
+  an analysis memo keyed on `(command, cwd)` for the rule loop (and the
+  shadow pass reuses it), so the rules with an `intent` condition share one
+  parse instead of paying for one each. `Bash` evaluation on the committed
+  benign corpus dropped from 1.26 ms to 0.67 ms p50; decisions are unchanged
+  (`tests/test_intent_memo.py`).
 - Every enforcement site dispatches through one exhaustive function, so a
   verdict it doesn't know is blocked rather than allowed (Python and Node.js).
 - `destructive_command_guard` and `git_credential_guard` also parse commands;

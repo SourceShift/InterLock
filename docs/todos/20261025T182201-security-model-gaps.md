@@ -16,137 +16,122 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 | 2 | MCP trust labels depend on adapter | **closed** | `92eeced` — labels ride `SensorEvent.labels`; reserved keys stripped at every boundary |
 | 3 | Approvals run in the agent's process | **partial** | in-process `set_approver` unchanged; review queue + console approval shipped |
 | 4 | Review queue trusts its file | **closed for forgery** | rows HMAC-signed with a key beside the DB (T09, `1547afc`); rollback replay until `approval_ttl` remains |
-| 5 | Shell parsing best-effort | **partial** | ANSI-C `$'\x..'` now decoded; base64 + staged download still pass; "add-only" claim is false |
-| 6 | SQL analysis + masking best-effort | **open** | `interlock/sql/lexer.py`, no AST dep; `interlock/masking.py:35` |
-| 7 | Coding-agent hooks cooperative | **open** | `interlock/adapters/base.py:25-27` capability matrix |
+| 5 | Shell parsing best-effort | **closed for the two named evasions** | ANSI-C quoting, a base64 payload piped to a shell, and a staged fetched script are decoded/followed (T06, `192b6a8`); other encodings remain; "not add-only" is now documented |
+| 6 | SQL analysis + masking best-effort | **open (accepted)** | `interlock/sql/lexer.py`, no AST dep; `interlock/masking.py:35`; T14 marks it accepted |
+| 7 | Coding-agent hooks cooperative | **open (accepted)** | `interlock/adapters/base.py:25-27` capability matrix; inherent to an in-agent adapter (T14) |
 | 8 | No measured false-positive rate | **partial** | closed for the default pack by T07 (committed corpus, 0/70, CI gate); other policies still unmeasured |
-| 9 | Per-host egress needs root | **open** | no backend exists between bwrap all-or-none and root nftables |
-| 10 | macOS can't confine reads / visibility / memory | **open** | `sandbox_exec.py:109,122`; `limits.py:59-67` |
+| 9 | Per-host egress needs root | **open (accepted)** | no backend exists between bwrap all-or-none and root nftables (T14) |
+| 10 | macOS can't confine reads / visibility / memory | **open (accepted)** | `sandbox_exec.py:109,122`; `limits.py:59-67`; Seatbelt cannot express these (T14) |
 | 11 | `setsid()` descendant survives timeout kill | **partial** | bwrap `--unshare-pid` + `--die-with-parent`; Windows `taskkill /T /F` walks the tree (T10); a reparented process can still escape |
-| 12 | Write confinement differs by backend | **open (accurate)** | `sandbox.py:155-191`; `python-api.md:1036` contradicts the scratch exception |
+| 12 | Write confinement differs by backend | **open (accurate)** | `sandbox.py:155-191`; the scratch exception is now documented in `python-api.md` (T03) |
 | 13 | CPU/memory reported only by `soft` | **closed** | every backend claims `rlimit` when a ceiling is set (T11); the token matrix carries an escape row for each |
 | 14 | Truncated tail needs an outside record | **open** | `head=` exists (`sink.py:89-108`); no automatic anchor |
-| 15 | Receipts prove integrity, not authorship | **open** | `verifier=` seam exists; no bundled public-key signer for receipts |
-| 16 | Node.js unguardable shapes | **open** | `js/src/install.ts:43-81` still lists `*Sync`, stream openers, `spawn` |
+| 15 | Receipts prove integrity, not authorship | **closed** | `interlock/receipt_ed25519.py` ships signer + verifier, and the audit guide documents key distribution (T08, `e366c5c`) |
+| 16 | Node.js unguardable shapes | **open (accepted, now visible)** | the shapes and `esm.named-import` are reported by `installInterceptors().uncovered` (T13, `9d163a7`) |
 | 17 | Node.js depends on a sidecar | **open (by design)** | `deny` default; `degraded`/`allow` are documented weakenings |
 
 ---
 
 ## T01 — Correct the MCP trust-label gap text
 
-**Status:** not started
+**Status:** done (2026-10-25, `db633bb`)
 
 - **Rewrite the bullet in `docs/security-model.md`**
-  - status: not started
-  - last worked on: 2026-10-25 (validation)
-  - remaining: delete/replace the "never copy those keys from model-generated
-    arguments" bullet. New text: trust facts live on `SensorEvent.labels`;
-    reserved `__*__` keys are stripped at every model-facing boundary
-    (`interlock/interceptors/mcp.py:77,154`, `interlock/event.py:19-28`);
-    only trusted code can set a label.
-- **Fix the stale caveat in `docs/guides/mcp.md:533`**
-  - status: not started
-  - last worked on: —
-  - remaining: "Labels are trusted as given" contradicts `92eeced`; keep the
-    hand-built-event caveat but state that reserved keys are stripped and a
-    caller must pass `labels=`, not `args`.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — the bullet now says trust facts live on
+    `SensorEvent.labels`, reserved `__*__` keys are stripped at every
+    model-facing boundary, and only trusted code can set a label.
+- **Fix the stale caveat in `docs/guides/mcp.md`**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — the "trusted as given" caveat is gone; the guide keeps
+    the hand-built-event caveat and states the stripping rule.
 
 ## T02 — Correct the shell-parsing gap and the add-only claim
 
-**Status:** not started
+**Status:** done (2026-10-25, `db633bb` + `192b6a8`)
 
-- **Update the gap bullet** (`docs/security-model.md:92-96`)
-  - status: not started
+- **Update the gap bullet**
+  - status: done
   - last worked on: 2026-10-25
-  - remaining: remove `$'\x72\x6d'` from the "gets past it" list — ANSI-C
-    quoting is decoded (`interlock/shell/parser.py:226-232,295-300,830-883`,
-    `tests/test_redteam_regressions.py:117-122`). Keep base64 and downloaded
-    scripts as live evasions.
+  - remaining: none — ANSI-C decoding, base64 payloads and a fetched script
+    run later are now described as covered; other encodings and run-time
+    assembled paths remain the documented evasions.
 - **Decide and document the add-only invariant**
-  - status: not started
-  - last worked on: —
-  - remaining: `destructive_command_guard.py:188-201` discards a raw-text
-    match when a complete parse finds no destructive intent (`echo rm -rf /`
-    is allowed, `test_rt_027`). Either say "the parse may clear a raw match
-    when the command is a pure print" in the guard docstring and security
-    model, or make the union truly add-only. Pick one; today code and docs
-    disagree.
+  - status: done — documented, not changed
+  - last worked on: 2026-10-25
+  - remaining: none — the security model and the guard's docstring say a
+    complete parse may clear a raw match for a pure print (`echo rm -rf /`);
+    the union is explicitly not add-only.
 - **Sweep duplicate stale claims**
-  - status: not started
-  - last worked on: —
-  - remaining: `docs/guides/coding-agents.md:227-228`,
-    `docs/guides/detectors.md:388-389`, `interlock/shell/parser.py:34-36`,
-    `interlock/detectors/command_intent_guard.py:34-36`.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `coding-agents.md`, `detectors.md`, `shell/parser.py`
+    and `command_intent_guard.py` carry the corrected text.
 
 ## T03 — Correct the sandbox timeout and scratch-removal text
 
-**Status:** not started
+**Status:** done (2026-10-25)
 
 - **Qualify the `setsid()` sentence**
-  - status: not started
+  - status: done
   - last worked on: 2026-10-25
-  - remaining: note that under bubblewrap `--unshare-pid` + `--die-with-parent`
-    (`interlock/brace/backends/bubblewrap.py:60-74`) the kernel reaps a
-    `setsid()` escapee when bwrap dies; the escape is live for `sandbox-exec`,
-    `soft`, and Windows. Fix `docs/guides/sandbox.md:64-67` and
-    `docs/security-model.md:123-127`.
+  - remaining: none — both the guide and the security model note bwrap's
+    PID namespace + `--die-with-parent`, the live escape under
+    `sandbox-exec`/`soft`, and (after T10) the Windows `taskkill /T` tree walk
+    with its reparenting caveat.
 - **Fix the scratch-removal contradiction**
-  - status: not started
-  - last worked on: —
-  - remaining: `docs/reference/python-api.md:1036` says `run()` "removes it on
-    every exit path"; the code deliberately leaves the scratch when an escaped
-    descendant still holds it (`interlock/brace/sandbox.py:189-191,255-261`).
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `python-api.md` now says the scratch is removed on every
+    exit path *except* when an escaped descendant still holds it at timeout.
 
 ## T04 — Reconcile the false-positive measurement story
 
-**Status:** not started
+**Status:** done (2026-10-25, `9461a8d` + this pass)
 
-- **Update the gap bullet** (`docs/security-model.md:111-114`)
-  - status: not started
+- **Update the gap bullet**
+  - status: done
   - last worked on: 2026-10-25
-  - remaining: "a harness is planned" is stale — `interlock mesh harness`
-    exists (`interlock/mesh/harness.py`, `CHANGELOG.md:48-50`). Restate the
-    real gap: no committed benign corpus, no published per-detector number,
-    no CI regression gate.
+  - remaining: none — the bullet carries measured numbers and the real
+    residual (other policies unmeasured, corpus is one developer's traffic).
 - **Fix README/ROADMAP self-contradiction**
-  - status: not started
-  - last worked on: —
-  - remaining: `README.md:291-293` lists the harness as future work while
-    `ROADMAP.md:1434` calls it shipped; `ROADMAP.md:375-376` says 767 cases
-    across six categories, files hold 774 across seven.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — README no longer lists the corpus/number as future
+    work, ROADMAP R5 records the shipped default-pack measurement, and the
+    conformance count (774 cases, seven categories) matches the files.
 
 ## T05 — Update the approvals gap to include the review queue
 
-**Status:** not started
+**Status:** done (2026-10-25, `db633bb`)
 
-- **Rewrite the bullet** (`docs/security-model.md:88-91`)
-  - status: not started
+- **Rewrite the bullet**
+  - status: done
   - last worked on: 2026-10-25
-  - remaining: keep the in-process `set_approver` limit, but state that the
-    durable queue (`interlock/reviews.py`) and the opt-in console route
-    (`interlock/console/reviews_api.py`) let a human decide from another
-    process; `docs/guides/approvals.md:117-124` omits the queue entirely.
+  - remaining: none — the in-process approver limit stays, and both the
+    security model and `approvals.md` now point at the durable review queue
+    and the opt-in console as the out-of-process route.
 
 ## T06 — Close shell evasion: encoded payloads and staged downloads
 
-**Status:** not started
+**Status:** done (2026-10-25, `192b6a8`) — both evasions closed, not accepted
 
 - **Decode base64 payloads before intent analysis**
-  - status: not started
-  - last worked on: —
-  - remaining: `echo cm0gLXJmIC8= | base64 -d | sh` yields no critical
-    intent. `base64_payload_scan` decodes but only for injection markers
-    (`interlock/detectors/base64_payload_scan.py:42-66`). Reuse the decoder in
-    the shell intent path; cap decoded size.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — the intent path decodes a base64 payload piped into a
+    shell (bounded size), so `echo cm0gLXJmIC8= | base64 -d | sh` carries
+    `fs.delete.recursive`. Other encodings (gzip, rotation, encryption) stay
+    documented evasions.
 - **Track a fetched script that is executed later**
-  - status: not started
-  - last worked on: —
-  - remaining: `_fetch_exec` only fires on a same-pipeline pipe
-    (`interlock/shell/intents.py:531-550`); `curl -o /tmp/x.sh …; bash /tmp/x.sh`
-    yields only `net.fetch`. Options: flag fetch-to-file followed by exec of
-    the same literal path within one command string, or accept and document.
-  - **Decision needed:** extending cross-command taint adds state to a
-    stateless parser — confirm before building.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `_fetch_write_exec` follows a fetcher's `-o` path to a
+    later invocation that runs the same literal path, within one command
+    string. Cross-*event* taint is still out of scope: the parser stays
+    stateless per string, which is now stated in the security model.
 
 ## T07 — Publish a false-positive number and gate it
 
@@ -175,20 +160,22 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 
 ## T08 — Bundle a public-key receipt signer
 
-**Status:** not started
+**Status:** done (2026-10-25, `e366c5c`)
 
 - **Wire Ed25519 into the receipt sink**
-  - status: not started
-  - last worked on: —
-  - remaining: `verify(verifier=...)` seam exists (`interlock/receipt.py:305-354`)
-    but no signer ships; HMAC stays the default. `interlock/mesh/ed25519.py`
-    already implements the primitive for mesh metadata — extract it and offer
-    `FileSink(key=..., signer="ed25519")`.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `interlock/receipt_ed25519.py` ships
+    `ed25519_signer`, `ed25519_verifier`, `generate_seed` and `public_key`;
+    `FileSink("...", signer=ed25519_signer, key=seed)` signs and
+    `verify_file(..., verifier=...)` checks with the public key alone. HMAC
+    stays the default.
 - **Document the key distribution model**
-  - status: not started
-  - last worked on: —
-  - remaining: `docs/guides/audit-log.md:280-324` — who holds the private key,
-    what a third party verifies.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `docs/guides/audit-log.md` shows the operator holding
+    the seed and the auditor holding only the public key, plus what a wrong
+    key proves.
 
 ## T09 — Give the review queue integrity and an owner
 
@@ -283,44 +270,45 @@ have no class seam
 
 ## T13 — Node.js: report ESM named imports as uncovered
 
-**Status:** not started
+**Status:** done (2026-10-25, `9d163a7`)
 
 - **Add the missing entry**
-  - status: not started
-  - last worked on: —
-  - remaining: ESM named imports (`import { readFile } from "node:fs/promises"`)
-    are a proven bypass in `js/test/fs.test.ts:150` and documented in
-    `js/README.md:274-291`, but are not an action name in
-    `installInterceptors().uncovered` (`js/src/install.ts:43-81`). Adding the
-    entry makes the hole machine-visible; the gap itself is unclosable.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `installInterceptors().uncovered` carries
+    `esm.named-import`, and `js/test/fs.test.ts` keeps the bypass executable
+    as a fact. The hole itself is unclosable from JavaScript; the sidecar or
+    an OS sandbox is the boundary, and the entry makes it visible.
 
 ## T14 — Register the accepted limitations
 
-**Status:** not started
+**Status:** done (2026-10-25, `db633bb`)
 
 - **Mark four gaps as accepted, not queued**
-  - status: not started
+  - status: done
   - last worked on: 2026-10-25
-  - remaining: SQL/masking semantics (T6 in the table), macOS read
-    confinement, per-host egress without root, and Node's unguardable shapes
-    are architectural, not backlog. Add a one-line "accepted" marker in
-    `docs/security-model.md` so future audits do not re-open them. The
-    coding-agent-hook cooperativeness gap is likewise inherent — the hooks
-    are an in-agent adapter by definition.
+  - remaining: none — six bullets in `docs/security-model.md` now carry an
+    explicit **Accepted:** marker: SQL/masking semantics, hook
+    cooperativeness, per-host egress without root, macOS read confinement and
+    memory visibility, a platform that cannot express a limit, and Node's
+    unguardable shapes.
 
 ## T15 — Memoize intent analysis per event (found during T07)
 
-**Status:** not started
+**Status:** done (2026-10-25)
 
 - **Stop re-parsing one Bash command once per intent rule**
-  - status: not started
+  - status: done
   - last worked on: 2026-10-25
-  - remaining: `BuiltinEngine.evaluate` runs each rule in turn, and every rule
-    with an `intent` condition calls `intents.analyze(event)`, which calls
-    `parse()` again (`interlock/policy/declarative.py:1034` →
-    `interlock/shell/intents.py:81`). A Bash event pays for ~12 parses; that is
-    1.26 ms p50 versus 0.04 ms for a file tool, measured in
-    `benchmarks/fp/README.md`. Cache `analyze(command, cwd)` for the length of
-    one `evaluate()` call (an `lru_cache` keyed on both, or a per-engine
-    memo cleared at entry). Near-zero behavioural risk if `cwd` is part of the
-    key; expected to cut Bash cost by an order of magnitude.
+  - remaining: none — `interlock/shell/intents.py` exposes a
+    `memoized_analysis()` context and `memoized_analyze(command, cwd)`;
+    `PolicyEngine.evaluate` opens one memo around the rule loop and
+    `DeclarativeEngine.evaluate` extends it over the shadow pass (a nested
+    block reuses the outer table). Keyed on `(command, cwd)`, per thread/task,
+    never survives the event. `tests/test_intent_memo.py` (8 tests) pins one
+    parse for four intent rules, no cross-event or cross-directory reuse, a
+    rewritten command analyzed under its own text, and the same answer as
+    `analyze`.
+  - measured: `Bash` p50 1.26 ms → 0.67 ms, corpus p50 1.0 → 0.6 ms, p95
+    2.0 → 1.0 ms (`benchmarks/fp/README.md`). Not an order of magnitude: the
+    remaining cost is the rules matching their selectors, not the parse.

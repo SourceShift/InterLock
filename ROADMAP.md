@@ -400,10 +400,13 @@ that as a first-class attack.
 
 ### Why now
 
-The harness ships; the first published corpus and number are the whole value. It
-is also the item that de-risks every other item: adding detectors (R6, R7) without
-a benign corpus to run them against is how a detector suite accumulates its own
-DoS surface.
+The harness ships, and the first corpus and number now do too: the default
+`builtin:coding-agent` pack measures 0 false positives over 70 committed benign
+events and is gated in CI (`benchmarks/fp/`, `tests/test_fp_baseline.py`). What
+remains is coverage — other policies and per-detector numbers — and the induced-
+blocking (DoS) half of the harness. It is also the item that de-risks every
+other item: adding detectors (R6, R7) without a benign corpus to run them
+against is how a detector suite accumulates its own DoS surface.
 
 ### What changes
 

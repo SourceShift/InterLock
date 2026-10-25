@@ -66,9 +66,11 @@ A `timeout=` that expires kills the sandbox's whole process group on POSIX, then
 raises `subprocess.TimeoutExpired`. A descendant that calls `setsid()` itself
 leaves that group; under bubblewrap it still dies, because the child lives in
 its own PID namespace and bwrap runs with `--die-with-parent`, so the kernel
-reaps the escapee when bwrap exits. Under `sandbox-exec`, `soft`, and Windows
-(where only the direct child is killed) the escapee survives. Confinement and
-per-process limits still apply to it either way.
+reaps the escapee when bwrap exits. On Windows the kill runs `taskkill /T /F`,
+which walks the parent/process-id tree before killing the direct child, but a
+process that has already reparented itself can still escape. Under
+`sandbox-exec` and `soft` the escapee survives. Confinement and per-process
+limits still apply to it either way.
 
 Use an absolute path for the program (`sys.executable` above). The child's
 environment is empty, so there is no `PATH` from your shell to search.

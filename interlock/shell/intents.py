@@ -43,8 +43,10 @@ import fnmatch
 import os
 import posixpath
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 from .parser import (_SCRIPT_INTERPRETER, _WRAPPERS, Invocation,
                      ParsedCommand, _literals, parse)
@@ -109,6 +111,47 @@ def analyze(command: Union[str, ParsedCommand], cwd: Optional[str] = None) -> Tu
     for intent in found:
         unique.setdefault(intent, None)
     return tuple(unique)
+
+
+_ANALYSIS_MEMO: ContextVar[Optional[Dict[Tuple[str, Optional[str]], Tuple[Intent, ...]]]] = (
+    ContextVar("interlock_intent_analysis_memo", default=None)
+)
+
+
+@contextmanager
+def memoized_analysis() -> Iterator[None]:
+    """Share one analysis per ``(command, cwd)`` for the duration of the block.
+
+    The policy engine evaluates rules in order and every rule with an ``intent``
+    condition re-analyzes the same command string; a Bash event paid for about
+    twelve parses of one string. Nesting reuses the outer memo, so a caller can
+    wrap a whole event - rule loop and shadow pass alike - and get one table.
+    Analysis is pure, and ``cwd`` is part of the key, so a hit is the same
+    answer, not a stale one. Threads and async tasks each keep their own memo.
+    """
+    if _ANALYSIS_MEMO.get() is not None:
+        yield
+        return
+    token = _ANALYSIS_MEMO.set({})
+    try:
+        yield
+    finally:
+        _ANALYSIS_MEMO.reset(token)
+
+
+def memoized_analyze(command: str, cwd: Optional[str] = None) -> Tuple[Intent, ...]:
+    """:func:`analyze`, reusing the enclosing :func:`memoized_analysis` table.
+
+    Falls back to a plain analysis outside a memo block.
+    """
+    memo = _ANALYSIS_MEMO.get()
+    if memo is None:
+        return analyze(command, cwd)
+    key = (command, cwd)
+    found = memo.get(key)
+    if found is None:
+        found = memo[key] = analyze(command, cwd)
+    return found
 
 
 def invocation_bases(parsed: ParsedCommand,

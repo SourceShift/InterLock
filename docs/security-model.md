@@ -174,7 +174,7 @@ What the DAP path does and does not assume:
 - **The published false-positive rate covers one pack, on one machine.**
   `benchmarks/fp/benign.jsonl` holds 70 ordinary coding-agent calls, and
   `scripts/fp_baseline.py` measures `builtin:coding-agent` against them:
-  **0 false positives, p95 ≈ 2 ms** on 2026-10-25 (`benchmarks/fp/README.md`).
+  **0 false positives, p95 ≈ 1 ms** on 2026-10-25 (`benchmarks/fp/README.md`).
   `tests/test_fp_baseline.py` re-runs it in CI, so a rule that starts firing on
   a routine `git status` breaks the build. That is a regression gate, not a
   guarantee: zero events out of 70 leaves a 95% upper bound near 4%, the corpus

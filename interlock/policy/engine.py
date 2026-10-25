@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ..enforce import Decision, Verdict
 from ..event import SensorEvent, result_payload
+from ..shell.intents import memoized_analysis
 
 # A rule returns a Decision if it has an opinion, else None (no opinion).
 Rule = Callable[[SensorEvent], Optional[Decision]]
@@ -97,6 +98,14 @@ class PolicyEngine:
         result payload under the same action name, and a result-side rule
         never fires on the arguments being sent.
         """
+        # One intent analysis per (command, cwd) for this event: every rule
+        # with an ``intent`` condition would otherwise re-parse the same
+        # string, and a Bash event carries a dozen of them.
+        with memoized_analysis():
+            return self._combine(event)
+
+    def _combine(self, event: SensorEvent) -> Decision:
+        """The body of :meth:`evaluate`, run inside one analysis memo."""
         is_result = getattr(event, "phase", "call") == "result"
         working = event
         rewrites: List[Decision] = []

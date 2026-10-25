@@ -312,6 +312,7 @@ class DeclarativeEngine(PolicyEngine):
         return [_rule_label(rule) for rule in self._shadow]
 
     def evaluate(self, event: SensorEvent) -> Decision:
+        from ..shell.intents import memoized_analysis
         if self._watch is not None:
             now = time.monotonic()
             if now - self._checked >= self._watch:
@@ -319,9 +320,12 @@ class DeclarativeEngine(PolicyEngine):
                 due = self.reload_at is not None and time.time() >= self.reload_at
                 if due or _stamps(self._files) != self._stamps:
                     self.reload()
-        decision = super().evaluate(event)
-        if self._shadow:
-            self._observe(event)
+        # The shadow pass judges the same event, so it shares the memo the
+        # rule loop opens (a nested block reuses the outer table).
+        with memoized_analysis():
+            decision = super().evaluate(event)
+            if self._shadow:
+                self._observe(event)
         return decision
 
     def _observe(self, event: SensorEvent) -> None:
@@ -1099,7 +1103,7 @@ def _check_arg_name(name: str, where: str, actions: Optional[FrozenSet[str]]) ->
 
 def _intent_condition(selector: Any, arg: Any, where: str,
                       actions: Optional[FrozenSet[str]]) -> Condition:
-    from ..shell import analyze
+    from ..shell.intents import memoized_analyze
 
     if not isinstance(selector, (str, list)) or (isinstance(selector, list) and not all(
             isinstance(s, str) for s in selector)):
@@ -1125,7 +1129,7 @@ def _intent_condition(selector: Any, arg: Any, where: str,
         for name, value in items:
             if not isinstance(value, str):
                 continue
-            for intent in analyze(value, cwd=getattr(event, "cwd", None)):
+            for intent in memoized_analyze(value, cwd=getattr(event, "cwd", None)):
                 if any(intent.matches(s) for s in selectors):
                     return Hit(name)
         return False

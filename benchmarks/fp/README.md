@@ -34,27 +34,29 @@ separate job.
 | **False positives** | **0 — 0.0000%** |
 | Rules that fired | none |
 | Quarantined rules | none |
-| Latency p50 / p95 / max | 1.0 ms / 2.0 ms / 2.8 ms |
+| Latency p50 / p95 / max | 0.6 ms / 1.0 ms / 1.3 ms |
 
 Gate: `DEFAULT_MAX_FP_RATE = 0.001` (0.1%) and `DEFAULT_MAX_P95_US = 5000`
 (5 ms) from `interlock/mesh/harness.py`. Measured on macOS 24.4, CPython 3.9,
 one thread, warm process.
 
-Latency is dominated by `Bash` events: the intent analysis parses the command
-once per rule that asks about an intent, so one event pays for ~12 parses.
+Latency is dominated by `Bash` events, but the command is now parsed once per
+event: the engine opens an analysis memo keyed on `(command, cwd)` for the
+duration of `evaluate()`, so the ~12 rules that ask about an intent share one
+parse. Before the memo the same corpus measured 1.26 ms p50 for `Bash`; the
+rest of the cost is the rules themselves, each matching its selectors against
+the analyzed intents.
 
 | Action | p50 |
 |---|---|
-| `Bash` | 1.26 ms |
-| `NotebookEdit` / `MultiEdit` | 0.05 ms |
-| `Write` / `Edit` | 0.04 ms |
-| `Read` / `Grep` / `Glob` | 0.04 ms |
-| `WebFetch` / `WebSearch` / MCP | 0.02–0.03 ms |
+| `Bash` | 0.67 ms |
+| `NotebookEdit` / `MultiEdit` | 0.05–0.06 ms |
+| `Write` / `Edit` | 0.05 ms |
+| `Read` / `Grep` / `Glob` | 0.04–0.05 ms |
+| `WebFetch` / `WebSearch` / MCP | 0.03 ms |
 
 In a hook the process start dominates this cost; it matters only to callers
-that run the engine in-process for every call. A future change can memoize the
-parse per event (see the todo list), which should cut `Bash` cost by an order
-of magnitude.
+that run the engine in-process for every call.
 
 ## What this number does and does not say
 
