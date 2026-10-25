@@ -23,11 +23,13 @@
  * callback, and their promise forms (`fs.promises.open`, `fs.promises.opendir`)
  * already return a promise, so a decision-first wrapper fits both without
  * stealing a synchronous handle.
- * - **ESM named imports.** `import { readFile } from "node:fs"` and
- *   `import * as fs from "node:fs"` bind to the original function at link time;
- *   no pure-JS patch can redirect them. Only `require("node:fs")` and
- *   `import fs from "node:fs"` (a default import, which *is* the CJS object) see
- *   this interceptor. See `js/README.md`.
+ * - **ESM named imports, without the loader.** `import { readFile } from
+ *   "node:fs"` and `import * as fs from "node:fs"` bind to the original function
+ *   at link time; no property patch can redirect them. Only `require("node:fs")`
+ *   and `import fs from "node:fs"` (a default import, which *is* the CJS object)
+ *   see this interceptor. `registerEsmInterceptors` closes the gap by replacing
+ *   the builtin's module record (`esm-loader.ts`); without it, the hole is
+ *   reported. See `js/README.md`.
  * - **Result-phase rules.** These wrappers decide the call, not the return
  *   value. An `fs` function can hand back a `Stats`, a `Dirent`, or a stream -
  *   objects with no wire form - so running a result through the policy would
@@ -49,8 +51,14 @@ import type { EnforceOptions } from "./mcp.js";
 
 const require_ = createRequire(import.meta.url);
 
-/** The operations, shared by the callback and the promise surface. */
-const FS_OPS: readonly EffectSpec[] = [
+/**
+ * The operations, shared by the callback and the promise surface.
+ *
+ * Exported because the ESM loader wraps exactly these members: one list, so a
+ * new operation cannot be guarded on the CJS surface and left unguarded on the
+ * ESM one.
+ */
+export const FS_OPS: readonly EffectSpec[] = [
   { member: "readFile", action: "fs.readFile", fields: [at("path", 0), at("options", 1)] },
   { member: "writeFile", action: "fs.writeFile", fields: [at("path", 0), at("data", 1), at("options", 2)] },
   { member: "appendFile", action: "fs.appendFile", fields: [at("path", 0), at("data", 1), at("options", 2)] },

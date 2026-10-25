@@ -33,7 +33,8 @@ import type { EnforceOptions } from "./mcp.js";
 
 const require_ = createRequire(import.meta.url);
 
-const CHILD_OPS: readonly EffectSpec[] = [
+/** The guarded child-process members; the ESM loader wraps exactly these. */
+export const CHILD_OPS: readonly EffectSpec[] = [
   {
     member: "exec",
     action: "child_process.exec",

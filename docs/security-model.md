@@ -264,12 +264,18 @@ What the DAP path does and does not assume:
   outbound field - and is defence in depth alongside the egress allowlist,
   redaction and volume rules, not a replacement for them. Intra-argument
   laundering is not modelled.
-- **Node.js has holes no JavaScript patch can close.** ESM named imports,
-  `*Sync` calls, and handle-returning openers like `fs.createReadStream` aren't
-  guarded. `installInterceptors().uncovered` lists them
+- **Node.js has holes no JavaScript patch can close.** ESM named imports are now
+  closable by an opt-in module loader (`registerEsmInterceptors`, or the
+  `node --import interlock-guard/esm-hook` preload), which must run before any
+  module links the builtin. `*Sync` calls and handle-returning openers like
+  `fs.createReadStream` stay unguarded, because a guard must await the verdict
+  before the effect and these must return a value synchronously.
+  `installInterceptors().uncovered` lists every remaining hole
   ([js/README.md](https://github.com/SourceShift/InterLock/blob/main/js/README.md)).
-  **Accepted:** no JavaScript patch can reach those shapes; the sidecar or an OS
-  sandbox is the boundary.
+  **Accepted:** the loader cannot be made mandatory from inside an unguarded
+  process - a program that never registers it keeps the named-import hole - and
+  the synchronous shapes remain unreachable; the sidecar or an OS sandbox is the
+  boundary for those.
 - **The Node.js client depends on a sidecar.** By default, if it's down, every
   guarded call is denied. `unreachable="degraded"` falls back to a signed
   offline subset of the policy, and `unreachable="allow"` lets calls through;

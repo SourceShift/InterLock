@@ -22,6 +22,20 @@ breaking changes land.
   wheel must install and report the tagged version. See
   [docs/guides/releasing.md](docs/guides/releasing.md). The vendored VDAF
   licence now ships in the wheel's package data.
+- Node.js ESM named-import guard: `registerEsmInterceptors` installs the
+  interceptors and registers a module loader (`js/src/esm-loader.ts`) that
+  replaces `node:fs`, `node:fs/promises` and `node:child_process` with synthetic
+  modules whose named exports delegate to the patched functions at call time, so
+  `import { readFile } from "node:fs/promises"` is decided like
+  `require("node:fs").readFile`. A side-effect preload,
+  `node --import interlock-guard/esm-hook app.mjs`, wires it from
+  `INTERLOCK_SOCKET`; it refuses to start without one. `client.ts` now unrefs an
+  idle sidecar socket (ref'd only while a reply is outstanding) so a guarded
+  short-lived script still exits, and `fallback.ts` requires `node:fs` lazily so
+  the preload itself cannot cache the unpatched builtin before the loader is
+  registered. `esm.named-import` moves from `uncovered` to `covered` when the
+  loader is installed; the synchronous and handle-returning shapes remain
+  reported.
 - Flow-typed policy (ROADMAP R9): `interlock.flow` tracks boundary provenance -
   the value a guarded tool returned is remembered under `tool:<action>` and
   `principal:<id>` and attached to `SensorEvent.origins` when a later call

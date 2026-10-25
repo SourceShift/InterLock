@@ -1076,12 +1076,15 @@ data file rather than a module.
   action names (`fs.readFile`, `child_process.exec`, `http.fetch`).
   `guardToolMap` / `guardToolRunner` guard a model SDK's tool seam without
   importing any SDK. Crucially, the facade returns a **coverage report**:
-  `uncovered` names the holes no pure-JS patch can reach — ESM named imports and
-  `import * as ns` (link-time bindings), the `*Sync` variants and the
-  handle-returning openers (`fs.open`, `createReadStream`, `spawn`,
+  `uncovered` names the holes no pure-JS patch can reach — the `*Sync` variants
+  and the handle-returning openers (`fs.open`, `createReadStream`, `spawn`,
   `http.request`) whose contract is to return a value now, and result-phase rules
   on native effects (an `fs` call can return a `Stats`/`Dirent`/stream, which has
-  no wire form). That list is stated, not assumed away: a guard whose coverage is
+  no wire form). ESM named imports and `import * as ns` were on that list too;
+  the opt-in `registerEsmInterceptors` loader (and the
+  `node --import interlock-guard/esm-hook` preload) now closes them for modules
+  linked after registration, and the report moves `esm.named-import` to
+  `covered`. That list is stated, not assumed away: a guard whose coverage is
   a guess is worse than one whose coverage is named.
 - The interceptors are the JS-native part; the engine is the part that is not
   reimplemented — it is not a second implementation at all, it is the same

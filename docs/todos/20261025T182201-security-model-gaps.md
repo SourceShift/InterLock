@@ -27,7 +27,7 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 | 13 | CPU/memory reported only by `soft` | **closed** | every backend claims `rlimit` when a ceiling is set (T11); the token matrix carries an escape row for each |
 | 14 | Truncated tail needs an outside record | **open** | `head=` exists (`sink.py:89-108`); no automatic anchor |
 | 15 | Receipts prove integrity, not authorship | **closed** | `interlock/receipt_ed25519.py` ships signer + verifier, and the audit guide documents key distribution (T08, `e366c5c`) |
-| 16 | Node.js unguardable shapes | **open (accepted, now visible)** | the shapes and `esm.named-import` are reported by `installInterceptors().uncovered` (T13, `9d163a7`) |
+| 16 | Node.js unguardable shapes | **mitigated for ESM named imports; sync/handle openers accepted** | opt-in `registerEsmInterceptors` loader + `--import interlock-guard/esm-hook` preload close named/namespace imports and move `esm.named-import` to `covered`; the synchronous and handle-returning shapes stay in `installInterceptors().uncovered` (T13, `9d163a7`) |
 | 17 | Node.js depends on a sidecar | **open (by design)** | `deny` default; `degraded`/`allow` are documented weakenings |
 
 ---
@@ -309,8 +309,19 @@ have no class seam; compatibility contract + import monitor shipped
   - last worked on: 2026-10-25
   - remaining: none — `installInterceptors().uncovered` carries
     `esm.named-import`, and `js/test/fs.test.ts` keeps the bypass executable
-    as a fact. The hole itself is unclosable from JavaScript; the sidecar or
-    an OS sandbox is the boundary, and the entry makes it visible.
+    as a fact.
+- **Mitigate the hole with a loader**
+  - status: done (2026-10-25)
+  - last worked on: 2026-10-25
+  - remaining: none — `registerEsmInterceptors` installs the patches and
+    registers `js/src/esm-loader.ts`, whose synthetic builtin modules delegate
+    guarded named exports to the patched functions at call time; the preload
+    `node --import interlock-guard/esm-hook` does this from `INTERLOCK_SOCKET`.
+    `esm.named-import` moves to `covered` in the returned report.
+    `js/test/esm.test.ts` spawns real children against the sidecar for named,
+    namespace and callback imports. Registration must precede the first link of
+    the builtin (Node has no unregister); the synchronous and handle-returning
+    shapes remain unclosable.
 
 ## T14 — Register the accepted limitations
 

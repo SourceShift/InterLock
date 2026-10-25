@@ -369,15 +369,25 @@ export class RemoteEngine {
       // connect installs it; unreachable in practice.
       throw new WireError("internal", "connection has no reader");
     }
-    socket.write(encodeFrame(requestFrame(opId, event)));
-    const line = await reader.readLine(READ_LIMIT);
-    if (line === null || line.length === 0) {
-      throw new WireError("bad_response", "daemon closed the connection");
+    // Ref only while a reply is outstanding. An idle guard connection must not
+    // keep the process alive: a script that guards one call and is done has to
+    // exit, rather than wait for a socket it will never use again.
+    socket.ref();
+    try {
+      socket.write(encodeFrame(requestFrame(opId, event)));
+      const line = await reader.readLine(READ_LIMIT);
+      if (line === null || line.length === 0) {
+        throw new WireError("bad_response", "daemon closed the connection");
+      }
+      if (line.length > MAX_LINE) {
+        throw new WireError("too_large", "response exceeded the frame limit");
+      }
+      return parseResponse(decodeLine(line), opId);
+    } finally {
+      if (this.socket === socket) {
+        socket.unref();
+      }
     }
-    if (line.length > MAX_LINE) {
-      throw new WireError("too_large", "response exceeded the frame limit");
-    }
-    return parseResponse(decodeLine(line), opId);
   }
 
   private connect(): Promise<net.Socket> {
@@ -411,6 +421,9 @@ export class RemoteEngine {
         socket.setTimeout(0);
         this.socket = socket;
         this.reader = new LineReader(socket, this.timeout);
+        // Idle between calls: let the process exit. `exchange` refs around the
+        // one reply it is waiting for.
+        socket.unref();
         resolve(socket);
       });
       if (this.timeout !== null) {

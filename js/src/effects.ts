@@ -19,8 +19,10 @@
  * arbitrary choice: ESM named imports and `import * as ns` bind at link time to
  * the original function and cannot be redirected by any pure-JS patch. Only the
  * CJS object (`require`, and an ESM *default* import of a builtin, which is the
- * same object) sees a reassigned property. The `js/README.md` "What is not
- * guarded" section states the consequence.
+ * same object) sees a reassigned property. The opt-in loader in `esm-loader.ts`
+ * closes the named-import side by making those bindings proxies that read this
+ * object at call time; the `js/README.md` "What can't be guarded" section states
+ * what remains.
  */
 
 import { fileURLToPath } from "node:url";

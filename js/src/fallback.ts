@@ -11,7 +11,7 @@
  * the same bytes without agreeing on a JSON canonicalization.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 
 import { Decision, Verdict } from "./enforce.js";
 import type { SensorEvent } from "./event.js";
@@ -29,6 +29,25 @@ const OPERATORS = new Set([
 const RULE_KEYS = new Set(["id", "verdict", "reason", "when", "locked", "on", "description", "phase"]);
 const EVENT_FIELDS = new Set(["action", "principal", "phase", "span_id", "parent_principal", "call_id"]);
 const MISSING = Symbol("missing");
+
+const require_ = createRequire(import.meta.url);
+
+/**
+ * `fs.readFileSync`, required at call time rather than imported at link time.
+ *
+ * This module is reachable from `client.js`, which the ESM-hook preload imports
+ * *before* it can register the loader. A static `import { readFileSync } from
+ * "node:fs"` would link `node:fs` first, caching the unpatched module record
+ * for the whole process - and the loader could no longer replace it. Keeping the
+ * link lazy is what lets `node --import interlock-guard/esm-hook` close the
+ * named-import hole instead of inheriting it.
+ */
+function readFileSync(path: string): Buffer;
+function readFileSync(path: string, encoding: "utf8"): string;
+function readFileSync(path: string, encoding?: "utf8"): Buffer | string {
+  const fs = require_("node:fs") as typeof import("node:fs");
+  return encoding === undefined ? fs.readFileSync(path) : fs.readFileSync(path, encoding);
+}
 
 export class FallbackError extends Error {
   constructor(message: string) {

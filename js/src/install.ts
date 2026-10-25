@@ -42,7 +42,9 @@ export interface Interceptors {
  */
 export const UNGUARDABLE: readonly string[] = [
   // ESM named and namespace imports bind the original function when the module
-  // loads, before any patch exists. Not an action: a rule on it can never fire.
+  // loads, before any patch exists. `registerEsmInterceptors` closes this with a
+  // module loader and removes the entry from the report; without it, a rule on
+  // the name can never fire because it is not an action.
   "esm.named-import",
   // fs: synchronous variants and the synchronous stream openers.
   "fs.readFileSync",

@@ -230,6 +230,38 @@ inspected: when a rewritten url forces a rebuild, the guard clones the Request
 first, so the caller's body is forwarded rather than consumed and stays
 readable.
 
+### Guard ESM named imports (opt-in loader)
+
+`installInterceptors` patches the CJS module objects. An ESM named import -
+`import { readFile } from "node:fs/promises"` or `import * as fs from "node:fs"` -
+is bound when the module is linked, so no property patch can reach it.
+`registerEsmInterceptors` installs the same patches and then registers a module
+loader that replaces `node:fs`, `node:fs/promises` and `node:child_process` with
+synthetic modules whose guarded exports delegate to the patched functions **at
+call time**. The supported form is the preload, which runs before the
+application's module graph links:
+
+```sh
+INTERLOCK_SOCKET=/run/interlock.sock \
+  node --import interlock-guard/esm-hook app.mjs
+```
+
+`esm-hook` reads `INTERLOCK_SOCKET` (required) and `INTERLOCK_PRINCIPAL`
+(optional), and refuses to start without the socket rather than run unguarded.
+To build the engine yourself, call `registerEsmInterceptors({ engine })` from a
+module that `--import` loads before anything else.
+
+Ordering is the constraint: an earlier import of the builtin caches the real
+module record, Node has no unregister, and the loader cannot replace it. That is
+why the preload is minimal - it links no guarded builtin itself.
+
+The coverage report moves `esm.named-import` from `uncovered` to `covered`.
+Unguarded exports (`readFileSync`, `createReadStream`), constructors (`fs.Stats`)
+and values (`fs.constants`, `fs.promises`) keep their identity; only guarded
+members are `Proxy` wrappers, so `readFile !== require("node:fs").readFile` while
+either call gets the same decision. Uninstall restores the patched functions and
+the wrappers delegate to the originals again.
+
 ## Guard a model SDK's tools
 
 If your agent calls tools through a model SDK (Anthropic, OpenAI, or your own
@@ -274,13 +306,14 @@ Some parts of Node can't be reached by any patch written in JavaScript. These
 gaps are permanent, so they're listed by name in `installInterceptors().uncovered`
 (and in the exported `UNGUARDABLE` array) rather than left for you to discover.
 
-- **ESM named imports.** `import { readFile } from "node:fs"` and
-  `import * as fs from "node:fs"` are bound to the original function when the
-  module loads, and no patch can redirect them. The report names this hole
-  `esm.named-import`; it is a binding, not an action, so no rule can fire on it. Only `require("node:fs")` and a
-  **default** import (`import fs from "node:fs"`, which is the same object) see
-  the interceptor. Write your agent's file and process code with default imports
-  or `require`.
+- **ESM named imports, unless the loader is registered.** `import { readFile }
+  from "node:fs"` and `import * as fs from "node:fs"` bind the original function
+  at link time, so property patching cannot redirect them — only `require` and a
+  **default** import (the same object) see the interceptor. Without the opt-in
+  loader the report names this hole `esm.named-import`.
+  `registerEsmInterceptors` / `node --import interlock-guard/esm-hook` closes it
+  by replacing the builtins' module records, but only for modules linked after
+  registration, and only if no earlier module has already linked them.
 - **Synchronous calls and calls that return a handle.** A guard has to wait for
   the daemon's verdict before the effect, so anything that must return a value
   immediately is out of reach:
@@ -337,7 +370,7 @@ gaps are permanent, so they're listed by name in `installInterceptors().uncovere
 - **No audit receipts from JS.** The Python side writes a signed receipt for each
   decision. Here the daemon already records the decision when it answers (start
   it with `--receipts`), so the JS client doesn't write a second, unsigned copy.
-- **ESM only, Node 20+, not yet on npm.**
+- **ESM only, Node 20.6+ (the loader needs `module.register`), not yet on npm.**
 
 ## Imports
 
@@ -346,6 +379,8 @@ gaps are permanent, so they're listed by name in `installInterceptors().uncovere
 | `interlock-guard` | everything |
 | `interlock-guard/mcp` | `enforceToolCall`, `enforceToolResult`, `guardMcpSession` |
 | `interlock-guard/wire` | the protocol: canonical JSON, the value codec, frames, `WireError`, `Unrepresentable` |
+| `interlock-guard/esm` | `registerEsmInterceptors`, `esmLoaderRegistered` |
+| `interlock-guard/esm-hook` | the preload: registers the interceptors and loader from `INTERLOCK_SOCKET` |
 
 ## Development
 
