@@ -88,7 +88,10 @@ The official SDK doesn't return a string. It returns a `CallToolResult` object
 with the text nested inside a `content` list. Result rules read top-level
 strings, so interlock flattens that shape before your rules see it: the text
 items are joined into `event.args["result"]`. The same happens for the plain-JSON
-form of a tool result (`{"content": [{"type": "text", "text": ...}]}`).
+form of a tool result (`{"content": [{"type": "text", "text": ...}]}`) and for a
+**bare content-block result list** (`[{"type": "text", "text": ...}]`, with no
+`content` wrapper): its text items are joined into `event.args["result"]` and
+scanned by result rules exactly like a wrapped result.
 
 Run against a real `CallToolResult` (`mcp` 2.2.0) carrying an injected line,
 with only `tool_result_injection_guard()` installed:

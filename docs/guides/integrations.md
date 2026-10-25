@@ -71,6 +71,34 @@ schemas=...)` - can set it, and the label is never sent to the server. Checking
 *which servers* you connect to and whether their tools changed takes a few more
 lines. The [MCP guide](mcp.md) covers that.
 
+## Agent hooks (Claude Code, Codex, Cursor)
+
+`interlock install-hook --for <agent>` puts the same rules in front of a coding
+agent's own tool calls and results. The [coding-agent guide](coding-agents.md)
+covers installation, the per-agent verdicts, and the review queue; the result
+contract is worth knowing wherever a hook returns a verdict:
+
+- A **PostToolUse block replaces the output**: the hook sets
+  `hookSpecificOutput.updatedToolOutput` to a **shape-faithful** replacement -
+  a `Bash` object keeps its `stdout`/`stderr`/`interrupted` keys, a string stays
+  a string, and a content-block array stays a content-block array - with the
+  withheld marker in place of the original text. Claude Code ignores a
+  replacement whose JSON kind does not match the tool's response, so the shape
+  is what makes the withholding reach the model. This key is used for every
+  tool, MCP tools included.
+- The top-level **`decision: "block"` alone is only an annotation**: it adds the
+  reason next to the result but does not hide the result. The replacement in
+  `updatedToolOutput` is what withholds it; never rely on `decision` by itself.
+- A **bare content-block array is joined before rules run**: a result that is
+  `[{"type": "text", "text": ...}]` (an MCP result, or a tool that returns
+  blocks directly) is flattened to its text in `event.args["result"]`, so
+  injection and secret rules see it.
+- A **path argument is resolved to its real path before any rule sees it**:
+  `~` is expanded, a relative path is joined to the agent's working directory,
+  and every symlink in the existing prefix is resolved with `os.path.realpath`.
+  A symlink cannot smuggle a protected target (such as `~/.interlock`) past a
+  path rule. Only the event view changes; the executed call is untouched.
+
 ## LangChain tools
 
 ```python

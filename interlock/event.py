@@ -117,7 +117,8 @@ def result_payload(result: Any) -> Dict[str, Any]:
     plain JSON) is a wrapper whose text sits in a ``content`` list, out of reach
     of rules that read top-level strings - which is every built-in result rule.
     For that shape the text items are joined into ``"result"``, so a rule sees
-    what the agent will read. The top-level fields of the structured content
+    what the agent will read. A bare content-block array is joined the same
+    way. The top-level fields of the structured content
     (``structured_content`` or ``structuredContent``) ride alongside, never
     replacing ``"result"``, and ``is_error`` is carried when the result reports
     it.
@@ -128,6 +129,13 @@ def result_payload(result: Any) -> Dict[str, Any]:
         if text is not None and "result" not in payload:
             payload["result"] = text
         return payload
+    if isinstance(result, (list, tuple)):
+        # A bare content-block array (an MCP result, or a tool that returns
+        # blocks directly) hides its text from top-level string rules too.
+        text = _mcp_text(result)
+        if text is not None:
+            return {"result": text}
+        return {"result": result}
     text = _mcp_text(getattr(result, "content", None))
     if text is None:
         return {"result": result}
@@ -158,7 +166,12 @@ def _mcp_text(content: Any) -> Optional[str]:
         return None
     texts = []
     for item in content:
-        text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
+        if isinstance(item, str):
+            text = item
+        elif isinstance(item, dict):
+            text = item.get("text")
+        else:
+            text = getattr(item, "text", None)
         if isinstance(text, str):
             texts.append(text)
     return "\n".join(texts) if texts else None

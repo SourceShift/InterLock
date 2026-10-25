@@ -147,10 +147,19 @@ def normalize_args(args: Dict[str, Any], cwd: Optional[str]) -> Dict[str, Any]:
 
 
 def normalize_path(path: str, cwd: Optional[str]) -> str:
+    """The path the tool will really open, for rules to judge.
+
+    ``expanduser`` and a relative path joined to ``cwd`` are what the tool
+    itself does; ``os.path.realpath`` then resolves every symlink in the
+    existing prefix (leaving a not-yet-existing tail in place), so a symlinked
+    path cannot hide a protected target. ``_disk_case`` respells the existing
+    components as the volume does. The executed call is untouched - this is
+    only the event view.
+    """
     expanded = os.path.expanduser(path)
     if not os.path.isabs(expanded):
         expanded = os.path.join(cwd or os.getcwd(), expanded)
-    return _disk_case(os.path.normpath(expanded))
+    return _disk_case(os.path.realpath(expanded))
 
 
 def _disk_case(path: str) -> str:
