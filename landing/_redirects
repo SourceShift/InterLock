@@ -1,0 +1,33 @@
+# Cloudflare Pages redirects for interlock.sourceshift.ai.
+#
+# The landing page is built to the root of the deployed directory by
+# zensical.landing.toml, which is why this file lives in landing/: the build
+# copies it to site/_redirects, the only place Pages reads it. The manual is
+# built under /docs/ by zensical.toml.
+#
+# Rules match top to bottom and the first match wins. Pages follows a
+# matching redirect even when a file exists at the source path, so there is
+# no catch-all `/* /docs/:splat` (it would match /docs/... itself and loop)
+# and no `/assets/*` rule (the landing page's own assets live there). Every
+# source below is a path the manual served at the host root before it moved
+# under /docs/ on 2026-10-25. The list is frozen: a page added since never
+# lived at the root, so it needs no entry here.
+#
+# Static rules first, then splat rules, as Pages requires.
+
+# The manual's index used to be a page of its own called overview.
+/overview /docs/ 301
+/overview/ /docs/ 301
+/docs/overview /docs/ 301
+/docs/overview/ /docs/ 301
+
+/getting-started /docs/getting-started/ 301
+/getting-started/ /docs/getting-started/ 301
+/concepts /docs/concepts/ 301
+/concepts/ /docs/concepts/ 301
+/security-model /docs/security-model/ 301
+/security-model/ /docs/security-model/ 301
+
+/guides/* /docs/guides/:splat 301
+/reference/* /docs/reference/:splat 301
+/epics/* /docs/epics/:splat 301

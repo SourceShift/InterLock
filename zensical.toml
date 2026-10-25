@@ -1,4 +1,4 @@
-# Site configuration for interlock.sourceshift.ai/docs/
+# Site configuration for the manual at interlock.sourceshift.ai/docs/
 #
 # Built by Zensical (https://zensical.org), the successor to Material for
 # MkDocs. The Markdown under docs/ is the same source that renders on GitHub --
@@ -10,10 +10,12 @@
 # The manual lives under /docs/, not at the host's root. `site_url` carries
 # that path and `site_dir` mirrors it, so the local site/ tree has the same
 # shape as the deployed host: site/ is what Cloudflare Pages serves, and
-# site/docs/ is this manual. The host root and the pre-move page URLs
-# redirect into /docs/ via cloudflare/_redirects.
+# site/docs/ is this manual. The host root is the landing page: a separate
+# one-page build from zensical.landing.toml, which owns site/ and explains
+# why there are two builds. The pre-move page URLs redirect into /docs/ via
+# landing/_redirects.
 #
-# CI builds this and deploys site/ to Cloudflare Pages; see
+# CI runs both builds and deploys site/ to Cloudflare Pages; see
 # .github/workflows/docs.yml.
 
 [project]
@@ -22,9 +24,9 @@ site_name = "interlock"
 # canonical URL, the sitemap and the 404 page's absolute asset paths all
 # derive from this, so it ends in /docs/ with the trailing slash.
 site_url = "https://interlock.sourceshift.ai/docs/"
-# Mirrors the path in site_url. `zensical build --clean` empties only this
-# directory; the docs workflow then adds _redirects and a root 404.html
-# beside it before deploying site/.
+# Mirrors the path in site_url. The landing build (zensical.landing.toml)
+# writes the root of site/ and must run first; this build then writes into
+# site/docs/ beside it and touches nothing above.
 site_dir = "site/docs"
 site_description = "In-process guardrails for AI agents: block or rewrite a tool, MCP, or model call before it runs."
 site_author = "SourceShift"
@@ -38,11 +40,12 @@ edit_uri = "edit/main/docs/"
 # together:
 #
 #   * docs/assets/stylesheets/landing.css -- the system font stack (see
-#     `font = false` below) and the docs pages' green accent. Every page except
-#     the landing page.
+#     `font = false` below) and the docs pages' green accent. Every page of
+#     the manual.
 #
-#   * docs/assets/stylesheets/home.css -- the landing page's design port. The
-#     landing page only.
+#   * landing/assets/stylesheets/home.css -- the landing page's design port.
+#     The landing page only; it ships with the landing build
+#     (zensical.landing.toml), not with this one.
 #
 # The reason is that both sheets define the same `--il-*` token names, and
 # landing.css declares its copy under `[data-md-color-scheme="default"]`, which
@@ -62,12 +65,12 @@ extra_css = []
 extra_javascript = ["assets/javascripts/diagram.js"]
 
 nav = [
-  # The landing page. Its hero and proof block live in overrides/main.html,
-  # which is gated on `page.is_homepage`; the prose below them is index.md.
-  { "Home" = "index.md" },
-  # The manual's own index. Kept because the README and CONTRIBUTING both point
-  # readers here for "which page do I want".
-  { "Overview" = "overview.md" },
+  # The landing page is not a page of this build: it is zensical.landing.toml's
+  # one page at the host root, so the link out is absolute.
+  { "Home" = "https://interlock.sourceshift.ai/" },
+  # The manual's own index, at /docs/. The README, CONTRIBUTING and the issue
+  # templates all point readers here for "which page do I want".
+  { "Overview" = "index.md" },
   { "Getting started" = "getting-started.md" },
   { "Concepts" = "concepts.md" },
   { "Security model" = "security-model.md" },

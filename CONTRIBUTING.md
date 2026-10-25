@@ -241,7 +241,7 @@ These docs have drifted from the code before, so treat a docs claim like code:
 - **Follow the docs layout.** Tutorials go in `docs/getting-started.md`,
   explanations in `docs/concepts.md` and `docs/security-model.md`, task-focused
   how-tos in `docs/guides/`, and lookup material in `docs/reference/`.
-  `docs/overview.md` indexes them all.
+  `docs/index.md` indexes them all.
 - **Match the voice.** Second person, short sentences, plain words. Explain why
   before how. Lead a guide with the problem it solves, show output after code,
   and end with an honest "Limits" section. Say what doesn't work as clearly as

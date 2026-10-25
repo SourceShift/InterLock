@@ -2,9 +2,9 @@
 
 **For:** a product designer
 **From:** engineering
-**Scope:** the landing page at `https://interlock.sourceshift.ai/docs/`, and the design
+**Scope:** the landing page at `https://interlock.sourceshift.ai/`, and the design
 tokens that cascade from it into the docs
-**Status:** updated. The **structure is built and live** — a landing page at `/docs/`
+**Status:** updated. The **structure is built and live** — a landing page at `/`
 with the docs behind it. What we need from you now is the layer on top of it:
 identity, tokens, and assets. See §9 for exactly which parts are code and which
 are design.
@@ -237,7 +237,7 @@ files:
 | File | Holds |
 |---|---|
 | `overrides/main.html` | the hero, the install line, and the proof block. Gated on `page.url == ''`, so it is inert on every docs page. |
-| `docs/index.md` | the prose below the hero, as ordinary Markdown: why, the comparison, the limits, the docs hand-off. |
+| `landing/index.md` | the prose below the hero, as ordinary Markdown: why, the comparison, the limits, the docs hand-off. |
 | `docs/assets/stylesheets/landing.css` | every token and rule on this list. |
 
 Genuinely off the table: a client-side framework, and anything needing its own

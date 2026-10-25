@@ -281,7 +281,7 @@ settings that weaken protection.
 
 Start with [getting started](docs/getting-started.md), then
 [concepts](docs/concepts.md). Everything else is indexed on the
-[docs home page](docs/overview.md): guides for each task, the
+[docs home page](docs/index.md): guides for each task, the
 [Python API](docs/reference/python-api.md), the
 [detector catalog](docs/reference/detectors.md), and the
 [sidecar reference](docs/reference/sidecar.md).

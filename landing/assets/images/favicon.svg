@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28">
+  <!-- The interlock mark: two rounded squares overlapped, the near one knocked
+       out of the far one by a line in the background colour.
+
+       This is the nav lockup's artwork, lifted out into a file it can be
+       served as. Two things had to change on the way, and both are forced:
+
+       1. Colours are literal. The lockup draws with a CSS custom property,
+          which resolves against the page's stylesheet, and an SVG loaded as an
+          image is a separate document with no access to it. #f5a524 is what
+          that property is on the landing page.
+
+       2. The dark field is not decoration. The knockout strokes are #111214
+          (the background colour); without a background of that colour the
+          interlock illusion has nothing to stand on and the mark reads as two
+          unrelated outlines. So the field is part of the artwork, not padding
+          around it.
+
+       Keep double hyphens out of this comment: they are illegal inside an XML
+       comment, and the parser drops the whole file rather than the comment. -->
+  <rect width="28" height="28" rx="6" fill="#111214"></rect>
+  <g transform="translate(0, 2)">
+    <rect x="2" y="2" width="15" height="15" rx="4" stroke="#f5a524" stroke-width="2.4" fill="none"></rect>
+    <rect x="11" y="7" width="15" height="15" rx="4" stroke="#111214" stroke-width="6" fill="none"></rect>
+    <rect x="11" y="7" width="15" height="15" rx="4" stroke="#ecebe6" stroke-width="2.4" fill="none"></rect>
+    <line x1="17" y1="4.6" x2="17" y2="9.4" stroke="#111214" stroke-width="6"></line>
+    <line x1="17" y1="4" x2="17" y2="10" stroke="#f5a524" stroke-width="2.4"></line>
+  </g>
+</svg>

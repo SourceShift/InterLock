@@ -1,0 +1,6 @@
+# Two sitemaps, because the site is two Zensical builds: the landing page at
+# the root and the manual under /docs/. See zensical.landing.toml.
+User-agent: *
+Allow: /
+Sitemap: https://interlock.sourceshift.ai/sitemap.xml
+Sitemap: https://interlock.sourceshift.ai/docs/sitemap.xml

@@ -1,9 +1,14 @@
 {#-
-  The landing page for interlock.sourceshift.ai/docs/.
+  The landing page for interlock.sourceshift.ai, and the manual's chrome, untouched.
 
-  Everything below is gated on `page.url == ''` -- the empty url is the site
-  root, which is docs/index.md. For every other page this file behaves exactly
-  like the stock theme's main.html, so the docs are untouched by anything here.
+  Everything below is gated on `config.extra.landing and page.url == ''`.
+  The landing page is its own one-page Zensical build (zensical.landing.toml,
+  docs_dir landing/) whose config sets `extra.landing = true`; the manual's
+  build (zensical.toml, docs_dir docs/) does not, so for every page of the
+  manual -- including its own index at /docs/ -- this file behaves exactly
+  like the stock theme's main.html, and the docs are untouched by anything
+  here. The `page.url == ''` half keeps the landing build's 404 page on the
+  stock chrome too.
 
   Not `page.is_homepage`: Zensical's themes reference that attribute but never
   populate it, so it is always undefined. `{% if page.is_homepage %}` fails
@@ -14,8 +19,8 @@
   The page is a port of the "Interlock Home v2" design. Three blocks are
   overridden -- header, hero, footer -- because the design's header and footer
   replace the theme's shared chrome, and the hero is full-bleed above the docs
-  content column. The four prose sections between them live in docs/index.md so
-  the words stay in Markdown and still render on GitHub.
+  content column. The four prose sections between them live in landing/index.md
+  so the words stay in Markdown and still render on GitHub.
 
   House rules this file obeys, and must keep obeying:
 
@@ -51,12 +56,8 @@
   {# The favicon is not set here: it comes from `favicon` in zensical.toml, so
      the theme emits exactly one <link rel="icon"> on every page. It points at
      the same file the nav lockup below renders. #}
-  {# Zoom and fullscreen for the Mermaid diagrams, on every page. Loading it
-     globally is safe where the two token sheets below are not: it defines no
-     --il-* tokens and reads only the theme's --md-* variables. The script half
-     is extra_javascript in zensical.toml. #}
-  <link rel="stylesheet" href="{{ 'assets/stylesheets/diagram.css' | url }}" />
-  {% if page.url == '' %}
+  {% if config.extra.landing %}
+    {% if page.url == '' %}
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -64,12 +65,31 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="{{ 'assets/stylesheets/home.css' | url }}" />
+    {% endif %}
   {% else %}
+    {# Zoom and fullscreen for the Mermaid diagrams, on every page of the
+       manual. Loading it on all of them is safe where the two token sheets are
+       not: it defines no --il-* tokens and reads only the theme's --md-*
+       variables. The script half is extra_javascript in zensical.toml. The
+       landing build has no diagrams and does not ship the file. #}
+    <link rel="stylesheet" href="{{ 'assets/stylesheets/diagram.css' | url }}" />
     {# The docs pages' own sheet. It carries the system font stack and the green
        accent, and it must not load on the landing page -- both sheets define the
        same --il-* names and landing.css's copy wins on specificity. See the note
        on extra_css in zensical.toml. #}
     <link rel="stylesheet" href="{{ 'assets/stylesheets/landing.css' | url }}" />
+  {% endif %}
+{% endblock %}
+
+{# The theme titles a page "<page> - <site>" unless it is the homepage, and it
+   decides that with page.is_homepage, which is never populated (see the note at
+   the top). So the landing page would be "Index - interlock". This gives it the
+   bare site name the theme intends for a homepage. #}
+{% block htmltitle %}
+  {% if config.extra.landing and page.url == '' %}
+    <title>{{ config.site_name }}</title>
+  {% else %}
+    {{ super() }}
   {% endif %}
 {% endblock %}
 
@@ -86,7 +106,7 @@
 {%- endmacro %}
 
 {% block header %}
-  {% if page.url == '' %}
+  {% if config.extra.landing and page.url == '' %}
   <header class="il-nav">
     <nav class="il-nav__inner" aria-label="Primary">
       <a class="il-nav__brand" href="#top">
@@ -100,7 +120,7 @@
         <a class="il-nav__link" href="#read-the-docs">Docs</a>
       </div>
       <div class="il-nav__right">
-        <a class="il-nav__doc" href="{{ 'overview/' | url }}">Documentation</a>
+        <a class="il-nav__doc" href="{{ 'docs/' | url }}">Documentation</a>
         <a class="il-nav__repo" href="https://github.com/SourceShift/InterLock">
           {{ gh_icon() }}
           <span>SourceShift/InterLock</span>
@@ -114,7 +134,7 @@
 {% endblock %}
 
 {% block hero %}
-  {% if page.url == '' %}
+  {% if config.extra.landing and page.url == '' %}
   <section class="il-hero" id="top">
     <div class="il-hero__grid-bg" aria-hidden="true"></div>
     <div class="il-hero__glow" aria-hidden="true"></div>
@@ -141,7 +161,7 @@
           </p>
 
           <div class="il-actions">
-            <a class="il-btn il-btn--primary" href="{{ 'getting-started/' | url }}">
+            <a class="il-btn il-btn--primary" href="{{ 'docs/getting-started/' | url }}">
               Get started <span class="il-btn__arrow" aria-hidden="true">&rarr;</span>
             </a>
             <a class="il-btn il-btn--ghost" href="https://github.com/SourceShift/InterLock">
@@ -383,7 +403,7 @@
   reachable from inside it.
 #}
 {% block container %}
-  {% if page.url == '' %}
+  {% if config.extra.landing and page.url == '' %}
     <div class="md-content" data-md-component="content">
       <article class="md-content__inner">
         <a id="__skip" tabindex="-1"></a>
@@ -396,7 +416,7 @@
 {% endblock %}
 
 {% block footer %}
-  {% if page.url == '' %}
+  {% if config.extra.landing and page.url == '' %}
   <footer class="il-foot">
     <div class="il-foot__inner">
       <span class="il-foot__who">Apache-2.0 &middot; SourceShift</span>
@@ -416,7 +436,7 @@
 
 {% block scripts %}
   {{ super() }}
-  {% if page.url == '' %}
+  {% if config.extra.landing and page.url == '' %}
     <script src="{{ 'assets/javascripts/home.js' | url }}" defer></script>
   {% endif %}
 {% endblock %}
