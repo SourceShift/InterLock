@@ -11,6 +11,18 @@ breaking changes land.
 
 ### Added
 
+- Flow-typed policy (ROADMAP R9): `interlock.flow` tracks boundary provenance -
+  the value a guarded tool returned is remembered under `tool:<action>` and
+  `principal:<id>` and attached to `SensorEvent.origins` when a later call
+  carries the same text. A declarative `{"flow": {"source": ..., "sink": ...}}`
+  condition then states "the output of tool A must not reach argument B", with
+  globs, nested argument paths and an `attributed_to` naming the tainted field.
+  `FlowTracker` is bounded and span-scoped; `enforce_tool_call(origins=...)`
+  lets an integration declare a source directly. Provenance is
+  boundary-level, not language-level taint: a value rewritten by a string
+  operation loses its origin, and the security model says so.
+  `network_egress_guard(block_origins=...)` applies the same check to every
+  egress action, even to an allowlisted host.
 - `interlock.attach()` / `detach()` / `uncovered()`: the opt-in import hook
   (ROADMAP R11). `attach()` patches
   `mcp.client.session.ClientSession.call_tool` at the class - immediately when

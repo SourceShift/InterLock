@@ -18,6 +18,8 @@ each section says which one.
   `deny_when`
 - [Decisions](#decisions): `Verdict`, `Decision`, `Blocked`
 - [Events](#events): `SensorEvent`
+- [Flow provenance](#flow-provenance): `FlowTracker`, `flow_matches`,
+  `origin_for_tool`, `record_origin`
 - [Run identity](#run-identity): `span`, `new_span`, `current_span`,
   `current_principal`, `current_parent_principal`, `set_principal`
 - [Scopes](#scopes-interlockpolicy): `interlock.policy`
@@ -407,7 +409,7 @@ these adapters it detected and which surfaces remain uncovered.
 ### `enforce_tool_call`
 
 ```python
-enforce_tool_call(action, arguments, *, engine=None, enforcement="blocking", principal=None, call_id=None, labels=None) -> Dict[str, Any]
+enforce_tool_call(action, arguments, *, engine=None, enforcement="blocking", principal=None, call_id=None, labels=None, origins=None) -> Dict[str, Any]
 ```
 
 The core every adapter uses. Checks one call and returns the arguments to use:
@@ -432,6 +434,12 @@ trusted `labels` mapping, never in its `args`. Any reserved key in `arguments`
 is stripped first, so a caller forwarding model-produced arguments cannot forge
 one.
 
+`origins` names where each argument's value came from, as an argument path to
+one label or a list of labels: `{"body": "tool:fetch_url"}`. It is merged with
+the process [`FlowTracker`](#flowtracker)'s view of the same values, so an
+integration that knows a value's source can say so directly. The merged map
+lands on `event.origins`; a declarative `{"flow": ...}` condition reads it.
+
 ### `enforce_tool_result`
 
 ```python
@@ -448,6 +456,13 @@ else.
   is returned, so a rule cannot replace a result with `None`.
 - **block**: raises `Blocked`. The tool has already run and its side effects
   stand. The caller just never sees the payload.
+
+The value the caller actually receives is recorded in the process
+[`FlowTracker`](#flowtracker) under `tool:<action>` (and `principal:<id>` when
+a principal is known), so a later call that copies it into an argument carries
+that origin. A blocked result is not recorded: the model never saw it. A result
+the rule rewrote is recorded as rewritten, because that is the text the model
+can copy.
 
 ---
 
@@ -617,6 +632,7 @@ A dataclass describing one action as a rule sees it.
 | `ts` | `float` | Wall-clock time the event was created. |
 | `parent_principal` | `str` or `None` | Who delegated the work, if anyone. |
 | `phase` | `str` | `"call"` (default) or `"result"`. |
+| `origins` | `dict` | Argument path → tuple of origin labels (`tool:fetch_url`, `principal:acme/agent42`). Populated by the boundary; empty when nothing is known. |
 
 You only construct events yourself when testing a rule directly:
 
@@ -666,6 +682,83 @@ assert result_payload(r) == {"result": "first\nsecond", "temperature": 21, "is_e
 The view is only what rules see. A result rewrite still replaces the whole value
 the caller gets, so a rule that rewrites an MCP result hands back whatever it put
 in `modified_result`.
+
+---
+
+## Flow provenance
+
+Guide: [declarative policies](../guides/policies.md#provenance-source--sink).
+
+The flow layer answers "where did this value come from?" at the interception
+boundary. A result that a guarded tool returns is remembered by
+`FlowTracker`, and a later call carrying the same text gets an origin label on
+its `event.origins` map. A declarative rule can then constrain source → sink:
+
+```json
+{"id": "no-fetched-email", "verdict": "block",
+ "reason": "fetched data reached an email field",
+ "when": {"flow": {"source": "tool:fetch_url", "sink": "body"}}}
+```
+
+Provenance is boundary-level, not language-level: a value rewritten by a
+string operation loses its origin. The tracker is bounded (512 fragments, 16
+characters minimum, 64 KiB inspected per call) so a long-lived process cannot
+grow without limit; a hostile tool can flood it to evict an older fragment, so
+treat flow rules as one control, not the only one.
+
+### `FlowTracker`
+
+The process tracker. `interlock.flow.get_tracker()` returns the one the
+boundaries use; `interlock.flow.set_tracker(tracker)` swaps it (returns the
+previous one) and is how a test isolates a run. Its public methods are:
+
+| Method | Meaning |
+|---|---|
+| `record(value, origins, span_id=None)` | Remember every distinctive string under `value` as coming from `origins`. |
+| `origins_for(value, span_id=None)` | Argument path → origins present in `value`, for the same span. |
+| `reset()` | Forget every fragment. |
+
+A span keeps concurrent runs from tainting each other. Events with no span
+share one bucket, which is the right scope for an ad-hoc caller.
+
+### `flow_matches`
+
+```python
+flow_matches(event, sources, sinks) -> Optional[Tuple[str, str]]
+```
+
+Returns `(argument path, origin)` when an origin on `event.origins` matches one
+of `sources` and its argument path matches one of `sinks`; otherwise `None`.
+Both selectors accept a string, a list, and shell-style globs. A top-level
+sink such as `body` also matches a nested `payload.body`. This is the function
+the declarative `{"flow": ...}` condition compiles to, exposed so a Python rule
+can use exactly the same semantics.
+
+### `origin_for_tool`
+
+```python
+origin_for_tool(action) -> str
+```
+
+The canonical label for a tool result: `tool:fetch_url`, also from
+`fetch.URL`. This is what `enforce_tool_result` records; use it when an
+integration records a value by hand.
+
+### `record_origin`
+
+```python
+record_origin(value, origins, *, span_id=None) -> None
+```
+
+Records a value an integration already knows the source of — a retrieved
+document, a row read under a delegated principal — without routing it through a
+tool result. `origins` is one label or an iterable of labels.
+
+```python
+from interlock import record_origin
+
+record_origin("quarterly revenue: 42", "tool:read_document", span_id="run-1")
+```
 
 ---
 

@@ -37,6 +37,13 @@ code. A condition is one of:
   :mod:`interlock.detectors.a2a_policy`): ``"peer"`` or ``"peer:<glob>"``
   matches the ``"peer"`` argument, ``"card"`` or ``"card.<field>[:<glob>]``
   matches the ``"card"`` argument; ``"arg"`` reads the peer from one argument
+- ``{"flow": {"source": SELECTOR, "sink": SELECTOR}}`` - provenance: the
+  argument at *sink* carries a value whose origin matches *source*
+  (``tool:fetch_url``, ``principal:acme/agent42``; globs allowed). This is the
+  source→sink constraint a flat ``arg`` condition cannot state; see
+  :mod:`interlock.flow`. Nested sinks use the argument path
+  (``payload.body``), and a top-level sink name also matches that field one
+  level down.
 
 A rule's ``"on"`` key (an action name, a list, or ``{"glob": ...}``) limits it
 to those actions; it is how a catalogued detector, which scans every string
@@ -1028,10 +1035,13 @@ def _compile_condition(raw: Any, where: str, actions: Optional[FrozenSet[str]]) 
     if "a2a" in raw:
         _check_keys(raw, frozenset({"a2a", "arg"}), where, "condition")
         return _a2a_condition(raw["a2a"], raw.get("arg"), where, actions)
+    if "flow" in raw:
+        _check_keys(raw, frozenset({"flow"}), where, "condition")
+        return _flow_condition(raw["flow"], where, actions)
     if "field" in raw or "arg" in raw:
         return _test_condition(raw, where, actions)
     raise PolicyError("unknown condition; use all/any/not/action/field/arg/"
-                      "intent/sql/a2a", where)
+                      "intent/sql/a2a/flow", where)
 
 
 def _all(subs: List[Condition]) -> Condition:
@@ -1174,6 +1184,42 @@ def _sql_condition(selector: Any, arg: Any, dialect: Any, where: str,
         return False
 
     return condition
+
+
+def _flow_condition(spec: Any, where: str,
+                    actions: Optional[FrozenSet[str]]) -> Condition:
+    """Compile the source→sink provenance condition (see :mod:`interlock.flow`).
+
+    Both selectors are validated at load time: an empty or malformed one is an
+    error, not a rule that can never fire. A literal sink name is checked
+    against a known tool schema exactly as an ``arg`` condition is; a glob is
+    not, because its expansion is not known until an event arrives.
+    """
+    from ..flow import flow_matches
+
+    if not isinstance(spec, dict):
+        raise PolicyError("'flow' must be an object with 'source' and 'sink'", where)
+    _check_keys(spec, frozenset({"source", "sink"}), where + ".flow", "flow condition")
+    sources = _flow_selectors(spec.get("source"), where + ".flow.source")
+    sinks = _flow_selectors(spec.get("sink"), where + ".flow.sink")
+    for sink in sinks:
+        if not any(char in sink for char in "*?["):
+            _check_arg_name(sink, where + ".flow.sink", actions)
+
+    def condition(event: SensorEvent) -> Any:
+        hit = flow_matches(event, sources, sinks)
+        return Hit(hit[0]) if hit is not None else False
+
+    return condition
+
+
+def _flow_selectors(value: Any, where: str) -> List[str]:
+    """A non-empty selector or list of selectors, or a load-time error."""
+    selectors = value if isinstance(value, list) else [value] if isinstance(value, str) else None
+    if not selectors or not all(isinstance(item, str) and item.strip() for item in selectors):
+        raise PolicyError("a flow selector must be a non-empty string or list of strings",
+                          where)
+    return [item.strip() for item in selectors]
 
 
 def _a2a_condition(selector: Any, arg: Any, where: str,

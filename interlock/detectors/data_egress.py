@@ -42,6 +42,7 @@ from ..actions import (
 )
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..flow import flow_matches
 from ..masking import _LinearEmailPattern, _LinearPrivateKeyPattern, card_number
 from ..policy.engine import Rule
 
@@ -150,6 +151,7 @@ def network_egress_guard(
     *,
     egress_actions: Iterable[str] = DEFAULT_NETWORK_EGRESS_ACTIONS,
     destination_keys: Iterable[str] = DEFAULT_DESTINATION_KEYS,
+    block_origins: Optional[Iterable[str]] = None,
     reason: Optional[str] = None,
 ) -> Rule:
     """Rule: permit an outbound action only to allowlisted destination hosts.
@@ -164,6 +166,14 @@ def network_egress_guard(
     - a destination that is not host-like and cannot be vetted,
     - an egress action that names no destination at all.
 
+    ``block_origins`` adds a provenance check: when an egress payload carries a
+    value whose origin matches one of these selectors (``tool:fetch_url``,
+    ``principal:*``; globs allowed), the call is denied even if every
+    destination is allowlisted. This is the general source→sink mechanism of
+    :mod:`interlock.flow` applied to the egress boundary; a value typed by the
+    user is fine and a page fetched by an attacker-controlled URL is not,
+    although they are the same text to a destination allowlist.
+
     Hosts are read by :func:`interlock._url.destination_host`, the same parser a
     runtime uses, so a backslash, a control character or a percent-encoded host
     cannot make the guard vet one name while the socket reaches another.
@@ -172,10 +182,21 @@ def network_egress_guard(
     """
     allowed = {_normalize_host(h) for h in allowed_hosts if isinstance(h, str)}
     actions = canonical_actions(egress_actions)
+    origins = [item for item in (block_origins or ()) if isinstance(item, str) and item]
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         if not action_matches(getattr(event, "action", None), actions):
             return None
+        if origins:
+            hit = flow_matches(event, origins, "*")
+            if hit is not None:
+                path, origin = hit
+                return Decision.block(
+                    reason or "egress carries data from '{}' (argument '{}'), which "
+                    "this policy forbids leaving the process".format(origin, path),
+                    policy_id=NETWORK_EGRESS_POLICY_ID,
+                    attributed_to=path,
+                )
         dests = _destinations(event.args, destination_keys)
         if not dests:
             return Decision.block(

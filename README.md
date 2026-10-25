@@ -68,6 +68,10 @@ watches what it *does*, at the last moment you can still say no.
 - **Checks results too.** Injected instructions arrive in tool output: a web
   page, an email, a document. interlock checks what tools return before your
   agent reads it.
+- **Knows where data came from.** Boundary provenance labels a tool's output
+  (`tool:fetch_url`) and a declarative source→sink rule can refuse "fetched
+  data must not reach an email field", even when the destination is otherwise
+  allowed.
 - **One policy everywhere.** The same rules guard decorated functions, MCP
   sessions, LangChain tools, your own tool loop, Node.js agents, and coding
   agents: **Claude Code, Codex and Cursor**, through their hooks.

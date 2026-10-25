@@ -60,7 +60,7 @@ worse at both jobs.
 | R6 | MCP capability leases + server attestation | `shipped` | L | T4 · 57 papers |
 | R7 | Tool-result and observation sanitization | `partial` | M | T8 · result phase ships, injection sanitizer blocks |
 | R8 | BRACE escape-resistance suite + unprivileged egress | `shipped` | M | T7 |
-| R9 | Flow-typed policy dimension | `not started` | L | T6 · a constraint on R10 |
+| R9 | Flow-typed policy dimension | `shipped` | L | T6 · a constraint on R10 |
 | R10 | Declarative YAML/JSON policies | `shipped` | L | carried from M0 → M2 · agentjail review |
 | R11 | Automatic interception (import hooks) | `shipped` | L | MCP attached at import · seam contract + `attach_monitor` |
 | R12 | Overhead benchmark suite, with methodology | `shipped` | S | `scripts/bench_overhead.py` · floor vs guarded p50/p95/p99 |
@@ -705,7 +705,12 @@ skip with a *reported* skip, not a silent one.
 
 ## R9 · Flow-typed policy dimension (source → sink)
 
-**Status:** `not started` — no dataflow dimension exists.
+**Status:** `shipped` — `interlock/flow.py` tracks provenance at the
+interception boundary, `SensorEvent.origins` carries it, and declarative
+`{"flow": {"source": ..., "sink": ...}}` conditions constrain it. The
+hand-written case is expressible generally: `tests/test_flow.py` proves the
+flow rule and an equivalent bespoke predicate reach the same verdict on every
+case, including the canary and egress shapes.
 **Size:** L
 **Literature:** T6 — the policy-language literature moved from flat rules to
 typed rules and source→sink flow constraints.
@@ -747,6 +752,27 @@ language or a bag of predicates. It is also the largest design risk on the list:
 flow typing has a well-known expressiveness/decidability trade, and the wrong
 choice is expensive to undo. Impact on users is deferred until R10 ships, which
 is why R9 is a *design and prototype* item, not a delivery item.
+
+### What shipped
+
+- `interlock.flow.FlowTracker`: a bounded, span-scoped memory of result text
+  under `tool:<canonical action>` and `principal:<id>`, matching a recorded
+  fragment inside a later argument. `record_origin()` records a source an
+  integration already knows; `origin_for_tool()` is the label helper.
+- `SensorEvent.origins`: argument path → immutable tuple of labels. Populated
+  by `enforce_tool_call` (tracker plus an explicit `origins=` map) and the
+  `@guard` event builder; `enforce_tool_result` records the value the caller
+  actually receives, so a chain keeps provenance and a blocked result does not.
+- Declarative `{"flow": {"source": ..., "sink": ...}}`: a load-checked
+  condition with glob selectors, nested paths, and `attributed_to` naming the
+  tainted argument. Both selectors are validated at load; a malformed one is
+  quarantined rather than silently never firing.
+- `network_egress_guard(block_origins=...)`: the first detector consumer. It
+  denies an egress payload carrying matching provenance even when every
+  destination is allowlisted.
+- `tests/test_flow.py` covers the tracker bounds, span isolation, glob and
+  nested-sink matching, the boundary round trip, the detector consumer, and
+  the differential equivalence with a hand-written predicate.
 
 ### Acceptance
 

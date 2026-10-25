@@ -36,6 +36,7 @@ from .context import (
 )
 from .enforce import Blocked, Decision, NotApproved, Verdict
 from .event import SensorEvent, new_call_id
+from .flow import FlowTracker, flow_matches, origin_for_tool, record_origin
 from .interceptors import (
     guard_adk_tool_loop,
     guard_crewai_tool_loop,
@@ -78,6 +79,10 @@ __all__ = [
     "NotApproved",
     "SensorEvent",
     "new_call_id",
+    "FlowTracker",
+    "flow_matches",
+    "origin_for_tool",
+    "record_origin",
     "set_approver",
     "Approval",
     "ApprovalRequest",

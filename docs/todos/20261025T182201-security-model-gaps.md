@@ -130,8 +130,9 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
   - last worked on: 2026-10-25
   - remaining: none — `_fetch_write_exec` follows a fetcher's `-o` path to a
     later invocation that runs the same literal path, within one command
-    string. Cross-*event* taint is still out of scope: the parser stays
-    stateless per string, which is now stated in the security model.
+    string. The parser stays stateless per string; cross-*event* provenance is
+    now a separate boundary mechanism (R9, `interlock.flow`), not parser
+    state.
 
 ## T07 — Publish a false-positive number and gate it
 
@@ -421,3 +422,37 @@ have no class seam; compatibility contract + import monitor shipped
     `unreadable-commands` escalates; `tests/test_regex_linearity.py` now
     permits ESCALATE (never BLOCK) for a destructive command past the cap, and
     `tests/test_parse_memo.py` pins the caps and memo lifetime.
+
+## T18 — R9 flow-typed policy (source → sink)
+
+**Status:** done (2026-10-25)
+
+- **Provenance on the event**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `SensorEvent.origins` maps argument paths to
+    `tool:<canonical action>` / `principal:<id>` labels. `FlowTracker` records
+    the text a guarded tool returned, bounded to 512 fragments, 16 characters
+    minimum, 64 KiB per call, and scoped by span so two runs cannot taint each
+    other. `record_origin()` covers an integration that knows a source.
+- **Declarative source→sink condition**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `{"flow": {"source": ..., "sink": ...}}` in
+    `interlock/policy/declarative.py`; both selectors are validated at load
+    (a malformed one is quarantined), globs and nested paths are supported,
+    and `attributed_to` names the tainted argument. `PolicyEngine.evaluate` is
+    unchanged: a flow rule is a rule.
+- **First consumer detector**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `network_egress_guard(block_origins=...)` denies an
+    egress payload carrying matching provenance even to an allowlisted host.
+- **Equivalence proof**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `tests/test_flow.py` checks the general rule and an
+    equivalent hand-written predicate agree on every case, plus the tracker
+    bounds, span isolation, the end-to-end result→call round trip and the
+    canary shape. `docs/security-model.md` records the honest limit:
+    boundary-level matching, not language-level taint.

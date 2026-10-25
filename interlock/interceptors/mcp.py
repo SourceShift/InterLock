@@ -37,6 +37,12 @@ from ..event import (
     result_payload,
     strip_trust_labels,
 )
+from ..flow import (
+    get_tracker,
+    normalise_origins,
+    origin_for_principal,
+    origin_for_tool,
+)
 from ..policy.engine import PolicyEngine
 from ._settle import record_failure, settle
 
@@ -52,6 +58,7 @@ def enforce_tool_call(
     principal: Optional[str] = None,
     call_id: Optional[str] = None,
     labels: Optional[Mapping[str, Any]] = None,
+    origins: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Decide on one tool call and enforce the verdict before it runs.
 
@@ -70,19 +77,31 @@ def enforce_tool_call(
     Any :data:`TRUST_LABELS` key in ``arguments`` is stripped before the event
     is built, so a caller that forwards model-produced arguments cannot forge
     one.
+
+    ``origins`` optionally names where each argument's value came from
+    (argument path -> one label or a list, e.g. ``{"body":
+    "tool:fetch_url"}``). It is merged with the process
+    :class:`~interlock.flow.FlowTracker`'s view, so an integration that knows a
+    value's source can say so without waiting for a tool result to record it.
     """
     # Arguments are model-influenced: a reserved trust key in them is never a
     # fact. Strip first, then take a copy - the event gets its own dict, so a
     # rule that edits event.args in place cannot change what the tool receives.
     args: Dict[str, Any] = strip_trust_labels(arguments)
+    span_id = current_span()
+    seen = get_tracker().origins_for(args, span_id=span_id)
+    for key, origin_labels in normalise_origins(origins).items():
+        merged = tuple(dict.fromkeys(seen.get(key, ()) + origin_labels))
+        seen[key] = merged
     event = SensorEvent(
         action=action,
         args=dict(args),
         principal=principal or current_principal(),
-        span_id=current_span(),
+        span_id=span_id,
         parent_principal=current_parent_principal(),
         call_id=call_id,
         labels=dict(labels or {}),
+        origins=seen,
     )
     active = engine or get_engine()
     started = time.perf_counter()
@@ -147,17 +166,23 @@ def _enforce_result(
     decision that names no policy (``@guard(policy_id=...)`` passes its own)."""
     # A secret the tool echoed back never reaches a result rule or the caller.
     result = scrub(result)
+    span_id = current_span()
+    payload = strip_trust_labels(result_payload(result))
     event = SensorEvent(
         action=action,
         # A result payload is model-influenced too: a reserved key in it is
         # data the server echoed, not a trust fact.
-        args=strip_trust_labels(result_payload(result)),
+        args=payload,
         principal=principal or current_principal(),
-        span_id=current_span(),
+        span_id=span_id,
         parent_principal=current_parent_principal(),
         phase="result",
         call_id=call_id,
         labels=dict(labels or {}),
+        # A result may itself carry data another tool produced (a summariser
+        # repeating a fetched page). Recording that edge here is what keeps
+        # provenance alive across a chain rather than only one hop.
+        origins=get_tracker().origins_for(payload, span_id=span_id),
     )
     active = engine or get_engine()
     started = time.perf_counter()
@@ -167,9 +192,17 @@ def _enforce_result(
         decision = replace(decision, policy_id=default_policy_id)
     outcome = settle(event, decision, engine=active, enforcement=enforcement,
                      elapsed_us=elapsed_us, site="mcp result ")
+    delivered = result
     if outcome.verdict == Verdict.MODIFY and outcome.modified_result is not None:
-        return outcome.modified_result
-    return result
+        delivered = outcome.modified_result
+    # Only what the caller will actually receive becomes provenance. A blocked
+    # result never reached the model, so it cannot be copied into a later call.
+    labels_out = [origin_for_tool(action)]
+    principal_label = origin_for_principal(event.principal)
+    if principal_label is not None:
+        labels_out.append(principal_label)
+    get_tracker().record(result_payload(delivered), labels_out, span_id=span_id)
+    return delivered
 
 
 # ``TRUST_LABELS`` and ``strip_trust_labels`` live in :mod:`interlock.event`,

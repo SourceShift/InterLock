@@ -21,6 +21,7 @@ from ..context import current_parent_principal, current_principal, current_span
 from ..credentials import get_store, substitute_call
 from ..enforce import Decision, Verdict
 from ..event import SensorEvent, new_call_id, strip_trust_labels
+from ..flow import get_tracker
 from ..receipt import emit_receipt
 from ._settle import record_failure, settle
 from .mcp import _enforce_result
@@ -123,16 +124,19 @@ def _event_for(
         arg_map = _exposed_arguments(sig, dict(bound.arguments))
     except Exception:
         arg_map = dict(kwargs)
+    span_id = current_span()
+    args_view = strip_trust_labels(arg_map)
     return SensorEvent(
         action=getattr(func, "__name__", "unknown"),
         # The caller's arguments may be model-produced; a reserved trust key in
         # them is stripped from the event only. The wrapped function still
         # receives exactly what the caller passed.
-        args=strip_trust_labels(arg_map),
+        args=args_view,
         principal=principal or current_principal(),
-        span_id=current_span(),
+        span_id=span_id,
         parent_principal=current_parent_principal(),
         call_id=new_call_id(),
+        origins=get_tracker().origins_for(args_view, span_id=span_id),
     )
 
 

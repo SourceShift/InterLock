@@ -4,7 +4,7 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
 #: Argument keys reserved for facts a trust detector relies on: which server a
 #: call is for (``__origin__``), the tool schema the server declared
@@ -102,6 +102,45 @@ class SensorEvent:
     # copied from a model's arguments, or taken from an agent hook payload.
     # A model can shape ``args``; it cannot reach this mapping.
     labels: Dict[str, Any] = field(default_factory=dict)
+    # Where each argument's value entered, as argument path -> origin labels
+    # ("tool:fetch_url", "principal:acme/agent42"). Populated at the
+    # interception boundary (the tracker in :mod:`interlock.flow`), or supplied
+    # by an integration that knows a value's source. A flow rule constrains
+    # source -> sink over this map; a flat rule can ignore it.
+    origins: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Accept the convenient shapes an integration reaches for - one label,
+        # a list, a set, a generator - and store immutable tuples. Provenance
+        # is metadata: a malformed map is dropped, never raised, so a boundary
+        # cannot fail open because a source label was misspelled.
+        self.origins = _normalise_origins(self.origins)
+
+
+def _normalise_origins(origins: Any) -> Dict[str, Tuple[str, ...]]:
+    if not isinstance(origins, Mapping):
+        return {}
+    cleaned: Dict[str, Tuple[str, ...]] = {}
+    for key, value in origins.items():
+        if not isinstance(key, str) or not key:
+            continue
+        if isinstance(value, str):
+            value = (value,)
+        try:
+            items: Iterable[Any] = iter(value)  # type: ignore[arg-type]
+        except TypeError:
+            continue
+        labels = []
+        for item in items:
+            if len(labels) >= 32:
+                break
+            if isinstance(item, str) and item.strip():
+                label = item.strip()
+                if label not in labels:
+                    labels.append(label)
+        if labels:
+            cleaned[key] = tuple(labels)
+    return cleaned
 
 
 def new_call_id() -> str:

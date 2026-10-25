@@ -115,6 +115,7 @@ those cases); `64` the command line was wrong.
 | `{"arg": "name", OP: value}` | a tool argument passes the test; `"a.b"` reaches into nested objects, `"items.0"` into lists |
 | `{"intent": "selector"}` | a string argument is a shell command that does this (add `"arg": "command"` to look at one argument only) |
 | `{"a2a": "selector"}` | an agent-to-agent call's peer or card matches; `"peer"` / `"peer:<glob>"` reads the `"peer"` argument, `"card"` / `"card.<field>[:<glob>]"` reads the `"card"` argument (add `"arg": "peer"` to read the peer from one argument) |
+| `{"flow": {"source": s, "sink": t}}` | an argument at `t` carries a value that entered from `s`; labels are `tool:<action>` and `principal:<id>`, and both sides accept globs |
 
 | Operator | Test |
 |---|---|
@@ -131,6 +132,37 @@ Shell-intent selectors are listed in [parsed shell commands](detectors.md#parsed
 `git.push.force`, `pkg.publish`, `net.fetch_exec`, `fs.delete.recursive:critical`
 and so on. A prefix matches its family (`"git"` covers every `git.*` intent),
 and `:detail` or `:critical` narrows it.
+
+## Provenance (source → sink)
+
+A flat `arg` condition judges the text; it cannot tell a URL the user typed
+from a URL copied out of a fetched page. A `flow` condition does:
+
+```json
+{"id": "no-fetched-email", "verdict": "block",
+ "reason": "a fetched page reached an email field",
+ "when": {"flow": {"source": "tool:fetch_url", "sink": "body"}}}
+```
+
+The boundary records what a guarded tool returned under `tool:<action>` and
+`principal:<id>`, and puts those labels on the per-argument `event.origins` map
+when a later call carries the same text. `source` matches an origin label,
+`sink` matches an argument path; both accept a list and shell-style globs
+(`tool:*`, `principal:acme/*`, `payload.*`). A top-level sink also matches that
+field one level down, so `body` sees `payload.body`. The verdict's
+`attributed_to` is the argument that carried the tainted value.
+
+The scope is honest: provenance is tracked at the boundary by matching text, so
+a value rewritten by a string operation (`value[::-1]`, a paraphrase, a
+re-encoding) loses its origin. It catches the common exfiltration shape — a
+document, a row, or a secret copied verbatim into an outbound field — not an
+adversary who transforms it on the way. The tracker is bounded; see
+[`FlowTracker`](../reference/python-api.md#flowtracker).
+
+The `network_egress_guard` detector can apply the same check to every egress
+action: `{"detector": "data_egress.network_egress_guard", "with":
+{"allowed_hosts": ["api.acme.com"], "block_origins": ["tool:fetch_url"]}}`
+denies a payload carrying fetched data even to an allowlisted host.
 
 ## Mistakes fail at load, not in production
 
