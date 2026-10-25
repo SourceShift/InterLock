@@ -3,16 +3,19 @@
 Two roles, one server class:
 
 ``consensus``
-    ``POST /v1/reports`` takes a signed report envelope and feeds the
-    :class:`~interlock.mesh.consensus.ConsensusEngine`. ``GET /v1/stats`` is the
-    public dashboard (no per-reporter data); ``GET /v1/indicators`` is the
-    indicator pack the commons publishes.
+    ``POST /v1/reports`` takes a signed report envelope (which carries no
+    counts) and feeds the :class:`~interlock.mesh.consensus.ConsensusEngine`.
+    ``GET /v1/stats`` is the public dashboard: organisations per rule, the
+    indicator funnel, demotions; no per-reporter data and no fire counts.
+    ``GET /v1/indicators`` is the indicator pack the commons publishes.
 
 ``aggregator``
     ``POST /v1/shares`` takes one report's share of its counts
     (``{"report_id", "shares": {key: int}}``). ``GET /v1/manifest`` lists the
-    report ids held so two aggregators can reconcile; ``POST /v1/totals`` with
-    ``{"ids": [...]}`` returns this side's partial sums for exactly those ids.
+    report ids held and the batch floor (``min_batch``) so two aggregators can
+    reconcile; ``POST /v1/totals`` with ``{"ids": [...]}`` returns this side's
+    partial sums for exactly those ids, or 422 with a ``reason`` when fewer
+    than ``min_batch`` of them are held (see :mod:`.aggregate` for why).
 
 Run two aggregators under different organisations and point reporters at
 both. The server binds loopback unless told otherwise, caps request bodies,
@@ -32,7 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 
 from ._util import atomic_write, read_bounded
-from .aggregate import Aggregator
+from .aggregate import MIN_BATCH, Aggregator
 from .consensus import ConsensusEngine
 
 __all__ = ["MeshServer", "make_server", "MAX_BODY", "MAX_MIRROR_FILE"]
@@ -150,7 +153,7 @@ class _Handler(BaseHTTPRequestHandler):
         if self.server.role == "aggregator" and self.server.aggregator is not None:
             if path == "/v1/manifest":
                 agg = self.server.aggregator
-                self._reply(200, {"ids": agg.report_ids(), "digest": agg.manifest()})
+                self._reply(200, {"ids": agg.report_ids(), "digest": agg.manifest(), "min_batch": agg.min_batch})
                 return
         self._reply(404, {"error": "no such route"})
 
@@ -239,7 +242,13 @@ class _Handler(BaseHTTPRequestHandler):
                 if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
                     self._reply(400, {"error": "expected {ids: [...]}"})
                     return
-                self._reply(200, {"totals": self.server.aggregator.totals(ids)})
+                try:
+                    with self.server.lock:
+                        totals = self.server.aggregator.totals(ids)
+                except ValueError as exc:
+                    self._reply(422, {"reason": str(exc), "min_batch": self.server.aggregator.min_batch})
+                    return
+                self._reply(200, {"totals": totals})
                 return
         self._reply(404, {"error": "no such route"})
 
@@ -249,7 +258,9 @@ def make_server(role: str, bind: str = "127.0.0.1:0", *, state_path: Optional[st
                 config: Optional[Dict[str, Any]] = None, directory: Optional[str] = None) -> MeshServer:
     """Build a server for ``role`` on ``bind`` (``host:port``; port 0 picks one),
     restoring state from ``state_path`` when it exists. A ``mirror`` serves
-    ``directory`` read-only and answers gossip."""
+    ``directory`` read-only and answers gossip. ``config`` is the consensus
+    engine's; for an aggregator it may set ``min_batch`` (default
+    :data:`~interlock.mesh.aggregate.MIN_BATCH`, at least 2)."""
     host, _, port_text = bind.rpartition(":")
     host = host or "127.0.0.1"
     port = int(port_text or "0")
@@ -265,11 +276,12 @@ def make_server(role: str, bind: str = "127.0.0.1:0", *, state_path: Optional[st
         for cid in known_catalogs:
             engine.register_catalog(cid)
     elif role == "aggregator":
+        min_batch = (config or {}).get("min_batch", MIN_BATCH)
         if state_path and _exists(state_path):
             data = json.loads(read_bounded(state_path, 64 * 1024 * 1024).decode("utf-8"))
-            aggregator = Aggregator.from_dict(data.get("reports", {}))
+            aggregator = Aggregator.from_dict(data.get("reports", {}), min_batch)
         else:
-            aggregator = Aggregator()
+            aggregator = Aggregator(min_batch)
     return MeshServer((host, port), role, state_path=state_path, token=token, engine=engine,
                       aggregator=aggregator)
 

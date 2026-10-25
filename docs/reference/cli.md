@@ -373,6 +373,7 @@ usage: interlock mesh report [-h] ACTION ...
 usage: interlock mesh serve [-h] --role {consensus,aggregator,mirror} [--bind HOST:PORT]
                             [--state FILE] [--token TOKEN] [--known-catalog ID] [--min-orgs N]
                             [--dir DIR] [--require-credential] [--issuer HEX_PUBLIC]
+                            [--min-batch N]
 usage: interlock mesh log [-h] [--root FILE] [--json] DIR_OR_URL
 usage: interlock mesh gossip [-h] --peer URL [--dir DIR] [--token TOKEN]
 usage: interlock mesh credential [-h] ACTION ...

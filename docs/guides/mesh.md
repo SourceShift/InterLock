@@ -130,14 +130,14 @@ sync.
 ## Report what your guard stopped
 
 Reporting is off until you turn it on, and it is a projection of the receipts
-interlock already writes ([audit log](audit-log.md)). A report carries three
-kinds of fact and nothing else:
+interlock already writes ([audit log](audit-log.md)). It has three kinds of
+fact, and they leave the node by two different routes:
 
-| Layer | Carries | Never carries |
-|---|---|---|
-| counts | how often each published rule fired, per verdict, tool *class* (shell, http, file.write, mcp, ...), phase and hour | tool names, principals, sessions |
-| digests | the SHA-256 of the arguments a rule **blocked or escalated**, exactly as the receipt stores it | arguments; anything a redacting or masking rule saw; rewrites; monitor-mode decisions |
-| sightings | "rule X is wrong here", an operator's false-positive statement | |
+| Layer | Carries | Goes to | Never carries |
+|---|---|---|---|
+| counts | how often each published rule fired, per verdict, tool *class* (shell, http, file.write, mcp, ...), phase and hour | the **aggregators**, only as secret shares; never in the report | tool names, principals, sessions |
+| digests | the SHA-256 of the arguments a rule **blocked or escalated**, exactly as the receipt stores it | the **consensus** service, in the signed report | arguments; anything a redacting or masking rule saw; rewrites; monitor-mode decisions |
+| sightings | "rule X is wrong here", an operator's false-positive statement | the **consensus** service, in the signed report | |
 
 ```bash
 interlock mesh report init                                  # an Ed25519 key: the only identity the mesh sees
@@ -148,12 +148,18 @@ interlock mesh report submit report.json --consensus https://consensus.example.o
 ```
 
 `build` prints what the report contains before anything leaves the machine;
-`--json` shows the exact envelope. `submit` sends the signed envelope (digests
-and sightings) to the **consensus** service, and splits the counts into
-additive secret shares, one per **aggregator**: each aggregator sees a
-uniformly random number, and only their combined sums are the real totals. Two
-aggregators run by organisations that will not collude are the minimum; with
-fewer, counts are not sent at all.
+`--json` shows the exact envelope. With `--out report.json` it writes two files:
+the signed envelope, and the count vector beside it in `report.json.counts.json`
+(mode 0600). The envelope carries no counts, and the consensus service refuses
+one that does.
+
+`submit` sends the signed envelope (digests and sightings) to the
+**consensus** service. Counts **never reach consensus**: `submit` reads them
+from the local counts file and splits them into additive secret shares, one per
+**aggregator**. Each aggregator sees a uniformly random number, and only their
+combined sums are the real totals. Two aggregators run by organisations that
+will not collude are the minimum; with fewer, counts are not sent at all, and
+`submit` says so.
 
 Every report also names the node's **catalog id**, a hash of the installed
 detector modules and the interlock version. The consensus engine refuses
@@ -188,9 +194,34 @@ defence that works does:
 - **Expire everything.** An indicator unseen for `indicator_ttl_days` (default
   30) is no longer active.
 
-`GET /v1/stats` is the public dashboard: per-rule fire counts across the
-network, how many organisations saw each rule fire, the indicator funnel, and
-demotions. It carries nothing per reporter. `GET /v1/indicators` (or
+`GET /v1/stats` is the public dashboard: how many organisations saw each rule
+fire (a reporter that sent a digest or a sighting for a rule saw it fire), the
+indicator funnel, and demotions. It carries nothing per reporter and **no fire
+counts**: each rule's `verdicts` is `null`, because consensus never sees a
+count. Fire counts come from the aggregators' combined totals:
+
+```bash
+interlock mesh consensus export --state consensus.json --stats \
+    --aggregator https://agg-a.example.org --aggregator https://agg-b.example.org
+```
+
+reads both aggregators' `GET /v1/manifest`, asks each for its partial sums over
+the reports both hold (`POST /v1/totals`), adds them, and fills in each rule's
+`verdicts`.
+
+An aggregator releases totals only over a **batch floor** of at least
+`min_batch` reconciled reports (default 3; `mesh serve --role aggregator
+--min-batch N` raises it, and it cannot be set below 2). Below the floor,
+`POST /v1/totals` answers 422 with a reason, and `GET /v1/manifest` names the
+floor. The reason is subtraction: a total over one report *is* that report, and
+with two, either reporter can subtract its own counts from the total and read
+the other's. A repeated or unknown report id does not count toward the batch.
+The floor does not stop someone who may call `/v1/totals` from differencing
+two overlapping batches (four reports minus three of them is the fourth); the
+fixed, non-overlapping batches of the DAP protocol close that, and are the
+planned upgrade.
+
+`GET /v1/indicators` (or
 `interlock mesh consensus export --state consensus.json`) is the indicator
 **pack**: one rule using the `mesh_indicator_guard` detector with the active
 digests, published with status `test`. On a subscriber's canary and early

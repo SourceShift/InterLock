@@ -121,6 +121,22 @@ breaking changes land.
   goes over it, like the other budget rules (it used to block on reaching it).
 - `destructive_command_guard`'s raw-text check blocks `dd` only when `of=` is a
   block device; `dd ... of=scratch.img` makes a file and is allowed.
+- Mesh counts leave a node only as secret shares, and no total is released
+  below a batch floor. The signed report envelope no longer carries `counts`
+  (`interlock.mesh.report.build_counts` projects them separately), and
+  `verify_report` refuses one that does, so `interlock mesh report submit`
+  sends the consensus service digests and sightings only. `report build --out
+  FILE` writes the count vector to `FILE.counts.json` (0600) for `submit` to
+  share with two or more aggregators. The consensus engine counts organisations
+  per rule from digests and sightings; `/v1/stats` and `export_stats()` keep
+  the `rules` shape but `verdicts` is `null`, and a state file written before
+  this change is scrubbed on load. `Aggregator.totals` and `combine_totals`
+  refuse fewer than `min_batch` reconciled reports (default 3, at least 2;
+  `mesh serve --role aggregator --min-batch N`); `POST /v1/totals` answers 422
+  below it and `GET /v1/manifest` names it. Fire counts come from
+  `interlock mesh consensus export --stats --aggregator URL --aggregator URL`
+  (`interlock.mesh.aggregate.fire_totals`). Breaking: reports built before
+  this change are refused, and reporters and collectors upgrade together.
 
 ### Fixed
 

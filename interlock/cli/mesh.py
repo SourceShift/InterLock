@@ -29,6 +29,9 @@ import json
 import sys
 import time
 
+#: `report build --out FILE` keeps the count vector in FILE + this, on the node.
+COUNTS_SUFFIX = ".counts.json"
+
 
 def add_arguments(parser) -> None:
     sub = parser.add_subparsers(dest="mesh_command", metavar="ACTION")
@@ -83,10 +86,11 @@ def add_arguments(parser) -> None:
     report_build = report_sub.add_parser("build", help="project a receipt log into a signed report")
     report_build.add_argument("--receipts", required=True, metavar="FILE", help="a receipt log written by FileSink")
     report_build.add_argument("--since", default="24h", metavar="DURATION", help="window: 30m, 24h, 7d (default 24h)")
-    report_build.add_argument("--out", default=None, metavar="FILE", help="write the signed envelope here")
+    report_build.add_argument("--out", default=None, metavar="FILE",
+                              help="write the signed envelope here, and the counts (local only) to FILE.counts.json")
     report_build.add_argument("--false-positive", action="append", default=[], metavar="RULE_ID",
                               help="say this rule is wrong here (a negative sighting); repeatable")
-    report_build.add_argument("--no-digests", action="store_true", help="counts only, no argument digests")
+    report_build.add_argument("--no-digests", action="store_true", help="leave argument digests out of the report")
     report_build.add_argument("--credential", default=None, metavar="FILE",
                               help="a membership certificate for this node's reporting key")
     report_build.add_argument("--dir", default=None, metavar="DIR")
@@ -119,6 +123,8 @@ def add_arguments(parser) -> None:
                        help="consensus: refuse reports without a membership certificate")
     serve.add_argument("--issuer", action="append", default=[], metavar="HEX_PUBLIC",
                        help="consensus: a credential issuer's public key; repeatable")
+    serve.add_argument("--min-batch", type=int, default=None, metavar="N",
+                       help="aggregator: release totals over at least N reconciled reports (default 3, at least 2)")
 
     log_cmd = sub.add_parser("log", help="verify a commons' transparency log against its published documents")
     log_cmd.add_argument("site", metavar="DIR_OR_URL", help="a published site directory or mirror URL")
@@ -171,6 +177,10 @@ def add_arguments(parser) -> None:
     consensus_export.add_argument("--state", required=True, metavar="FILE")
     consensus_export.add_argument("--out", default=None, metavar="FILE", help="write the pack here (default: stdout)")
     consensus_export.add_argument("--stats", action="store_true", help="export the public statistics instead")
+    consensus_export.add_argument("--aggregator", action="append", default=[], metavar="URL",
+                                  help="with --stats: an aggregator whose combined totals give per-rule fire "
+                                       "counts; give at least two")
+    consensus_export.add_argument("--token", default=None, metavar="TOKEN", help="bearer token the aggregators require")
 
 
 def run(args) -> int:
@@ -425,8 +435,9 @@ def _report_enable(args) -> int:
 def _report_build(args, key_path: str) -> int:
     import os
 
+    from ..mesh._util import atomic_write
     from ..mesh.catalog import catalog_id
-    from ..mesh.report import ReportError, ReporterKey, build_report, sign_report
+    from ..mesh.report import ReportError, ReporterKey, build_counts, build_report, sign_report
     from ..report import parse_since, read_receipts
 
     if not os.path.exists(key_path):
@@ -466,52 +477,79 @@ def _report_build(args, key_path: str) -> int:
     except ReportError as exc:
         sys.stderr.write("interlock mesh report: {}\n".format(exc))
         return 2
+    # The count vector never goes into the envelope. It stays beside it, readable
+    # by this user only, until `submit` sends it as secret shares.
+    counts = build_counts(receipts, since, now)
     text = json.dumps(envelope, sort_keys=True, indent=1)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(text + "\n")
+        atomic_write(args.out + COUNTS_SUFFIX, (json.dumps(
+            {"version": 1, "reporter": body["reporter"], "period": body["period"], "counts": counts},
+            sort_keys=True, indent=1) + "\n").encode("utf-8"), mode=0o600)
     if args.json:
         sys.stdout.write(text + "\n")
     else:
-        total = sum(c["n"] for c in body["counts"])
         print("report by {}: {} decision(s) in {} count row(s), {} digest(s), {} fingerprint(s), {} sample(s), "
               "{} sighting(s); catalog {}".format(
-                  key.keyid[:12], total, len(body["counts"]), len(body["digests"]), len(body["fingerprints"]),
+                  key.keyid[:12], sum(counts.values()), len(counts), len(body["digests"]), len(body["fingerprints"]),
                   len(body["samples"]), len(body["sightings"]), body["catalog"]))
         if bad:
             print("  {} unreadable line(s) in the log were skipped".format(len(bad)))
-        print("  carries: rule ids, verdicts, tool classes, hour buckets, argument digests. Never arguments, "
-              "principals or sessions.")
+        print("  carries: rule ids, tool classes, hour buckets, argument digests, sightings. Never counts, "
+              "arguments, principals or sessions.")
         if args.out:
-            print("  written to {}".format(args.out))
+            print("  written to {}; the counts stay in {} and leave only as secret shares to two or more "
+                  "aggregators".format(args.out, args.out + COUNTS_SUFFIX))
     return 0
 
 
+def _read_counts(path: str, body) -> dict:
+    """The count vector `build` wrote beside the envelope, checked to belong to it."""
+    from ..mesh._util import read_bounded
+
+    doc = json.loads(read_bounded(path, 16 * 1024 * 1024).decode("utf-8"))
+    if not isinstance(doc, dict) or doc.get("reporter") != body["reporter"] or doc.get("period") != body["period"]:
+        raise ValueError("not the counts of this report (another reporter or period)")
+    counts = doc.get("counts")
+    if not isinstance(counts, dict) or not all(
+            isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v >= 0 for k, v in counts.items()):
+        raise ValueError("malformed count vector")
+    return counts
+
+
 def _report_submit(args) -> int:
-    from ..mesh.aggregate import count_key, encode_counts
+    from ..mesh.aggregate import encode_counts
     from ..mesh.report import ReportError, submit, verify_report
 
     try:
         with open(args.file, "r", encoding="utf-8") as fh:
             envelope = json.load(fh)
-        body = verify_report(envelope)
+        body = verify_report(envelope)  # refuses an envelope whose report carries counts
     except (OSError, ValueError, ReportError) as exc:
         sys.stderr.write("interlock mesh report: {} is not a valid report: {}\n".format(args.file, exc))
         return 3
+    shares = None
+    counts_path = args.file + COUNTS_SUFFIX
+    if len(args.aggregator) >= 2:
+        try:
+            shares = encode_counts(_read_counts(counts_path, body), len(args.aggregator))
+        except (OSError, ValueError) as exc:
+            sys.stderr.write("interlock mesh report: cannot share counts from {}: {}\n".format(counts_path, exc))
+            return 3
+    # Only the signed envelope's own fields go to consensus; the counts never do.
+    outgoing = {k: envelope[k] for k in ("report", "public", "signature", "credential") if k in envelope}
     try:
-        reply = submit(args.consensus.rstrip("/") + "/v1/reports", envelope, token=args.token)
+        reply = submit(args.consensus.rstrip("/") + "/v1/reports", outgoing, token=args.token)
     except OSError as exc:
         sys.stderr.write("interlock mesh report: consensus {}: {}\n".format(args.consensus, exc))
         return 2
     print("consensus: {}".format("accepted" if reply.get("accepted") else "refused: {}".format(reply.get("reason"))))
-    if len(args.aggregator) < 2:
-        if args.aggregator:
-            print("counts not shared: one aggregator alone would see them; give at least two")
+    if shares is None:
+        print("counts not shared: they leave this node only as secret shares to at least two aggregators "
+              "(give --aggregator twice); {} aggregator(s) given".format(len(args.aggregator)))
         return 0 if reply.get("accepted") else 2
-    counts = {count_key(c["policy_id"], c["verdict"], c["tool_class"], c["phase"], c["bucket"]): c["n"]
-              for c in body["counts"]}
     report_id = "{}:{}".format(body["reporter"], int(body["period"]["until"]))
-    shares = encode_counts(counts, len(args.aggregator))
     for url, share in zip(args.aggregator, shares):
         try:
             answer = submit(url.rstrip("/") + "/v1/shares", {"report_id": report_id, "shares": share}, token=args.token)
@@ -526,9 +564,17 @@ def _serve(args) -> int:
     from ..mesh import default_mesh_dir
     from ..mesh.server import make_server
 
+    from ..mesh.aggregate import MIN_BATCH_FLOOR
+
     config = {}
     if args.min_orgs:
         config["min_orgs"] = args.min_orgs
+    if args.min_batch is not None:
+        if args.role != "aggregator" or args.min_batch < MIN_BATCH_FLOOR:
+            sys.stderr.write("interlock mesh serve: --min-batch is for --role aggregator and at least {}\n".format(
+                MIN_BATCH_FLOOR))
+            return 64
+        config["min_batch"] = args.min_batch
     if args.require_credential:
         config["require_credential"] = True
         config["issuers"] = list(args.issuer)
@@ -565,12 +611,30 @@ def _consensus(args) -> int:
     if args.consensus_command != "export":
         sys.stderr.write("interlock mesh consensus: choose an action: export\n")
         return 64
+    if args.aggregator and (not args.stats or len(args.aggregator) < 2):
+        sys.stderr.write("interlock mesh consensus: --aggregator goes with --stats, given at least twice\n")
+        return 64
     try:
         engine = ConsensusEngine.load(args.state)
     except (OSError, ValueError) as exc:
         sys.stderr.write("interlock mesh consensus: cannot load {}: {}\n".format(args.state, exc))
         return 3
     payload = engine.export_stats() if args.stats else engine.export_indicators()
+    if args.aggregator:
+        try:
+            fire = _aggregator_fire_totals(args.aggregator, args.token)
+        except (OSError, ValueError) as exc:
+            sys.stderr.write("interlock mesh consensus: no fire counts: {}\n".format(exc))
+            return 2
+        for policy_id, rule in payload["rules"].items():
+            rule["verdicts"] = dict(sorted(fire["rules"].pop(policy_id, {}).items()))
+        for policy_id, verdicts in sorted(fire["rules"].items()):  # fired, but no digest or sighting reached consensus
+            payload["rules"][policy_id] = {"orgs": 0, "verdicts": dict(sorted(verdicts.items())), "demoted": False,
+                                           "false_positive_orgs": 0, "last": None}
+        payload["fire_counts"] = {"aggregators": list(args.aggregator), "reports": fire["reports"],
+                                  "min_batch": fire["min_batch"]}
+        payload["note"] = ("rules[*].verdicts are the aggregators' combined totals over fire_counts.reports "
+                           "reconciled reports; consensus never saw a count")
     text = json.dumps(payload, indent=2, sort_keys=True)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
@@ -579,6 +643,37 @@ def _consensus(args) -> int:
     else:
         sys.stdout.write(text + "\n")
     return 0
+
+
+def _aggregator_fire_totals(urls, token) -> dict:
+    """GET each aggregator's manifest, POST /v1/totals for the reconciled ids,
+    and combine the replies (:func:`interlock.mesh.aggregate.fire_totals`)."""
+    import urllib.error
+    import urllib.request
+
+    from ..mesh.aggregate import fire_totals, reconcile
+    from ..mesh.report import submit
+
+    manifests = []
+    for url in urls:
+        request = urllib.request.Request(url.rstrip("/") + "/v1/manifest", headers={"User-Agent": "interlock-mesh"})
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310
+            manifest = json.loads(response.read(16 * 1024 * 1024).decode("utf-8"))
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("ids"), list):
+            raise ValueError("{}: not an aggregator manifest".format(url))
+        manifests.append(manifest)
+    ids = reconcile(*[[i for i in m["ids"] if isinstance(i, str)] for m in manifests])
+    replies = []
+    for url in urls:
+        try:
+            replies.append(submit(url.rstrip("/") + "/v1/totals", {"ids": ids}, token=token))
+        except urllib.error.HTTPError as exc:
+            try:
+                reason = json.loads(exc.read(64 * 1024).decode("utf-8")).get("reason") or exc
+            except (ValueError, AttributeError):
+                reason = exc
+            raise OSError("{}: {}".format(url, reason))
+    return fire_totals(manifests, replies)
 
 
 def _init(args) -> int:

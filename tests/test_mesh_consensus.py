@@ -52,7 +52,7 @@ def test_indicator_needs_distinct_orgs_not_repeat_reports(engine):
     assert pack["rules"][0]["status"] == "test"
     stats = engine.export_stats()
     assert stats["indicators"] == {"active": 1}
-    assert stats["rules"]["destructive_command"]["orgs"] == 3
+    assert stats["rules"]["destructive_command"]["orgs"] == 3  # organisations, from the digests they sent
     assert "reporters" in stats and k1.keyid not in json.dumps(stats)
 
 
@@ -137,3 +137,53 @@ def test_save_and_load_round_trip(engine, tmp_path):
     assert restored.export_indicators() == engine.export_indicators()
     assert restored.trust("someone") >= 2.5
     assert restored.catalogs == {"cat1"}
+
+
+def test_consensus_stats_carry_no_fire_counts(engine, tmp_path):
+    k1, k2 = keys(2)
+    # k1's guard blocked the same payload seven times; consensus must not learn "seven".
+    receipts = [Receipt(ts=T0 + i, action="Bash", verdict="BLOCK", policy_id="destructive_command", reason="r",
+                        args_digest=digest_args(BAD)) for i in range(7)]
+    body = build_report(receipts, since=T0, until=T0 + 3600, catalog_id="cat1", reporter_id=k1.keyid)
+    result = engine.ingest(sign_report(body, k1))
+    assert result["accepted"] and "counts" not in result
+    # k2 sent only a false-positive sighting for another rule: it saw that rule fire.
+    sighting = [{"policy_id": "prompt_injection", "kind": "false_positive"}]
+    assert engine.ingest(make_report(k2, [], sightings=sighting))["accepted"]
+    stats = engine.export_stats()
+    assert set(stats["rules"]) == {"destructive_command", "prompt_injection"}
+    for policy_id, orgs in (("destructive_command", 1), ("prompt_injection", 1)):
+        rule = stats["rules"][policy_id]
+        assert set(rule) == {"orgs", "verdicts", "demoted", "false_positive_orgs", "last"}
+        assert rule["orgs"] == orgs and rule["verdicts"] is None
+    assert stats["rules"]["prompt_injection"]["false_positive_orgs"] == 1
+    assert "aggregators" in stats["note"]
+    path = tmp_path / "consensus.json"
+    engine.save(str(path))
+    state = json.loads(path.read_text())
+    assert all(set(rule) == {"orgs", "last"} for rule in state["rules"].values())
+    assert '"counts"' not in path.read_text() and '"verdicts"' not in path.read_text()
+
+
+def test_an_envelope_carrying_counts_is_refused_at_ingest(engine):
+    (k,) = keys(1)
+    env = make_report(k, [BAD])
+    env["report"]["counts"] = [{"policy_id": "destructive_command", "verdict": "BLOCK", "n": 7}]
+    result = engine.ingest(env)
+    assert not result["accepted"] and "'counts'" in result["reason"]
+    assert engine.rules == {} and engine.indicators == {} and engine.rejected == 1
+
+
+def test_load_scrubs_plaintext_counts_from_an_older_state(engine, tmp_path):
+    for key in keys(3):
+        engine.ingest(make_report(key, [BAD]))
+    path = tmp_path / "consensus.json"
+    engine.save(str(path))
+    state = json.loads(path.read_text())
+    state["rules"]["destructive_command"]["verdicts"] = {"BLOCK": 41}  # what an older engine summed
+    path.write_text(json.dumps(state))
+    restored = ConsensusEngine.load(str(path), now=lambda: engine.clock["now"])
+    assert restored.export_stats()["rules"]["destructive_command"] == dict(
+        engine.export_stats()["rules"]["destructive_command"], verdicts=None)
+    restored.save(str(path))
+    assert json.loads(path.read_text())["rules"]["destructive_command"].keys() == {"orgs", "last"}

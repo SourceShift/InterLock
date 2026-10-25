@@ -1,12 +1,8 @@
 """Reports: what a node tells the mesh about what its guard stopped.
 
 A report is a projection of the receipts interlock already writes, and the
-projection is the whole privacy story. It carries three kinds of fact and
-nothing else:
-
-**Counts** (Layer 0): how many times each published rule fired, per verdict,
-tool class, phase and hour. Counts leave the node as additive secret shares
-(:mod:`.aggregate`), so no single collector learns a deployment's numbers.
+projection is the whole privacy story. The signed report envelope goes to the
+consensus service and carries these kinds of fact and nothing else:
 
 **Digests** (Layer 1): the SHA-256 of the arguments a rule blocked or
 escalated, exactly as the receipt already stores it. A digest matches only
@@ -17,6 +13,17 @@ decisions, or from anything without a published rule id.
 
 **Sightings**: an operator's statement that a rule is wrong here (a false
 positive), so the consensus engine can demote it.
+
+**Fingerprints** and **samples**, only when the operator enabled the mesh
+recorder (:mod:`.fingerprint`).
+
+**Counts** (Layer 0) are not part of a report. How many times each published
+rule fired, per verdict, tool class, phase and hour, is a separate projection
+(:func:`build_counts`) that stays on the node and leaves it only as additive
+secret shares to two or more aggregators (:mod:`.aggregate`), so no single
+collector, the consensus service included, learns a deployment's numbers.
+:func:`sign_report` and :func:`verify_report` refuse a body that carries
+counts.
 
 Never in a report: arguments, prompts, principals, session ids, hostnames,
 file paths, or the node's own policy. The reporter signs the report with an
@@ -34,10 +41,11 @@ from .. import __version__
 from ..receipt import Receipt
 from . import ed25519
 from ._util import atomic_write, canonical, read_bounded
+from .aggregate import count_key
 
 __all__ = [
     "REPORT_VERSION", "BUCKET_SECONDS", "MAX_DIGESTS", "ReportError", "ReporterKey", "tool_class",
-    "build_report", "sign_report", "verify_report", "submit",
+    "build_report", "build_counts", "sign_report", "verify_report", "submit",
 ]
 
 REPORT_VERSION = 1
@@ -121,6 +129,34 @@ MAX_SAMPLE_TEXT = 4096
 FINGERPRINT_HEX = 192  # 96 bytes
 
 
+def _counted(r: Receipt, since: float, until: float) -> bool:
+    """Whether a receipt is a rule firing a report projects (counts and digests alike)."""
+    if not (since <= r.ts < until):
+        return False
+    if r.action == "receipts.dropped" or r.phase not in ("call", "result"):
+        return False
+    return not (r.observed or r.verdict == "ALLOW" or not r.policy_id)
+
+
+def _bucket(ts: float) -> int:
+    return int(ts // BUCKET_SECONDS) * BUCKET_SECONDS
+
+
+def build_counts(receipts: Iterable[Receipt], since: float, until: float) -> Dict[str, int]:
+    """Project receipts in ``[since, until)`` into ``{count_key: n}``: how often
+    each rule fired, per verdict, tool class, phase and hour.
+
+    The vector is not part of the report. It stays on the node and is sent
+    only as secret shares (:func:`interlock.mesh.aggregate.encode_counts`)."""
+    counts: Dict[str, int] = {}
+    for r in receipts:
+        if not _counted(r, since, until):
+            continue
+        key = count_key(r.policy_id, r.verdict, tool_class(r.action), r.phase, _bucket(r.ts))
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def build_report(receipts: Iterable[Receipt], *, since: float, until: float, catalog_id: str,
                  reporter_id: str, include_digests: bool = True, max_digests: int = MAX_DIGESTS,
                  sightings: Sequence[Mapping[str, Any]] = (),
@@ -128,25 +164,17 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
                  samples: Sequence[Mapping[str, Any]] = ()) -> Dict[str, Any]:
     """Project receipts in ``[since, until)`` into an unsigned report body.
 
+    The body carries no counts; :func:`build_counts` projects those separately.
     ``fingerprints`` and ``samples`` come from the mesh recorder
     (:class:`interlock.mesh.fingerprint.Recorder`), which saw the arguments at
     decision time; they are passed through with caps and shape checks.
     """
-    counts: Dict[tuple, int] = {}
     digests: List[Dict[str, Any]] = []
     seen_digests = set()
     for r in receipts:
-        if not (since <= r.ts < until):
-            continue
-        if r.action == "receipts.dropped" or r.phase not in ("call", "result"):
-            continue
-        if r.observed or r.verdict == "ALLOW" or not r.policy_id:
-            continue
-        bucket = int(r.ts // BUCKET_SECONDS) * BUCKET_SECONDS
-        klass = tool_class(r.action)
-        key = (r.policy_id, r.verdict, klass, r.phase, bucket)
-        counts[key] = counts.get(key, 0) + 1
         if not include_digests or len(digests) >= max_digests:
+            break
+        if not _counted(r, since, until):
             continue
         if r.verdict not in ("BLOCK", "ESCALATE") or r.masked or _private_rule(r.policy_id):
             continue
@@ -157,10 +185,7 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
             continue
         seen_digests.add(dedupe)
         digests.append({"policy_id": r.policy_id, "args_digest": r.args_digest,
-                        "tool_class": klass, "bucket": bucket})
-    rows = [{"policy_id": k[0], "verdict": k[1], "tool_class": k[2], "phase": k[3], "bucket": k[4], "n": n}
-            for k, n in counts.items()]
-    rows.sort(key=lambda row: (row["bucket"], row["policy_id"], row["verdict"], row["tool_class"], row["phase"]))
+                        "tool_class": tool_class(r.action), "bucket": _bucket(r.ts)})
     digests.sort(key=lambda d: (d["bucket"], d["policy_id"], d["args_digest"]))
     clean_sightings = []
     for s in sightings:
@@ -200,12 +225,15 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
         "catalog": catalog_id,
         "interlock": __version__,
         "period": {"since": since, "until": until},
-        "counts": rows,
         "digests": digests,
         "sightings": clean_sightings,
         "fingerprints": clean_fps,
         "samples": clean_samples,
     }
+
+
+_COUNTS_REFUSED = ("report field 'counts' is not allowed: counts leave a node only as secret shares "
+                   "to the aggregators, never in the report envelope")
 
 
 def sign_report(body: Mapping[str, Any], key: ReporterKey,
@@ -215,6 +243,8 @@ def sign_report(body: Mapping[str, Any], key: ReporterKey,
     require one."""
     if body.get("reporter") != key.keyid:
         raise ReportError("the report names a different reporter than the signing key")
+    if "counts" in body:
+        raise ReportError(_COUNTS_REFUSED)
     payload = canonical(body)
     envelope = {"report": dict(body), "public": key.public.hex(), "signature": key.sign(payload).hex()}
     if credential is not None:
@@ -230,6 +260,8 @@ def verify_report(envelope: Any, *, max_bytes: int = MAX_ENVELOPE) -> Dict[str, 
     body = envelope.get("report")
     if not isinstance(body, dict) or body.get("version") != REPORT_VERSION:
         raise ReportError("unsupported or missing report body")
+    if "counts" in body:
+        raise ReportError(_COUNTS_REFUSED)
     try:
         public = bytes.fromhex(envelope.get("public", ""))
         signature = bytes.fromhex(envelope.get("signature", ""))
@@ -244,7 +276,7 @@ def verify_report(envelope: Any, *, max_bytes: int = MAX_ENVELOPE) -> Dict[str, 
         raise ReportError("report exceeds {} bytes".format(max_bytes))
     if not ed25519.verify(public, payload, signature):
         raise ReportError("report signature does not verify")
-    for field in ("counts", "digests", "sightings"):
+    for field in ("digests", "sightings"):
         if not isinstance(body.get(field), list):
             raise ReportError("report field {!r} must be a list".format(field))
     if not isinstance(body.get("catalog"), str) or not isinstance(body.get("period"), dict):
@@ -253,9 +285,9 @@ def verify_report(envelope: Any, *, max_bytes: int = MAX_ENVELOPE) -> Dict[str, 
         if (not isinstance(d, dict) or not isinstance(d.get("policy_id"), str)
                 or not isinstance(d.get("args_digest"), str) or len(d["args_digest"]) != 64):
             raise ReportError("malformed digest entry")
-    for c in body["counts"]:
-        if not isinstance(c, dict) or not isinstance(c.get("n"), int) or c["n"] < 0:
-            raise ReportError("malformed count entry")
+    for s in body["sightings"]:
+        if not isinstance(s, dict) or not isinstance(s.get("policy_id"), str) or not s["policy_id"]:
+            raise ReportError("malformed sighting entry")
     for f in body.get("fingerprints", []):
         if (not isinstance(f, dict) or not isinstance(f.get("policy_id"), str)
                 or not isinstance(f.get("fp"), str) or len(f["fp"]) != FINGERPRINT_HEX

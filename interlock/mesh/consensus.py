@@ -23,8 +23,12 @@ enforces them blindly: on the canary and early rings they escalate, and the
 stable ring never installs them until a maintainer promotes the pack.
 
 Counts are not here: they go to the aggregators (:mod:`.aggregate`), which is
-the point. The consensus engine sees who reported which digest, under a
-pseudonymous key, and nothing about how often anything happened at any node.
+the point, and a report envelope that carries them is refused
+(:func:`~interlock.mesh.report.verify_report`). The consensus engine sees who
+reported which digest or sighting, under a pseudonymous key, and nothing about
+how often anything happened at any node. Its per-rule statistics count
+organisations, never events: a reporter that sent a digest or a sighting for a
+rule saw that rule fire.
 """
 from __future__ import annotations
 
@@ -58,6 +62,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "credential_scope": None,
 }
 STATE_MAX = 64 * 1024 * 1024
+FIRE_COUNTS_NOTE = ("rules[*].orgs counts organisations that sent a digest or sighting for the rule; "
+                    "rules[*].verdicts is null because fire counts never reach consensus: they come from "
+                    "the aggregators' combined totals (interlock mesh consensus export --stats "
+                    "--aggregator URL --aggregator URL)")
 
 
 class ConsensusEngine:
@@ -70,7 +78,7 @@ class ConsensusEngine:
         self._lock = threading.Lock()
         self.reporters: Dict[str, Dict[str, Any]] = {}
         self.indicators: Dict[str, Dict[str, Any]] = {}   # "policy|digest" -> record
-        self.rules: Dict[str, Dict[str, Any]] = {}        # policy_id -> {verdicts, orgs}
+        self.rules: Dict[str, Dict[str, Any]] = {}        # policy_id -> {orgs, last}
         self.sightings: Dict[str, Dict[str, Any]] = {}    # policy_id -> {kind: {orgs}}
         self.catalogs: Set[str] = set()
         self.canaries: Dict[str, str] = {}                # digest -> "bad" | "benign"
@@ -146,12 +154,14 @@ class ConsensusEngine:
                 record["catalogs"].append(body["catalog"])
 
             counted = 0
+            fired: Set[str] = set()
             for entry in body["digests"][: self.config["max_digests_per_report"]]:
                 digest = entry["args_digest"]
                 kind = self.canaries.get(digest)
                 if kind == "benign":
                     record["penalties"] = record.get("penalties", 0) + 1
                     continue
+                fired.add(entry["policy_id"])
                 if kind == "bad":
                     record["canary_hits"] = record.get("canary_hits", 0) + 1
                 key = "{}|{}".format(entry["policy_id"], digest)
@@ -166,18 +176,19 @@ class ConsensusEngine:
                     ind["tool_classes"].append(klass)
                 counted += 1
 
-            for row in body["counts"]:
-                rule = self.rules.setdefault(row["policy_id"], {"verdicts": {}, "orgs": [], "last": now})
-                rule["verdicts"][row["verdict"]] = rule["verdicts"].get(row["verdict"], 0) + int(row["n"])
-                if reporter not in rule["orgs"]:
-                    rule["orgs"].append(reporter)
-                rule["last"] = now
-
             for s in body["sightings"]:
                 by_kind = self.sightings.setdefault(s["policy_id"], {})
                 orgs = by_kind.setdefault(s.get("kind", "false_positive"), [])
                 if reporter not in orgs:
                     orgs.append(reporter)
+                fired.add(s["policy_id"])
+
+            # Which rules this organisation saw fire: a set, never a tally.
+            for policy_id in sorted(fired):
+                rule = self.rules.setdefault(policy_id, {"orgs": [], "last": now})
+                if reporter not in rule["orgs"]:
+                    rule["orgs"].append(reporter)
+                rule["last"] = now
 
             campaigns_touched = self._ingest_fingerprints(reporter, body.get("fingerprints", []), now)
             samples_kept = self._ingest_samples(reporter, body.get("samples", []), now)
@@ -364,8 +375,11 @@ class ConsensusEngine:
         }
 
     def export_stats(self) -> Dict[str, Any]:
-        """Public statistics: per-rule fire counts and organisation counts, the
-        indicator funnel, and demotions. Nothing per reporter."""
+        """Public statistics: how many organisations saw each rule fire, the
+        indicator funnel, and demotions. Nothing per reporter, and no fire
+        counts: each rule's ``verdicts`` is ``None`` because counts never reach
+        consensus; they come from the aggregators' combined totals
+        (:func:`interlock.mesh.aggregate.fire_totals`)."""
         now = self._now()
         decisions = self.decisions()
         funnel: Dict[str, int] = {}
@@ -378,7 +392,7 @@ class ConsensusEngine:
         rules = {}
         with self._lock:
             for policy_id, rule in sorted(self.rules.items()):
-                rules[policy_id] = {"orgs": len(rule["orgs"]), "verdicts": dict(sorted(rule["verdicts"].items())),
+                rules[policy_id] = {"orgs": len(rule["orgs"]), "verdicts": None,
                                     "demoted": policy_id in demoted,
                                     "false_positive_orgs": len(self.sightings.get(policy_id, {}).get("false_positive", [])),
                                     "last": rule["last"]}
@@ -386,7 +400,7 @@ class ConsensusEngine:
         return {"generated": now, "reporters": reporters, "rejected_reports": self.rejected,
                 "indicators": funnel, "campaigns": campaign_funnel,
                 "samples": {p: len(v) for p, v in sorted(self.samples.items())},
-                "rules": rules, "demoted_rules": sorted(demoted),
+                "rules": rules, "demoted_rules": sorted(demoted), "note": FIRE_COUNTS_NOTE,
                 "config": {k: self.config[k] for k in ("min_orgs", "min_trust", "indicator_ttl_days", "fp_demote_orgs")}}
 
     # --- persistence ----------------------------------------------------------------------
@@ -406,6 +420,9 @@ class ConsensusEngine:
         engine.reporters = dict(state.get("reporters", {}))
         engine.indicators = dict(state.get("indicators", {}))
         engine.rules = dict(state.get("rules", {}))
+        for rule in engine.rules.values():
+            if isinstance(rule, dict):
+                rule.pop("verdicts", None)  # plaintext counts from an older state; the next save drops them
         engine.sightings = dict(state.get("sightings", {}))
         engine.catalogs = set(state.get("catalogs", []))
         engine.canaries = dict(state.get("canaries", {}))

@@ -330,7 +330,10 @@ everything as HTTP so operators can be platform-diverse
 reporter's fingerprints. Heavier alternatives from the CTI literature
 (multiparty homomorphic encryption in `2209.02676`, DP federated learning in
 `2512.14242` with accuracy dropping from 98.4% to 86.0%) buy generality the
-mesh does not need in its first years.
+mesh does not need in its first years. A batch floor shipped with the
+counts fix: an aggregator releases totals only over at least `min_batch`
+reconciled reports (default 3, never below 2), so no reporter can recover
+another's count by subtraction from a batch of two.
 
 ### 5.5 Peer-to-peer, and what "torrent-like" should mean here
 

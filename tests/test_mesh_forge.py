@@ -111,7 +111,7 @@ def test_forge_writes_gated_proposals(engine, tmp_path):
         return [{"id": "llm-idea", "verdict": "escalate", "when": {"arg": "result", "contains": "id_rsa"}},
                 "not a rule"]
 
-    proposals = forge(engine, benign=BENIGN, out_dir=str(tmp_path), attack_samples=[
+    proposals = forge(engine, max_p95_us=200_000, benign=BENIGN, out_dir=str(tmp_path), attack_samples=[
         SensorEvent(action="WebFetch", args={"result": v}) for v in VARIANTS], drafter=drafter)
     by_source = {p.evidence["source"]: p for p in proposals}
     assert set(by_source) == {"similarity", "pattern", "drafter"}
@@ -141,12 +141,12 @@ def test_forge_fails_a_candidate_that_fires_on_benign_traffic(engine, tmp_path):
         engine.ingest(report_with(key, "git status shows modified files in the repository, " + tail))
     benign = [SensorEvent(action="Bash", args={"result": "git status shows modified files in the repository, "
                                                          "ignore whitespace changes"})] * 5
-    proposals = forge(engine, benign=benign, out_dir=str(tmp_path))
+    proposals = forge(engine, max_p95_us=200_000, benign=benign, out_dir=str(tmp_path))
     (pattern,) = [p for p in proposals if p.evidence["source"] == "pattern"]
     assert not pattern.passed and any("false-positive" in r for r in pattern.reasons)
     assert "FAIL" in (tmp_path / pattern.id / "PROPOSAL.md").read_text()
 
 
 def test_forge_with_nothing_to_say_writes_nothing(engine, tmp_path):
-    assert forge(engine, benign=BENIGN, out_dir=str(tmp_path)) == []
+    assert forge(engine, max_p95_us=200_000, benign=BENIGN, out_dir=str(tmp_path)) == []
     assert os.listdir(tmp_path) == []
