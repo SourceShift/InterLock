@@ -65,6 +65,26 @@ tunnel route dns`. Use **flat** hostnames under the zone apex. Universal SSL
 covers `example.com` and `*.example.com`; it does not cover
 `*.mesh.example.com`.
 
+### When the tunnel and the public zone are in different accounts
+
+`cloudflared tunnel route dns` resolves the zone from the tunnel's own
+credentials. If the public zone is not in that account, the command does not
+fail — it appends the account's default zone instead, creating a name such as
+`mesh.sourceshift.ai.fluily.com`. Check the name in its output and delete the
+record if it is wrong.
+
+The working layout is a **proxied CNAME** in the public zone pointing at the
+bootstrap hostname, plus an ingress entry for the public hostname:
+
+| Public (canonical) | CNAME target (proxied) | Origin |
+|---|---|---|
+| `mesh.sourceshift.ai` | `mesh.fluily.com` | `127.0.0.1:7949` |
+| `mesh-consensus.sourceshift.ai` | `mesh-consensus.fluily.com` | `127.0.0.1:7950` |
+
+Cloudflare preserves the `Host` header, so the tunnel must list the public name
+in `ingress` as well as the CNAME target. Keep both while subscribers move;
+Universal SSL in the public zone covers the flat public name.
+
 ## Smoke
 
 ```bash

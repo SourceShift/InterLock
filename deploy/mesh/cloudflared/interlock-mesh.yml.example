@@ -6,6 +6,12 @@
 # Universal SSL covers only the apex and its first-level wildcard
 # (*.example.com). Use flat names such as mesh-consensus.example.com; a
 # second-level wildcard (*.mesh.example.com) needs Advanced Certificate Manager.
+#
+# If the public zone is in a different Cloudflare account from this tunnel,
+# `cloudflared tunnel route dns` silently appends this account's default zone.
+# Create a proxied CNAME in the public zone instead (mesh.example.org ->
+# mesh.example.com) and list BOTH hostnames here: Cloudflare preserves the
+# Host header, so the tunnel matches the public name, not the CNAME target.
 tunnel: <TUNNEL_ID>
 credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
 no-autoupdate: true
