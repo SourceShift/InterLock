@@ -23,6 +23,17 @@ review (four-eyes). Every state is in one SQLite file (stdlib ``sqlite3``),
 the coding-agent policy pack locks ``~/.interlock`` and refuses
 ``interlock reviews approve`` from inside an agent.
 
+Every row is **signed** with an HMAC key that lives beside the database
+(``reviews.key``, mode 0600) and never inside it. The signature covers the
+binding, the preview, the decision, the approver names and the approval list,
+so a writer who can edit the database file alone can no longer approve
+anything or redirect a human's approval to a different call: the queue refuses
+a row it did not write. The key is the boundary - a process that can read both
+files can forge, so keep them somewhere the agent (and other accounts) cannot.
+Point ``key_path=`` at a different file to separate the key from the database,
+e.g. when the database lives on shared storage and decisions are made from
+another machine.
+
 Statuses: ``pending``, ``approved``, ``rejected``, ``revoked``, ``expired``,
 ``executed`` (an approval that was used).
 """
@@ -30,6 +41,7 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -65,7 +77,8 @@ CREATE TABLE IF NOT EXISTS reviews (
     rejection_reason TEXT,
     min_approvals INTEGER NOT NULL DEFAULT 1,
     allow_self_approval INTEGER NOT NULL DEFAULT 1,
-    approval_ttl REAL NOT NULL DEFAULT 900
+    approval_ttl REAL NOT NULL DEFAULT 900,
+    mac TEXT
 );
 CREATE INDEX IF NOT EXISTS reviews_binding ON reviews (binding, status);
 CREATE TABLE IF NOT EXISTS approvals (
@@ -87,11 +100,63 @@ CREATE TABLE IF NOT EXISTS settings (
 _MIGRATED_COLUMNS = (
     ("allow_self_approval", "INTEGER NOT NULL DEFAULT 1"),
     ("approval_ttl", "REAL NOT NULL DEFAULT 900"),
+    ("mac", "TEXT"),
 )
 
 
 def default_path() -> str:
     return os.path.join(os.path.expanduser("~"), ".interlock", "reviews.db")
+
+
+def default_key_path(path: str) -> str:
+    """Where the signing key for the database at ``path`` lives by default."""
+    return os.path.join(os.path.dirname(os.path.abspath(path)), "reviews.key")
+
+
+def _read_or_create_key(path: str) -> bytes:
+    """The 32-byte review key at ``path``, created mode 0600 on first use."""
+    try:
+        with open(path, "rb") as fh:
+            key = fh.read()
+        if len(key) < 32:
+            raise ReviewError(
+                "review key {} is truncated ({} bytes). Restore it, or delete it to start a new one - "
+                "which invalidates every decision signed with the old key.".format(path, len(key)))
+        return key
+    except FileNotFoundError:
+        pass
+    key = secrets.token_bytes(32)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:  # another process created it between the read and here
+        return _read_or_create_key(path)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(key)
+    except BaseException:
+        os.unlink(path)
+        raise
+    return key
+
+
+def _mac_payload(row: sqlite3.Row, approvers: List[str]) -> bytes:
+    """The canonical bytes a review's signature covers.
+
+    Every field that can change a decision or what an approver was shown is in
+    it, plus the approver list: adding a second approver to satisfy
+    ``min_approvals`` is a write the signature must catch. Types are pinned so
+    SQLite's int/float round-trip cannot make a legitimate row fail.
+    """
+    fields = [
+        row["id"], row["binding"], row["status"], row["action"], row["phase"],
+        row["principal"], row["requester"], row["policy_id"], row["reason"],
+        row["args_digest"], row["preview"], float(row["created"]),
+        float(row["pending_until"]), row["decided"], row["approval_until"],
+        row["executed"], row["decided_by"], row["rejection_reason"],
+        int(row["min_approvals"]), int(row["allow_self_approval"]),
+        float(row["approval_ttl"]), list(approvers),
+    ]
+    return json.dumps(fields, separators=(",", ":"), default=str).encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -144,11 +209,14 @@ class ReviewQueue:
 
     def __init__(self, path: Optional[str] = None, *, pending_ttl: float = 3600.0,
                  approval_ttl: float = 900.0, min_approvals: int = 1,
-                 allow_self_approval: bool = True) -> None:
+                 allow_self_approval: bool = True, key: Optional[bytes] = None,
+                 key_path: Optional[str] = None) -> None:
         if pending_ttl <= 0 or approval_ttl <= 0:
             raise ValueError("pending_ttl and approval_ttl must be positive")
         if min_approvals < 1:
             raise ValueError("min_approvals must be at least 1")
+        if key is not None and len(key) < 16:
+            raise ValueError("the review key must be at least 16 bytes")
         self.path = path or default_path()
         self.pending_ttl = float(pending_ttl)
         self.approval_ttl = float(approval_ttl)
@@ -156,6 +224,8 @@ class ReviewQueue:
         self.allow_self_approval = allow_self_approval
         directory = os.path.dirname(os.path.abspath(self.path))
         os.makedirs(directory, mode=0o700, exist_ok=True)
+        self.key_path = key_path or default_key_path(self.path)
+        self._key = key if key is not None else _read_or_create_key(self.key_path)
         with self._db() as db:
             db.executescript(_SCHEMA)
             self._migrate(db)
@@ -165,13 +235,40 @@ class ReviewQueue:
         except OSError:
             pass
 
-    @staticmethod
-    def _migrate(db: sqlite3.Connection) -> None:
-        """Add the policy columns to a database written before they existed."""
+    def _migrate(self, db: sqlite3.Connection) -> None:
+        """Add the later columns, then sign the rows a older release wrote.
+
+        A pre-signature database was equally trusted at the moment it is first
+        opened here - the upgrade happens in the reviewer's own process - so
+        its rows are sealed rather than refused. Rows are signed once;
+        a later edit to the file no longer verifies.
+        """
         columns = {row[1] for row in db.execute("PRAGMA table_info(reviews)")}
         for name, declaration in _MIGRATED_COLUMNS:
             if name not in columns:
                 db.execute("ALTER TABLE reviews ADD COLUMN {} {}".format(name, declaration))
+        unsigned = [row[0] for row in db.execute("SELECT id FROM reviews WHERE mac IS NULL")]
+        for review_id in unsigned:
+            self._seal(db, review_id)
+
+    def _mac(self, db: sqlite3.Connection, review_id: str) -> str:
+        row = db.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
+        approvers = [r[0] for r in db.execute(
+            "SELECT approver FROM approvals WHERE review_id = ? ORDER BY approver", (review_id,))]
+        return hmac.new(self._key, _mac_payload(row, approvers), hashlib.sha256).hexdigest()
+
+    def _seal(self, db: sqlite3.Connection, review_id: str) -> None:
+        db.execute("UPDATE reviews SET mac = ? WHERE id = ?", (self._mac(db, review_id), review_id))
+
+    def _verify(self, db: sqlite3.Connection, row: sqlite3.Row) -> None:
+        """Refuse a row the queue did not write (or one edited behind its back)."""
+        approvers = [r[0] for r in db.execute(
+            "SELECT approver FROM approvals WHERE review_id = ? ORDER BY approver", (row["id"],))]
+        expected = hmac.new(self._key, _mac_payload(row, approvers), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(row["mac"] or "", expected):
+            raise ReviewError(
+                "review {} does not match its signature: the review database was edited outside "
+                "`interlock reviews`; refusing to trust it".format(row["id"]))
 
     def _ratchet(self, db: sqlite3.Connection) -> None:
         """Record the most restrictive policy this database has ever seen.
@@ -258,6 +355,7 @@ class ReviewQueue:
                          _whoami(), request.policy_id, request.reason, request.args_digest,
                          _preview(request), now, now + self.pending_ttl, self.min_approvals,
                          1 if self.allow_self_approval else 0, self.approval_ttl))
+                    self._seal(db, review_id)
                     row = db.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
                 db.execute("COMMIT")
             except BaseException:
@@ -269,11 +367,16 @@ class ReviewQueue:
         """Use an approval, once. True for exactly one caller."""
         now = time.time() if now is None else now
         with self._db() as db:
+            row = self._row(db, review_id)
+            self._verify(db, row)
             cursor = db.execute(
                 "UPDATE reviews SET status = 'executed', executed = ? "
                 "WHERE id = ? AND status = 'approved' AND approval_until > ?",
                 (now, review_id, now))
-            return cursor.rowcount == 1
+            if cursor.rowcount != 1:
+                return False
+            self._seal(db, review_id)
+            return True
 
     # --- the human side -----------------------------------------------------
     def approve(self, review_id: str, approver: Optional[str] = None, *,
@@ -285,6 +388,7 @@ class ReviewQueue:
             try:
                 self._expire(db, now)
                 row = self._row(db, review_id)
+                self._verify(db, row)
                 if row["status"] != "pending":
                     raise ReviewError("review {} is {}, not pending".format(review_id, row["status"]))
                 allow_self, min_approvals, approval_ttl = self._policy(db, row)
@@ -299,6 +403,7 @@ class ReviewQueue:
                     db.execute("UPDATE reviews SET status = 'approved', decided = ?, decided_by = ?, "
                                "approval_until = ? WHERE id = ?",
                                (now, approver, now + approval_ttl, review_id))
+                self._seal(db, review_id)
                 db.execute("COMMIT")
             except BaseException:
                 db.execute("ROLLBACK")
@@ -347,22 +452,25 @@ class ReviewQueue:
         now = time.time() if now is None else now
         with self._db() as db:
             self._expire(db, now)
+            current = self._row(db, review_id)
+            self._verify(db, current)
             cursor = db.execute(
                 "UPDATE reviews SET status = ?, decided = ?, decided_by = ?, rejection_reason = ? "
                 "WHERE id = ? AND status IN ({})".format(",".join("?" * len(allowed))),
                 (status, now, approver or _whoami(), reason or None, review_id) + tuple(allowed))
-            row = self._row(db, review_id)
             if cursor.rowcount != 1:
                 raise ReviewError("review {} is {}; cannot mark it {}".format(
-                    review_id, row["status"], status))
-            return self._review(db, row)
+                    review_id, current["status"], status))
+            self._seal(db, review_id)
+            return self._review(db, self._row(db, review_id))
 
-    @staticmethod
-    def _expire(db: sqlite3.Connection, now: float) -> None:
-        db.execute("UPDATE reviews SET status = 'expired' WHERE status = 'pending' AND pending_until <= ?",
-                   (now,))
-        db.execute("UPDATE reviews SET status = 'expired' WHERE status = 'approved' "
-                   "AND approval_until <= ?", (now,))
+    def _expire(self, db: sqlite3.Connection, now: float) -> None:
+        stale = [row[0] for row in db.execute(
+            "SELECT id FROM reviews WHERE (status = 'pending' AND pending_until <= ?) "
+            "OR (status = 'approved' AND approval_until <= ?)", (now, now))]
+        for review_id in stale:
+            db.execute("UPDATE reviews SET status = 'expired' WHERE id = ?", (review_id,))
+            self._seal(db, review_id)
 
     @staticmethod
     def _row(db: sqlite3.Connection, review_id: str) -> sqlite3.Row:
@@ -371,11 +479,11 @@ class ReviewQueue:
             raise ReviewError("no review {}".format(review_id))
         return row
 
-    @staticmethod
-    def _review(db: sqlite3.Connection, row: sqlite3.Row) -> Review:
+    def _review(self, db: sqlite3.Connection, row: sqlite3.Row) -> Review:
+        self._verify(db, row)
         approvers = [r[0] for r in db.execute(
             "SELECT approver FROM approvals WHERE review_id = ? ORDER BY ts", (row["id"],))]
-        data = {k: row[k] for k in row.keys() if k != "binding"}
+        data = {k: row[k] for k in row.keys() if k not in ("binding", "mac")}
         # SQLite has no boolean type: keep the dataclass' types honest.
         data["allow_self_approval"] = bool(data.get("allow_self_approval", True))
         data["approval_ttl"] = float(data.get("approval_ttl", 900.0))

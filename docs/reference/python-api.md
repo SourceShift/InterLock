@@ -1325,7 +1325,7 @@ Guide: [review queue](../guides/reviews.md).
 
 | Name | What it is |
 |---|---|
-| `ReviewQueue(path=None, *, pending_ttl=3600, approval_ttl=900, min_approvals=1, allow_self_approval=True)` | `lookup_or_file(binding, request)`, `claim(id)`, `approve(id, approver=None)`, `reject(id, reason="", approver=None)`, `revoke(id)`, `get(id)`, `list(status=None, limit=50)`, `wait(id, timeout)` |
+| `ReviewQueue(path=None, *, pending_ttl=3600, approval_ttl=900, min_approvals=1, allow_self_approval=True, key=None, key_path=None)` | `lookup_or_file(binding, request)`, `claim(id)`, `approve(id, approver=None)`, `reject(id, reason="", approver=None)`, `revoke(id)`, `get(id)`, `list(status=None, limit=50)`, `wait(id, timeout)`. Rows are HMAC-signed with the key at `key_path` (default `reviews.key` beside the database, created 0600); `key=` supplies the bytes directly. |
 | `Review` | A frozen record with `.next` (`wait`, `retry_identical_call`, `stop`) and `.to_dict()` |
 | `queue_approver(queue=None, *, wait=0.0, poll=1.0, bind_epoch=True)` | An approver for `set_approver` / `install(approver=...)` |
 | `binding_hash(request, *, bind_epoch=True)` | What a review approves |

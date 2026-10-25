@@ -70,7 +70,8 @@ file a new review and ask you again.
 
 ```python
 ReviewQueue(path=None, pending_ttl=3600, approval_ttl=900,
-            min_approvals=1, allow_self_approval=True)
+            min_approvals=1, allow_self_approval=True,
+            key=None, key_path=None)
 ```
 
 | Setting | Meaning |
@@ -92,6 +93,32 @@ the record implicitly; deleting the database resets it.
 Statuses are `pending`, `approved`, `rejected`, `revoked`, `expired` and
 `executed` (an approval that was used).
 
+## Integrity
+
+Every row is signed with an HMAC-SHA256 key that lives **beside** the database
+(`reviews.key`, mode 0600) and never inside it. The signature covers the
+binding, the preview, the status and decision, the approver names and the
+approval list. A writer who can edit `reviews.db` but cannot read the key can
+no longer promote a pending review, redirect an approval to a different call,
+edit the preview a human is shown, or add an approver to satisfy
+`min_approvals`; the queue refuses the row with "does not match its signature"
+and the call stays refused.
+
+The key is the boundary. A process that can read both files can forge, and one
+that can delete either can deny service. Keep the directory private (the queue
+creates it 0700), and for a database on shared storage put the key somewhere
+else with `key_path=` - or pass the bytes directly with `key=` from a secret
+store; decisions made on another machine need the same key to verify. Deleting
+or replacing the key invalidates every decision signed with it.
+
+An upgrade from a database written before signing seals its existing rows on
+first open, in the reviewer's own process.
+
+A signature cannot see a **wholesale rollback**: restoring an older copy of
+both files replays the decisions made since that copy, until `approval_ttl`
+runs out. A short TTL bounds the window, and the receipt log remains the
+independent record of what actually ran.
+
 ## Let the agent check on its review
 
 `interlock reviews mcp` is a read-only MCP server (stdio, no dependencies). It
@@ -105,11 +132,13 @@ whether to wait, retry or give up. It never approves anything.
 
 ## Trust
 
-- The queue file must not be writable by the agent. The coding-agent policy
-  locks `~/.interlock`, and refuses `interlock reviews approve`/`reject`/`revoke`
-  from inside an agent.
-- Approver names come from the OS login (or `--as`). Anyone who can write the
-  queue file can claim any name, so keep it private (mode 0600, the default).
+- The queue file and its key must not be writable by the agent. The
+  coding-agent policy locks `~/.interlock`, and refuses
+  `interlock reviews approve`/`reject`/`revoke` from inside an agent.
+- Approver names come from the OS login (or `--as`). A name is only as good as
+  the key that signed the row: a process that can read both the database and
+  `reviews.key` can still claim any name, so keep both private (mode 0600, the
+  default). Editing the database alone no longer buys an approval.
 - The queue stores a preview of each call (its arguments, truncated) so the
   approver can see it. Receipts never do.
 - What an approval is bound to includes the policy epoch when it's stable

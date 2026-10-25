@@ -110,9 +110,15 @@ Each of these is sometimes the right choice. Make it on purpose.
   value transformed before it's returned (base64, say) isn't recognised.
   Database permissions and least-privilege credentials stay the boundary.
   **Accepted:** semantic SQL and PII understanding is out of scope.
-- **The review queue trusts its file.** Approvals live in a local SQLite file;
-  anyone who can write it can approve anything, under any name. Keep it where
-  the agent can't write (`~/.interlock` under the coding-agent policy).
+- **The review queue is only as strong as its key directory.** Every row is
+  signed with an HMAC key kept beside the database (`reviews.key`, 0600), so a
+  process that can edit `reviews.db` alone can no longer approve a call,
+  redirect an approval to another binding, edit the preview an approver sees,
+  or forge an approver name (`tests/test_review_integrity.py`). The key is the
+  boundary: a process that can read both files can forge, and one that can
+  delete either can deny service, and restoring an older copy of *both* files
+  replays decisions until `approval_ttl` expires. Keep `~/.interlock` private;
+  put the key on separate storage (`key_path=`) when the database is shared.
 - **Coding-agent hooks are cooperative, and agents differ.** Hooks see the tools
   an agent routes through them; they are not an OS boundary. Codex can't ask or
   rewrite at `PreToolUse` (those verdicts are refused) or withhold tool output;

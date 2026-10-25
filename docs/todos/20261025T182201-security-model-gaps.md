@@ -192,19 +192,34 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 
 ## T09 — Give the review queue integrity and an owner
 
-**Status:** not started — **decision needed**
+**Status:** done (2026-10-25) — option (a) implemented
 
 - **Decide the threat model first**
-  - status: not started
-  - last worked on: —
-  - remaining: today any writer can publish a row and `approve()` accepts a
-    free-form `--as` (`interlock/reviews.py`, `docs/guides/reviews.md:110`).
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — chose (a), an HMAC key the database does not contain.
     Directory is `0o700`, file `0o600`, and the coding-agent policy blocks
-    writes to `~/.interlock` (`interlock/policy/packs.py:103-115`) — but that
-    is access narrowing, not integrity.
-  - **Options:** (a) HMAC the queue with a key the agent process lacks;
-    (b) bind an approval row to a principal signature; (c) accept the file as
-    trusted-by-location and say so in the gap text. Pick before coding.
+    writes to `~/.interlock` (`interlock/policy/packs.py:103-115`); that is
+    access narrowing, and the signature now adds integrity on top.
+- **Sign every row**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `interlock/reviews.py` signs id, binding, status, action,
+    phase, principal, requester, policy, reason, digest, preview, timestamps,
+    decision fields and the approver list, with a 32-byte key at
+    `reviews.key` (beside the DB, mode 0600, never inside it). Every mutation
+    reseals; `claim`, `approve`, `reject`, `revoke` and `_review` verify first.
+    `key=` / `key_path=` allow separating the key from shared storage. A
+    pre-signing database is sealed on first open by the reviewer's process.
+  - tests: `tests/test_review_integrity.py` — forged approval, redirected
+    binding, swapped preview, forged approver, replaced key, explicit key.
+- **Document the residual**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `docs/guides/reviews.md` "Integrity" + "Trust", the
+    security-model bullet, the API table and `CHANGELOG.md`. Residual: whoever
+    can read both the database and the key can still forge; whoever can delete
+    either can deny service.
 
 ## T10 — Contain Windows sandbox descendants
 

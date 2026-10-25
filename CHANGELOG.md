@@ -141,6 +141,14 @@ breaking changes land.
   must end in each of its verdicts and look-alikes that must not
   (`tests/conformance/`, `python3 tests/conformance/runner.py`).
 
+- The review queue signs every row with an HMAC-SHA256 key kept beside the
+  database (`reviews.key`, mode 0600) and outside it: editing the SQLite file
+  alone can no longer approve a call, redirect an approval to another binding,
+  edit the preview an approver is shown, or add an approver to satisfy
+  `min_approvals` - the queue refuses a row it did not write.
+  `ReviewQueue(key=..., key_path=...)` separates the key from the database;
+  a pre-signing database is sealed on first open.
+
 ### Changed
 
 - Every enforcement site dispatches through one exhaustive function, so a
