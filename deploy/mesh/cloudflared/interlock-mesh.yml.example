@@ -7,11 +7,11 @@
 # (*.example.com). Use flat names such as mesh-consensus.example.com; a
 # second-level wildcard (*.mesh.example.com) needs Advanced Certificate Manager.
 #
-# If the public zone is in a different Cloudflare account from this tunnel,
-# `cloudflared tunnel route dns` silently appends this account's default zone.
-# Create a proxied CNAME in the public zone instead (mesh.example.org ->
-# mesh.example.com) and list BOTH hostnames here: Cloudflare preserves the
-# Host header, so the tunnel matches the public name, not the CNAME target.
+# A cloudflared certificate is scoped to one zone. If the public zone differs
+# from this tunnel's zone, `cloudflared tunnel route dns` silently appends this
+# zone and creates a wrong name. Run one tunnel per zone, each with its own
+# config, credentials file and unit; see the sourceshift unit next to this one.
+# A proxied CNAME is simpler only when both names are in the same account.
 tunnel: <TUNNEL_ID>
 credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
 no-autoupdate: true

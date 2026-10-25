@@ -65,25 +65,41 @@ tunnel route dns`. Use **flat** hostnames under the zone apex. Universal SSL
 covers `example.com` and `*.example.com`; it does not cover
 `*.mesh.example.com`.
 
-### When the tunnel and the public zone are in different accounts
+### When the tunnel and the public zone are in different zones
 
-`cloudflared tunnel route dns` resolves the zone from the tunnel's own
-credentials. If the public zone is not in that account, the command does not
-fail — it appends the account's default zone instead, creating a name such as
+A `cloudflared` certificate is scoped to **one zone** — the one selected during
+`cloudflared tunnel login`. `cloudflared tunnel route dns` resolves names
+against that zone. If the zone you name is not it, the command does not fail:
+it appends the certificate's zone instead, creating a name such as
 `mesh.sourceshift.ai.fluily.com`. Check the name in its output and delete the
 record if it is wrong.
 
-The working layout is a **proxied CNAME** in the public zone pointing at the
-bootstrap hostname, plus an ingress entry for the public hostname:
+Run one tunnel per zone. Each tunnel has its own credentials file, its own
+config with its own `ingress`, and its own unit:
 
-| Public (canonical) | CNAME target (proxied) | Origin |
+```bash
+# In the public zone's account: log in, create, route, then copy the
+# credential file to the host that runs the origin services.
+cloudflared tunnel login                     # pick the public zone
+cloudflared tunnel create interlock-mesh-sourceshift
+cloudflared tunnel route dns interlock-mesh-sourceshift mesh.sourceshift.ai
+```
+
+| Tunnel | Config | Public names |
 |---|---|---|
-| `mesh.sourceshift.ai` | `mesh.fluily.com` | `127.0.0.1:7949` |
-| `mesh-consensus.sourceshift.ai` | `mesh-consensus.fluily.com` | `127.0.0.1:7950` |
+| bootstrap | `/etc/cloudflared/interlock-mesh.yml` | `mesh.fluily.com`, ... |
+| canonical | `/etc/cloudflared/interlock-mesh-sourceshift.yml` | `mesh.sourceshift.ai`, `mesh-consensus.sourceshift.ai`, ... |
 
-Cloudflare preserves the `Host` header, so the tunnel must list the public name
-in `ingress` as well as the CNAME target. Keep both while subscribers move;
-Universal SSL in the public zone covers the flat public name.
+Both configs point at the same loopback ports. Keep the bootstrap tunnel while
+subscribers move; a node pins one mirror URL at `mesh init`.
+
+If the public zone is in the **same account** as the bootstrap tunnel, a
+proxied CNAME from the public name to the bootstrap hostname is simpler than a
+second tunnel. Cloudflare preserves the `Host` header, so the bootstrap
+tunnel's `ingress` then needs the public name too.
+
+Universal SSL covers the apex and its first-level wildcard, so
+`mesh.sourceshift.ai` is covered and `*.mesh.sourceshift.ai` is not.
 
 ## Smoke
 

@@ -1,0 +1,24 @@
+[Unit]
+# Second tunnel, for the public zone when it differs from the bootstrap zone.
+# One cloudflared certificate is scoped to one zone; each tunnel gets its own
+# credentials file, config and unit. Copy the credential file from the machine
+# that ran `cloudflared tunnel login`/`create`, and make it readable by the
+# service user (root:interlock-mesh 640 is enough; the JSON holds a secret).
+Description=Cloudflare Tunnel for interlock mesh (public zone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=interlock-mesh
+Group=interlock-mesh
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config /etc/cloudflared/interlock-mesh-sourceshift.yml tunnel run
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
