@@ -297,6 +297,34 @@ detector modules and the interlock version. The consensus engine refuses
 reports from catalogs it does not know, so only unmodified, published
 detectors count, the way only unmodified hub scenarios count in CrowdSec.
 
+**What a collector can still learn.** The projection keeps arguments, prompts,
+principals, sessions, hostnames, paths and your own policy off the wire. Four
+things remain, and the node handles each before anything leaves:
+
+- **Only published rule ids are named.** A rule you wrote yourself
+  (`block-prod-db-writes`) is part of your policy, so a receipt it produced
+  contributes to no layer, and `--false-positive` refuses it. A report names
+  the detector catalog and the rules of the packs in your verified cache,
+  nothing else.
+- **A digest is only as private as its argument is hard to guess.** The
+  SHA-256 of `rm -rf /` is a known number, so a digest or a fingerprint lets
+  anyone who can guess an argument confirm the guess. They are indicators of
+  *attack* payloads; for a rule whose arguments are your own data, they would
+  confirm what you hold. So rules that redact, mask, or watch your own data
+  (secrets, PII, egress, exfiltration, sensitive files, authentication) never
+  contribute digests, fingerprints or samples, only counts, and `--sample` is
+  per rule for the same reason.
+- **An aggregator learns an hour and a tool class, not a rule.** A count
+  vector only has rows for what fired, and the row keys travel in clear beside
+  the random shares. `submit` therefore pads the vector with a zero share for
+  every published rule in each hour and class the vector already has a row
+  for: a share is a random number whether it hides a count or a zero, so the
+  keys say that *something* fired then and there, not which rule. The DAP path
+  hides even that behind the task's fixed buckets.
+- **Your address.** Every collector you connect to sees the IP you connect
+  from, as with any upload; the mesh adds no identifier beyond the reporting
+  key. Route through a proxy if the address matters.
+
 ## Run the collectors
 
 The package ships a reference implementation of both roles, standard library

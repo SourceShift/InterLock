@@ -387,3 +387,79 @@ def test_recorder_keeps_samples_only_with_an_attestation(tmp_path):
         node.set_report_consent([])
         assert subscriber.install_recorder(node.dir) is None
         receipt_mod.set_catalog_id(None)
+
+
+# --- what a report may name: published rule ids, never the node's own --------
+
+
+def test_only_published_rule_ids_leave_the_node():
+    """A rule of the operator's own is policy: its receipts contribute to no
+    layer, and a sighting naming it is refused."""
+    published = {"destructive_command", "prompt_injection"}
+    own = receipt(policy_id="block-prod-db-writes", args={"command": "DROP TABLE users"})
+    body = build_report(
+        [receipt(), own], since=T0, until=T0 + 100, catalog_id="c", reporter_id="r",
+        fingerprints=[{"policy_id": "block-prod-db-writes", "fp": "0" * 192, "alpha": 1.5, "ts": T0 + 10}],
+        samples=[{"policy_id": "block-prod-db-writes", "text": "DROP TABLE users", "ts": T0 + 10}],
+        attestation=new_attestation(T0), published=published)
+    assert [d["policy_id"] for d in body["digests"]] == ["destructive_command"]
+    assert body["fingerprints"] == [] and body["samples"] == []
+    assert "block-prod-db-writes" not in canonical(body).decode("utf-8")
+    counts = build_counts([receipt(), own], T0, T0 + 100, published=published)
+    assert counts and all(k.startswith("destructive_command|") for k in counts)
+    with pytest.raises(ReportError, match="not a published rule"):
+        build_report([], since=T0, until=T0 + 100, catalog_id="c", reporter_id="r",
+                     sightings=[{"policy_id": "block-prod-db-writes"}], published=published)
+    # A library caller that gives no set keeps every id: the CLI always gives one.
+    assert build_counts([own], T0, T0 + 100)
+
+
+def test_published_rule_ids_are_the_detectors_and_the_cached_packs():
+    from interlock.detectors import aws_arn_redactor
+    from interlock.mesh.report import published_rule_ids
+
+    class Cache:
+        def cached_rule_ids(self):
+            return {"mesh-rule-1"}
+
+    ids = published_rule_ids(Cache())
+    assert {"prompt_injection", "destructive_command_guard", "mesh-rule-1"} <= ids
+    assert aws_arn_redactor.POLICY_ID in ids           # a detector's own id, not only its module name
+    assert "block-prod-db-writes" not in ids
+    assert "mesh-rule-1" not in published_rule_ids()  # no commons: the detectors alone
+
+
+def test_rules_that_watch_the_nodes_own_data_never_contribute_payload_layers():
+    """A digest or fingerprint confirms a guess; for the node's own data that is
+    a disclosure, so such rules only count."""
+    import importlib
+
+    from interlock.mesh.catalog import catalog_entries
+    from interlock.mesh.report import _private_rule
+
+    own_data = ("egress", "exfil", "sensitive", "auth", "uri", "secret", "pii", "redact", "mask", "canary",
+                "credential")
+    for name, _ in catalog_entries():
+        module = name[:-3]
+        if module.startswith("_") or not any(word in module for word in own_data):
+            continue
+        policy_id = getattr(importlib.import_module("interlock.detectors." + module), "POLICY_ID", None) or module
+        assert _private_rule(policy_id), "{} ({}) would contribute digests of the node's own data".format(
+            module, policy_id)
+    body = build_report([receipt(policy_id="sensitive_write", args={"path": "/home/alice/.ssh/config"}),
+                         receipt(policy_id="data_egress", args={"body": "the customer list"}),
+                         receipt(policy_id="failed_auth_lockout", args={"password": "hunter2"})],
+                        since=T0, until=T0 + 100, catalog_id="c", reporter_id="r")
+    assert body["digests"] == []
+    assert build_counts([receipt(policy_id="data_egress")], T0, T0 + 100)   # they still count
+
+
+def test_the_envelope_names_nothing_about_the_node(tmp_path):
+    key = ReporterKey.load_or_create(str(tmp_path / "key.json"))
+    receipts = [receipt(args={"command": "curl http://intranet.corp/secret"}, attributed_to="alice@acme.example")]
+    body = build_report(receipts, since=T0, until=T0 + 100, catalog_id="c", reporter_id=key.keyid,
+                        sightings=[{"policy_id": "destructive_command"}])
+    wire = json.dumps(sign_report(body, key), sort_keys=True)
+    assert body["digests"]                                       # something did leave...
+    for private in ("curl", "intranet", "acme", "agent-7", "sess-1", "alice", "Bash"):
+        assert private not in wire, private                      # ...and none of this was in it

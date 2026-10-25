@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from . import default_mesh_dir, metadata
 from ._util import atomic_write, iso, load_json, read_bounded
@@ -539,6 +539,36 @@ class Subscriber:
                         pass
 
     # resolve ----------------------------------------------------------------------------
+
+    def cached_rule_ids(self) -> Set[str]:
+        """The rule ids of every pack in the verified cache: what a report may
+        name besides the detectors (:func:`interlock.mesh.report.published_rule_ids`).
+
+        Reads the cache without installing anything: unlike :meth:`resolve`, it
+        starts no monitor window and touches no state. Empty when the node has
+        no commons or the cache does not verify."""
+        if not self.is_configured():
+            return set()
+        try:
+            trusted = self._trusted(allow_expired=True)
+        except (MetadataError, OSError, ValueError):
+            return set()
+        ids: Set[str] = set()
+        for info in trusted.all_targets():
+            path = getattr(info, "path", "")
+            if not (isinstance(path, str) and path.startswith("packs/") and path.endswith(".json")):
+                continue
+            try:
+                raw = read_bounded(self._target_file(info.consistent_name), info.length)
+                trusted.verify_target(path, raw)
+                doc = normalize_pack(json.loads(raw.decode("utf-8")), name=path)
+            except (OSError, ValueError, MetadataError, PackError):
+                continue
+            for rule in doc.get("rules", []):
+                rule_id = rule.get("id") if isinstance(rule, dict) else None
+                if isinstance(rule_id, str) and rule_id:
+                    ids.add(rule_id)
+        return ids
 
     def resolve(self, pack: str, ring: Optional[str] = None) -> Tuple[Dict[str, Any], str, Dict[str, Any]]:
         """The installable document for ``pack`` on ``ring``, from the cache only.

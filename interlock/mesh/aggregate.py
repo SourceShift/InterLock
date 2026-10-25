@@ -75,11 +75,21 @@ def count_key(policy_id: str, verdict: str, tool_class: str, phase: str, bucket:
     return "|".join([policy_id, verdict, tool_class, phase, str(int(bucket))])
 
 
-def encode_counts(counts: Mapping[str, int], n: int = 2) -> List[Dict[str, int]]:
-    """Share a whole vector of counts: one dict of shares per aggregator."""
+def encode_counts(counts: Mapping[str, int], n: int = 2, pad: Iterable[str] = ()) -> List[Dict[str, int]]:
+    """Share a whole vector of counts: one dict of shares per aggregator.
+
+    ``pad`` names keys to share as zero where ``counts`` has no row. A share is
+    a uniformly random field element whether it hides a count or a zero, so an
+    aggregator cannot tell the two apart; without the pad, the *set of keys*
+    would tell it exactly which rules fired on the node, which secret sharing
+    does nothing to hide. ``interlock mesh report submit`` pads with every
+    published rule for each hour and tool class the vector has a row for."""
     out: List[Dict[str, int]] = [{} for _ in range(n)]
-    for key, value in counts.items():
-        for index, piece in enumerate(share(int(value), n)):
+    keyed: Dict[str, int] = dict(counts)
+    for key in pad:
+        keyed.setdefault(key, 0)
+    for key in sorted(keyed):
+        for index, piece in enumerate(share(int(keyed[key]), n)):
             out[index][key] = piece
     return out
 

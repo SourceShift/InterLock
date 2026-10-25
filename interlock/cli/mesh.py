@@ -720,8 +720,12 @@ def _projection(receipts, mesh_dir: str, since: float, now: float, consent, *, i
     import os
 
     from ..mesh.fingerprint import read_records
-    from ..mesh.report import build_counts, build_report
+    from ..mesh.report import build_counts, build_report, published_rule_ids
+    from ..mesh.subscriber import Subscriber
 
+    # Only published rule ids leave: the detectors, and the rules of the packs
+    # in the verified cache. A rule of the operator's own is policy.
+    published = published_rule_ids(Subscriber(mesh_dir))
     enabled_at = consent["enabled_at"]
     layers = None if enabled_at is None else consent["layers"]
     if enabled_at is not None:
@@ -736,9 +740,28 @@ def _projection(receipts, mesh_dir: str, since: float, now: float, consent, *, i
         samples = []
     body = build_report(receipts, since=since, until=now, catalog_id=catalog, reporter_id=reporter,
                         include_digests=include_digests, sightings=sightings, fingerprints=fingerprints,
-                        samples=samples, enabled_since=enabled_at, enabled_layers=layers, attestation=attestation)
-    counts = build_counts(receipts, since, now, enabled_since=enabled_at, enabled_layers=layers)
+                        samples=samples, enabled_since=enabled_at, enabled_layers=layers, attestation=attestation,
+                        published=published)
+    counts = build_counts(receipts, since, now, enabled_since=enabled_at, enabled_layers=layers,
+                          published=published)
     return body, counts, unwarranted
+
+
+def pad_keys(counts, published) -> list:
+    """The count keys to share as zero beside ``counts``: every published rule
+    for each (verdict, tool class, phase, hour) the vector already has a row
+    for. With the pad, the keys an aggregator receives say that something
+    fired in that hour at that class, not which rule
+    (:func:`interlock.mesh.aggregate.encode_counts`)."""
+    from ..mesh.aggregate import count_key
+
+    combos = set()
+    for key in counts:
+        parts = str(key).rsplit("|", 4)
+        if len(parts) == 5 and parts[4].lstrip("-").isdigit():
+            combos.add((parts[1], parts[2], parts[3], int(parts[4])))
+    return sorted(count_key(rule, verdict, klass, phase, bucket)
+                  for (verdict, klass, phase, bucket) in combos for rule in published)
 
 
 #: The preview reads at most this much of a receipt log.
@@ -867,8 +890,8 @@ def _report_build(args, key_path: str) -> int:
                   len(body["samples"]), len(body["sightings"]), body["catalog"]))
         if bad:
             print("  {} unreadable line(s) in the log were skipped".format(len(bad)))
-        print("  carries: rule ids, tool classes, hour buckets, argument digests, sightings. Never counts, "
-              "arguments, principals or sessions.")
+        print("  carries: published rule ids, tool classes, hour buckets, argument digests, sightings. Never "
+              "counts, arguments, principals, sessions, or a rule of your own.")
         if consent["enabled_at"] is None:
             print("  reporting is off, so this is a local preview: `submit` refuses it until you run "
                   "`interlock mesh report enable`")
@@ -921,7 +944,7 @@ def _consent_refusal(body, consent, *, share_counts: bool):
 def _report_submit(args, mesh_dir: str) -> int:
     from ..mesh import NO_REPORT_ENV, reporting_killed
     from ..mesh.aggregate import encode_counts
-    from ..mesh.report import ReportError, submit, verify_report
+    from ..mesh.report import ReportError, published_rule_ids, submit, verify_report
     from ..mesh.subscriber import Subscriber
 
     if reporting_killed():
@@ -945,7 +968,9 @@ def _report_submit(args, mesh_dir: str) -> int:
     counts_path = args.file + COUNTS_SUFFIX
     if len(args.aggregator) >= 2:
         try:
-            shares = encode_counts(_read_counts(counts_path, body), len(args.aggregator))
+            counts = _read_counts(counts_path, body)
+            shares = encode_counts(counts, len(args.aggregator),
+                                   pad=pad_keys(counts, published_rule_ids(Subscriber(mesh_dir))))
         except (OSError, ValueError) as exc:
             sys.stderr.write("interlock mesh report: cannot share counts from {}: {}\n".format(counts_path, exc))
             return 3

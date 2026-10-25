@@ -35,6 +35,21 @@ Never in a report: arguments, prompts, principals, session ids, hostnames,
 file paths, or the node's own policy. The reporter signs the report with an
 Ed25519 key that identifies the organisation and nothing more.
 
+**Only published rule ids are named.** A node's own policy rules carry ids of
+the operator's choosing (``block-prod-db-writes``), and those ids are part of
+the policy; a receipt such a rule produced contributes to no layer, and a
+sighting naming one is refused. ``published`` on :func:`build_report` and
+:func:`build_counts` is that set (:func:`published_rule_ids`: the detector
+catalog plus the rules of the packs in the verified cache).
+
+**A digest is only as private as its argument is hard to guess.** The
+SHA-256 of ``rm -rf /`` is a known number, so a digest or fingerprint confirms
+a guess to anyone who can make one. They are indicators of *attack* payloads;
+for a rule whose arguments are the node's own data, they would be a way to
+confirm what the node holds. That is why :data:`PRIVATE_POLICY_MARKERS` also
+covers rules that watch the node's own data (egress, exfiltration, sensitive
+files, authentication), not only the ones that redact.
+
 Each kind of fact is a **layer** (:data:`LAYERS`) that leaves the node only
 once the operator enabled it, and never with anything observed before the
 enable (decision R3): ``enabled_since`` and ``enabled_layers`` clamp and gate
@@ -51,7 +66,7 @@ import time
 import urllib.error
 import urllib.request
 from email.message import Message
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Container, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence
 
 from .. import __version__
 from ..receipt import Receipt
@@ -61,7 +76,7 @@ from .aggregate import count_key
 
 __all__ = [
     "REPORT_VERSION", "BUCKET_SECONDS", "MAX_DIGESTS", "LAYERS", "BASE_LAYERS", "ReportError", "ReporterKey",
-    "tool_class", "build_report", "build_counts", "sign_report", "verify_report",
+    "tool_class", "build_report", "build_counts", "sign_report", "verify_report", "published_rule_ids",
     "submit", "submit_bytes", "post_bytes",
     "WARRANTY", "new_attestation", "check_attestation",
 ]
@@ -76,9 +91,13 @@ LAYERS = ("counts", "sightings", "digests", "fingerprints", "samples")
 #: The layers a bare ``interlock mesh report enable`` turns on.
 BASE_LAYERS = ("counts", "sightings")
 
-#: A rule whose id contains one of these redacts or masks; the digest of what
-#: it saw is the secret itself, so such receipts never contribute digests.
-PRIVATE_POLICY_MARKERS = ("redact", "pii", "secret", "mask", "credential", "canary", "token", "_key")
+#: A rule whose id contains one of these saw the node's own data rather than an
+#: attacker's payload: it redacts or masks (the digest of what it saw is the
+#: secret itself), or it watches secrets, egress, exfiltration, sensitive files
+#: or authentication. Such receipts never contribute digests, fingerprints or
+#: samples; they still count.
+PRIVATE_POLICY_MARKERS = ("redact", "pii", "secret", "mask", "credential", "canary", "token", "_key",
+                          "sensitive", "egress", "exfil", "leak", "auth", "password", "private", "uri")
 
 _SHELL = ("bash", "shell", "sh", "exec", "execute", "run", "command", "subprocess", "terminal", "powershell")
 _READ = ("read", "cat", "glob", "grep", "search", "list", "ls", "find", "stat", "view", "open")
@@ -169,6 +188,41 @@ def _private_rule(policy_id: str) -> bool:
     return any(marker in lowered for marker in PRIVATE_POLICY_MARKERS)
 
 
+def _publishable(policy_id: Any, published: Optional[Container[str]]) -> bool:
+    """Whether a report may name ``policy_id``: always when no set is given
+    (the library caller's choice), else only a published id."""
+    return published is None or policy_id in published
+
+
+def published_rule_ids(subscriber: Any = None) -> FrozenSet[str]:
+    """Every rule id a report may name: the installed detectors (module name
+    and ``POLICY_ID``) and the rule ids of the packs in ``subscriber``'s
+    verified cache (an :class:`interlock.mesh.subscriber.Subscriber`). Nothing
+    the operator wrote: a local rule id is policy, and policy never leaves."""
+    import importlib
+
+    from .catalog import catalog_entries
+
+    ids = set()
+    for name, _ in catalog_entries():
+        module = name[:-3]
+        if module.startswith("_"):
+            continue
+        ids.add(module)
+        try:
+            policy_id = getattr(importlib.import_module("interlock.detectors." + module), "POLICY_ID", None)
+        except Exception:  # a detector that does not import stands alone; the name is still its id
+            continue
+        if isinstance(policy_id, str) and policy_id:
+            ids.add(policy_id)
+    if subscriber is not None:
+        try:
+            ids.update(subscriber.cached_rule_ids())
+        except Exception:  # no commons, or a cache that does not verify: only the detectors are published
+            pass
+    return frozenset(ids)
+
+
 MAX_FINGERPRINTS = 500
 MAX_SAMPLES = 20
 MAX_SAMPLE_TEXT = 4096
@@ -204,7 +258,8 @@ def _after(record: Mapping[str, Any], since: float) -> bool:
 
 def build_counts(receipts: Iterable[Receipt], since: float, until: float, *,
                  enabled_since: Optional[float] = None,
-                 enabled_layers: Optional[Sequence[str]] = None) -> Dict[str, int]:
+                 enabled_layers: Optional[Sequence[str]] = None,
+                 published: Optional[Container[str]] = None) -> Dict[str, int]:
     """Project receipts in ``[since, until)`` into ``{count_key: n}``: how often
     each rule fired, per verdict, tool class, phase and hour.
 
@@ -212,13 +267,14 @@ def build_counts(receipts: Iterable[Receipt], since: float, until: float, *,
     only as secret shares (:func:`interlock.mesh.aggregate.encode_counts`).
     ``enabled_since`` clamps ``since`` to the operator's enable, and
     ``enabled_layers`` without ``"counts"`` projects nothing; left out, both
-    project everything (the local preview)."""
+    project everything (the local preview). ``published`` keeps only the rule
+    ids a report may name; left out, every id counts (a library caller)."""
     since = _clamp(since, enabled_since)
     if not _enabled("counts", enabled_layers):
         return {}
     counts: Dict[str, int] = {}
     for r in receipts:
-        if not _counted(r, since, until):
+        if not _counted(r, since, until) or not _publishable(r.policy_id, published):
             continue
         key = count_key(r.policy_id, r.verdict, tool_class(r.action), r.phase, _bucket(r.ts))
         counts[key] = counts.get(key, 0) + 1
@@ -232,8 +288,14 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
                  samples: Sequence[Mapping[str, Any]] = (),
                  enabled_since: Optional[float] = None,
                  enabled_layers: Optional[Sequence[str]] = None,
-                 attestation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+                 attestation: Optional[Mapping[str, Any]] = None,
+                 published: Optional[Container[str]] = None) -> Dict[str, Any]:
     """Project receipts in ``[since, until)`` into an unsigned report body.
+
+    ``published`` is the set of rule ids the body may name
+    (:func:`published_rule_ids`): receipts, fingerprints and samples from any
+    other id are left out, and a sighting naming one raises
+    :class:`ReportError`. Left out, every id passes (a library caller).
 
     The body carries no counts; :func:`build_counts` projects those separately.
     ``fingerprints`` and ``samples`` come from the mesh recorder
@@ -264,7 +326,7 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
     for r in receipts:
         if not include_digests or len(digests) >= max_digests:
             break
-        if not _counted(r, since, until):
+        if not _counted(r, since, until) or not _publishable(r.policy_id, published):
             continue
         if r.verdict not in ("BLOCK", "ESCALATE") or r.masked or _private_rule(r.policy_id):
             continue
@@ -282,6 +344,9 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
         policy_id = s.get("policy_id")
         if not isinstance(policy_id, str) or not policy_id:
             raise ReportError("a sighting needs a policy_id")
+        if not _publishable(policy_id, published):
+            raise ReportError("sighting names {!r}, which is not a published rule: a report names only "
+                              "detector and mesh pack rule ids, never a rule of your own".format(policy_id))
         clean_sightings.append({"policy_id": policy_id, "kind": str(s.get("kind", "false_positive")),
                                 "n": int(s.get("n", 1))})
     clean_fps: List[Dict[str, Any]] = []
@@ -290,7 +355,7 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
         policy_id = f.get("policy_id")
         if not isinstance(fp_hex, str) or len(fp_hex) != FINGERPRINT_HEX or not isinstance(policy_id, str):
             continue
-        if _private_rule(policy_id):
+        if _private_rule(policy_id) or not _publishable(policy_id, published):
             continue
         ts = f.get("ts", since)
         clean_fps.append({"policy_id": policy_id, "fp": fp_hex.lower(), "alpha": float(f.get("alpha", 1.5)),
@@ -303,6 +368,8 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
         text = s.get("text")
         policy_id = s.get("policy_id")
         if not isinstance(text, str) or not text or not isinstance(policy_id, str) or _private_rule(policy_id):
+            continue
+        if not _publishable(policy_id, published):
             continue
         names = [n for n in (s.get("arg_names") or []) if isinstance(n, str)][:8]
         clean_samples.append({"policy_id": policy_id, "tool_class": str(s.get("tool_class", "other")),

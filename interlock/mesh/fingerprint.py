@@ -49,16 +49,28 @@ MAX_SAMPLE = 4 * 1024
 
 _REDACTIONS: Sequence[Tuple[re.Pattern, str]] = (
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "<email>"),
+    # user@host with no domain: an ssh target, a database login
+    (re.compile(r"\b[A-Za-z0-9._-]+@[A-Za-z0-9-]+\b"), "<email>"),
+    # an AWS access key id is 20 characters, under the token floor below
+    (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "<credential>"),
     (re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)"), "<number>"),
+    # a cloud account id (AWS: twelve digits)
+    (re.compile(r"(?<![\d-])\d{12}(?![\d-])"), "<number>"),
+    # IPv6 and MAC addresses: two or more hex groups joined by colons
+    (re.compile(r"(?i)(?<![\w:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{1,4}(?![\w:])"), "<ip>"),
     (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<ip>"),
     (re.compile(r"\b(?:bearer|token|apikey|api_key|secret|password|passwd|pwd)\s*[:=]\s*\S+", re.I), "<credential>"),
     (re.compile(r"\b[A-Fa-f0-9]{32,}\b"), "<hex>"),
     (re.compile(r"\b[A-Za-z0-9+/=_-]{32,}\b"), "<token>"),
     (re.compile(r"/(?:Users|home)/[^/\s]+"), "/<home>"),
+    # a Windows profile: C:\Users\name
+    (re.compile(r"(?i)\b[a-z]:[\\/]Users[\\/][^\\/\s]+"), "C:/<home>"),
+    # internal host names; public domains stay, they are what an indicator is made of
+    (re.compile(r"(?i)\b(?:[a-z0-9-]+\.)+(?:local|localdomain|internal|intranet|corp|lan|home\.arpa)\b"), "<host>"),
     (re.compile(r"\b\+?\d[\d\s().-]{8,}\d\b"), "<number>"),
 )
 
-_PRIVATE_MARKERS = ("redact", "pii", "secret", "mask", "credential", "canary", "token", "_key")
+from .report import PRIVATE_POLICY_MARKERS as _PRIVATE_MARKERS
 
 
 def redact(text: str) -> str:
@@ -274,9 +286,16 @@ class Recorder:
             return
 
     def _append(self, path: str, record: Dict[str, Any]) -> None:
+        # What the recorder keeps is redacted, but it is still what the guard
+        # stopped: readable by this user only, like the receipts and the key.
         os.makedirs(self.directory, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
 
 
 def read_records(path: str, since: float, until: float, limit: int) -> List[Dict[str, Any]]:

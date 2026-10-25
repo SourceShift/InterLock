@@ -9,6 +9,25 @@ breaking changes land.
 
 ## [Unreleased]
 
+### Fixed
+
+- Mesh reports name only published rule ids. A receipt produced by a rule of
+  the operator's own (`block-prod-db-writes`) contributed its id to counts,
+  digests, fingerprints and samples, which the guide promised stayed on the
+  node; now `interlock mesh report build` and `submit` project only the
+  detector catalog and the rules of the packs in the verified cache, and a
+  `--false-positive` naming any other rule is refused.
+- Count shares no longer reveal which rules fired. The vector an aggregator
+  received was sparse, so its keys named the rules even though the numbers
+  were hidden; `submit` now pads it with a zero share for every published rule
+  in each hour and tool class present.
+- Rules that watch the node's own data (egress, exfiltration, sensitive files,
+  authentication, resource URIs) no longer contribute argument digests,
+  fingerprints or samples, since a digest confirms a guess; they still count.
+- Sample redaction also covers AWS access key ids and account ids, IPv6 and
+  MAC addresses, Windows profile paths, internal host names and `user@host`
+  logins, and the recorder's files are created readable by the user only.
+
 ### Added
 
 - Scoped clients (ROADMAP R29): `RemoteEngine` now pins the scope document a

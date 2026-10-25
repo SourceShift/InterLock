@@ -153,3 +153,26 @@ def test_fire_totals_from_manifests_and_totals_replies():
         fire_totals(manifests[:1], replies[:1])
     with pytest.raises(ValueError):
         fire_totals(manifests, [{"totals": a.totals(ids)}, {"error": "x"}])
+
+
+def test_padded_shares_hide_which_rules_fired():
+    """The key set of a sparse share vector names the rules that fired; the pad
+    makes every published rule a key, and a zero's share looks like any other."""
+    from interlock.mesh.aggregate import combine, encode_counts
+
+    counts = {"prompt_injection|BLOCK|shell|call|0": 3}
+    pad = ["destructive_command|BLOCK|shell|call|0", "prompt_injection|BLOCK|shell|call|0"]
+    shares = encode_counts(counts, 2, pad=pad)
+    assert set(shares[0]) == set(shares[1]) == set(pad)
+    assert combine([shares[0][pad[0]], shares[1][pad[0]]]) == 0
+    assert combine([shares[0][pad[1]], shares[1][pad[1]]]) == 3
+
+
+def test_pad_keys_cover_every_published_rule_per_hour_and_class():
+    from interlock.cli.mesh import pad_keys
+
+    counts = {"prompt_injection|BLOCK|shell|call|3600": 1, "prompt_injection|ESCALATE|http|result|7200": 2}
+    assert pad_keys(counts, ["a", "b"]) == sorted([
+        "a|BLOCK|shell|call|3600", "b|BLOCK|shell|call|3600",
+        "a|ESCALATE|http|result|7200", "b|ESCALATE|http|result|7200"])
+    assert pad_keys({}, ["a"]) == []
