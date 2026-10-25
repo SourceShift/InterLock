@@ -599,6 +599,11 @@ a `falsepositives` note.
 
 ## 11. Open decisions
 
+> **Decided 2026-10-25.** Each of the five questions below has a decision, rationale,
+> dissent, implementation list and revisit condition in
+> [`mesh-decisions.md`](mesh-decisions.md). This section is kept as the record of
+> what was open.
+
 1. **Who holds the root keys.** TUF makes this a people problem by design. A
    neutral home (a foundation or a multi-organisation maintainer group) is the
    usual answer; the project needs at least three organisations before Phase 0

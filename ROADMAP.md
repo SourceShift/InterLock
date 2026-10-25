@@ -1434,9 +1434,11 @@ Each phase shipped on its own and is usable without the next; usage is in
 | M2 | Similarity and the forge | `shipped` | decision observers; LDP fingerprints (redact, dense SimHash, randomised response); campaigns and `mesh_similarity_guard`; `interlock mesh harness` (the R5 false-positive gate); `interlock mesh forge` writing gated proposals | `tests/test_mesh_fingerprint.py`, `tests/test_mesh_harness.py`, `tests/test_mesh_forge.py` |
 | M3 | Decentralise | `shipped` | RFC 6962/9162 transparency log with signed checkpoints, inclusion and consistency proofs; subscribers refuse unlogged or rewritten history; `interlock mesh log\|gossip`; `serve --role mirror` peer seeding; per-epoch membership credentials with revocation; `doctor` fails on a split view | `tests/test_mesh_log.py`, `tests/test_mesh_credential.py`, `tests/test_mesh_decentral.py` |
 
-Still open, and not code: who holds the root keys, who runs the two aggregators,
-the default reporting posture, the data licence for samples, and whether `block`
-ever ships through the mesh by default (research doc §11). Known upgrades the
+The five governance questions (root-key custody, aggregator operators, default
+reporting posture, data licence, `block` by default) were decided on 2026-10-25 in
+[`research/mesh-decisions.md`](research/mesh-decisions.md); its implementation lists
+are the M4 epics (counts leave only as shares; block needs a grant; offline root;
+reporting off and local by default; data licence and warranty). Known upgrades the
 modules leave room for: range proofs on secret-shared counts (Prio3 / DAP), a
 semantic embedder behind the fingerprint API, and zero-knowledge membership in
 place of issuer-linkable certificates.
