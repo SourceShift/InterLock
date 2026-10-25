@@ -163,8 +163,10 @@ Each of these is sometimes the right choice. Make it on purpose.
   ([audit log](guides/audit-log.md)).
 - **Receipts prove integrity, not authorship, by default.** The HMAC signature
   shows a log wasn't changed by someone without the key; it doesn't show which
-  key holder wrote it. For third-party verification, sign with a public-key
-  scheme and verify with `verifier=` ([audit log](guides/audit-log.md)).
+  key holder wrote it. `interlock.receipt_ed25519` signs with a private seed
+  and lets an auditor verify with only the public key (`verifier=`), at a few
+  milliseconds per receipt; until you switch, the HMAC default stays
+  ([audit log](guides/audit-log.md)).
 - **Node.js has holes no JavaScript patch can close.** ESM named imports,
   `*Sync` calls, and handle-returning openers like `fs.createReadStream` aren't
   guarded. `installInterceptors().uncovered` lists them

@@ -130,6 +130,36 @@ def test_a_verifier_checks_the_chain_without_the_signing_key(tmp_path):
     )
 
 
+def test_ed25519_signs_a_chain_a_third_party_verifies_with_the_public_key(tmp_path):
+    from interlock.receipt_ed25519 import (
+        ed25519_signer,
+        ed25519_verifier,
+        generate_seed,
+        keyid,
+        public_key,
+    )
+
+    seed = generate_seed()
+    other = generate_seed()
+    path = tmp_path / "audit.jsonl"
+    sink = FileSink(path, signer=ed25519_signer, key=seed)
+    _write(sink, 2)
+
+    verifier = ed25519_verifier(public_key(seed))
+    assert sink.verify(verifier=verifier) is None
+    assert verify_file(str(path), verifier=verifier) is None
+    assert len(keyid(public_key(seed))) == 64
+
+    rejected = verify_file(str(path), verifier=ed25519_verifier(public_key(other)))
+    assert rejected is not None and "signature rejected" in rejected
+
+    lines = path.read_text().splitlines()
+    edited = json.loads(lines[0])
+    edited["verdict"] = "BLOCK"
+    path.write_text(json.dumps(edited) + "\n" + lines[1] + "\n")
+    assert verify_file(str(path), verifier=verifier) is not None
+
+
 def test_verify_file_needs_a_key_or_a_verifier(tmp_path):
     with pytest.raises(ValueError):
         verify_file(str(tmp_path / "audit.jsonl"))

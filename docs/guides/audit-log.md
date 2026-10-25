@@ -286,40 +286,30 @@ which also lets them write receipts that verify.
 
 For a log an outside auditor can check without being able to forge it, sign
 with a private key and give the auditor a verifier that holds only the public
-key. A signer is any function `(key, message) -> bytes`; a verifier is any
-function `(message, signature) -> bool`. Here is Ed25519 with the
-`cryptography` package (interlock itself stays dependency-free):
+key. interlock ships Ed25519 for this (pure Python, no dependency):
 
 ```python
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from interlock.receipt_ed25519 import (
+    ed25519_signer, ed25519_verifier, generate_seed, public_key,
+)
 
-private_key = Ed25519PrivateKey.generate()
-public_key = private_key.public_key()          # give the auditor only this
-
-
-def ed25519_signer(_key, message):
-    return private_key.sign(message)            # the key argument is unused; the closure holds it
-
-
-def ed25519_verifier(message, signature):
-    try:
-        public_key.verify(signature, message)
-        return True
-    except InvalidSignature:
-        return False
-
-
-sink = FileSink("signed.jsonl", signer=ed25519_signer, key=b"unused")
+seed = generate_seed()                          # keep this on the signing host only
+sink = FileSink("signed.jsonl", signer=ed25519_signer, key=seed)
 interlock.install(rules=rules, sink=sink)
 # ... the agent runs ...
 
 # the auditor's side: no private key anywhere
-verify_file("signed.jsonl", verifier=ed25519_verifier)
+verify_file("signed.jsonl", verifier=ed25519_verifier(public_key(seed)))
 # -> None
-verify_file("signed.jsonl", verifier=some_other_public_keys_verifier)
+verify_file("signed.jsonl", verifier=ed25519_verifier(some_other_public_key))
 # -> 'receipt 0: signature rejected by the verifier (edited, or signed with a different key)'
 ```
+
+A signer is any function `(key, message) -> bytes`; a verifier is any function
+`(message, signature) -> bool`, so a HSM or the `cryptography` package's Ed25519
+plugs into the same seam. The bundled signer costs a few milliseconds per
+receipt; the HMAC default is faster and is the right choice when one party
+holds both keys.
 
 `sink.verify(verifier=...)` and `verify_file(..., verifier=..., head=...)` take
 the same verifier. The exact bytes each receipt is signed over come from
