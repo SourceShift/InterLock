@@ -80,25 +80,34 @@ Each of these is sometimes the right choice. Make it on purpose.
 - **Python import-time hooks don't exist yet.** You wrap each session, tool list,
   or function explicitly. Automatic interception of MCP clients and model SDKs is
   on the [roadmap](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md).
-- **MCP trust labels are only as good as your adapter.** `guard_mcp_session`
-  strips any `__origin__` or `__schema__` the caller passes and adds the ones you
-  configure (`origin=`, `schemas=`). If you build MCP events yourself with
-  `enforce_tool_call`, never copy those keys from model-generated arguments
-  ([MCP guide](guides/mcp.md)).
-- **Approvals run in the agent's process.** An `ESCALATE` waits for the
+- **MCP trust labels come from your adapter, not the model.** Reserved `__*__`
+  keys in model-produced arguments (`__origin__`, `__schema__`, `__attestation__`,
+  `__tools__`) are stripped at every boundary before an event is built, so a
+  model cannot claim a trusted server. Only the integration that knows the fact
+  sets a label: `guard_mcp_session(origin=, schemas=)`, or an explicit `labels=`
+  when you build an event with `enforce_tool_call`. A hand-built event with no
+  labels stays untrusted ([MCP guide](guides/mcp.md)).
+- **Approvals default to the agent's process.** An `ESCALATE` waits for the
   installed approver, which runs in-process: code that is already malicious
   there could install its own. The coding-agent hooks avoid this by handing
-  escalations to the agent's native prompt ([approvals](guides/approvals.md)).
-- **Shell commands are parsed best-effort.** The parser sees through respelling,
-  wrappers (`sudo`, `env`, `xargs`), `sh -c`, substitutions and inline
-  interpreter code, but obfuscation (`$'\x72\x6d'`, base64, a downloaded
-  script) gets past it. It can only add findings to the raw-text checks, never
-  remove them. Contain untrusted commands with BRACE.
+  escalations to the agent's native prompt, and the durable review queue
+  (`interlock reviews approve`, or the opt-in console) lets a human decide from
+  another process. Use one of those when the agent must not reach the decision
+  ([approvals](guides/approvals.md), [reviews](guides/reviews.md)).
+- **Shell commands are parsed best-effort.** The parser decodes ANSI-C quoting
+  (`$'\x72\x6d'`) and sees through respelling, wrappers (`sudo`, `env`, `xargs`),
+  `sh -c`, substitutions and inline interpreter code. A base64 payload piped
+  into a shell, and a script fetched in one command and run by a later one,
+  still get past it. Parsed intent normally adds to the raw-text checks, but the
+  destructive-command guard lets a complete parse clear a raw match when the
+  command is a pure print (`echo rm -rf /`), so the union is not strictly
+  add-only. Contain untrusted commands with BRACE.
 - **SQL analysis and masking are best-effort.** The SQL analyzer is a lexer:
   a function called from a `SELECT` list is invisible to it. Masking detects
   formats and checksums, not meaning: names and places aren't detected, and a
   value transformed before it's returned (base64, say) isn't recognised.
   Database permissions and least-privilege credentials stay the boundary.
+  **Accepted:** semantic SQL and PII understanding is out of scope.
 - **The review queue trusts its file.** Approvals live in a local SQLite file;
   anyone who can write it can approve anything, under any name. Keep it where
   the agent can't write (`~/.interlock` under the coding-agent policy).
@@ -107,24 +116,32 @@ Each of these is sometimes the right choice. Make it on purpose.
   rewrite at `PreToolUse` (those verdicts are refused) or withhold tool output;
   Cursor has no result hook. Claude Code's rewrite and output-replacement paths
   follow its documentation and are worth confirming on your version
-  ([coding agents](guides/coding-agents.md)).
-- **No measured false-positive rate.** The detectors are tested for matches and
-  non-matches, but there's no published benchmark of how often they block
-  harmless traffic. An attacker who can *trigger* blocks can use a fail-closed
-  guard to stop your agent working. A robustness harness is planned.
+  ([coding agents](guides/coding-agents.md)). **Accepted:** a hook adapter is
+  cooperative by construction; only an OS boundary confines an agent.
+- **No published false-positive rate.** `interlock mesh harness` measures a
+  policy's false-positive rate, latency and recall against a benign corpus you
+  supply, but the repository ships no benign agent-traffic corpus and publishes
+  no per-detector number, so there is nothing to compare your policy against.
+  An attacker who can *trigger* blocks can use a fail-closed guard to stop your
+  agent working.
 - **OS-level per-host egress needs root.** Between bubblewrap's "all network or
   none" and nftables (per-host, root only, not selectable from `Sandbox`) there's
   no unprivileged middle ground. macOS's Seatbelt can't express a host allowlist
-  at all.
+  at all. **Accepted:** use in-process egress rules for the gap, or run the
+  sandbox as root with the nftables helper.
 - **macOS sandboxing can't confine reads or process visibility,** and can't cap
   memory. `sandbox-exec` never reports `fs-ro` or `pid`, and a profile with
   `memory_mb` raises `LimitUnsupported` on macOS rather than running without the
-  limit.
+  limit. **Accepted:** Seatbelt cannot express either; use Linux for a
+  read-confined sandbox.
 - **A sandbox timeout kills the process group; `setsid()` leaves it.** BRACE
   starts each sandbox in its own session so `timeout=` can kill the child and
   its descendants together, but a descendant that calls `setsid()` itself
-  survives the kill. Its confinement and per-process rlimits still apply, and
-  the caller's wait is bounded. On Windows only the direct child is killed.
+  leaves that group. Under bubblewrap the child also gets its own PID namespace
+  and `--die-with-parent`, so the kernel reaps the escapee when bwrap dies; the
+  escape is live under `sandbox-exec`, `soft`, and Windows (where only the
+  direct child is killed). Its confinement and per-process rlimits still apply,
+  and the caller's wait is bounded.
 - **Write confinement differs by backend.** On macOS the Seatbelt profile
   grants writes only to the profile's `write_paths` plus one private per-run
   scratch directory (set as `TMPDIR`/`TMP`/`TEMP` and removed after the run);
@@ -150,6 +167,8 @@ Each of these is sometimes the right choice. Make it on purpose.
   `*Sync` calls, and handle-returning openers like `fs.createReadStream` aren't
   guarded. `installInterceptors().uncovered` lists them
   ([js/README.md](https://github.com/SourceShift/InterLock/blob/main/js/README.md)).
+  **Accepted:** no JavaScript patch can reach those shapes; the sidecar or an OS
+  sandbox is the boundary.
 - **The Node.js client depends on a sidecar.** By default, if it's down, every
   guarded call is denied. `unreachable="degraded"` falls back to a signed
   offline subset of the policy, and `unreachable="allow"` lets calls through;

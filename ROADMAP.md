@@ -373,12 +373,14 @@ still useful but much less so.
 ## R5 · Guardrail robustness harness (false positives, induced blocking)
 
 **Status:** `partial` — a fixed detector conformance corpus ships
-(`tests/conformance/detectors/*.json`, 767 cases across six categories, driven
+(`tests/conformance/detectors/*.json`, 774 cases across seven categories, driven
 by `tests/conformance/runner.py`), alongside a wire-protocol corpus
 (`tests/conformance/events.json`, 13 cases and 9 malformed frames, consumed by
-`tests/test_sidecar_conformance.py`). Neither is a benign agent-traffic corpus:
-there is no false-positive runner, no abuse/load fixture and no regression gate,
-which is the measurement this item is about.
+`tests/test_sidecar_conformance.py`). The runner shipped in `68fbb69`:
+`interlock mesh harness` measures a policy's per-rule false-positive rate,
+latency and recall and gates them against budgets. What is missing is the
+input: no benign agent-traffic corpus is committed, no per-detector number is
+published, and CI runs no false-positive gate.
 **Size:** M
 **Literature:** T5 — a cluster that barely existed a year ago, and the area
 where interlock has the largest gap relative to its importance.
@@ -386,8 +388,9 @@ where interlock has the largest gap relative to its importance.
 ### Problem
 
 interlock is fail-closed by design, and that is the correct default — but it has
-**no measurement of its own false-positive rate, no cost model for a blocked
-action, and no resistance to being induced to block.** For a library whose
+**no published measurement of its own false-positive rate, no cost model for a
+blocked action, and no resistance to being induced to block.** The harness
+exists; the traffic it should measure is what's absent. For a library whose
 selling point is blocking, an unmeasured FP rate is a product risk, not merely
 an evaluation gap: a detector that fires on benign traffic trains users to widen
 their allowlists, and a widened allowlist is a bypass. Worse, "make the guard
@@ -397,8 +400,8 @@ that as a first-class attack.
 
 ### Why now
 
-Nothing ships for this today, so the first measurement is the whole value. It is
-also the item that de-risks every other item: adding detectors (R6, R7) without
+The harness ships; the first published corpus and number are the whole value. It
+is also the item that de-risks every other item: adding detectors (R6, R7) without
 a benign corpus to run them against is how a detector suite accumulates its own
 DoS surface.
 
@@ -1042,7 +1045,7 @@ here in short.
 
 | # | What shipped | Evidence |
 |---|---|---|
-| R14 | `interlock.shell`: a best-effort parser (pipes, chains, wrappers, `sh -c`, substitutions, `find -exec`, interpreter string literals) and an intent classifier. `destructive_command_guard` and `git_credential_guard` gained a parsed path that only adds findings; `command_intent_guard` blocks or asks by intent. The destructive guard went from 3 of 12 spellings of a root wipe to 12 of 12 | `tests/test_shell_parse.py`, `tests/test_command_intent_guard.py` |
+| R14 | `interlock.shell`: a best-effort parser (pipes, chains, wrappers, `sh -c`, substitutions, `find -exec`, interpreter string literals) and an intent classifier. `destructive_command_guard` and `git_credential_guard` gained a parsed path; the git guard's only adds findings, while the destructive guard's may also clear a raw match when the whole command parses as a harmless print; `command_intent_guard` blocks or asks by intent. The destructive guard went from 3 of 12 spellings of a root wipe to 12 of 12 | `tests/test_shell_parse.py`, `tests/test_command_intent_guard.py` |
 | R15 | `interlock.posture.attest()` / `require()` and `interlock doctor`; every row of the security model's weakening-settings table maps to a check, enforced by a test | `tests/test_posture.py` |
 | R16 | `interlock report`: verified-or-labelled chain, verdict counts, block rate, top rules, "would have blocked", escalations, failures, dropped receipts, latency percentiles | `tests/test_report.py` |
 | R17 | Receipts gained `call_id`, `policy_epoch`, `policy_verdict`, `approval`, `outcome`/`enforcer`, `elapsed_us` (omitted when empty, so old chains verify); a failed sink write blocks fail-closed and is reported by a `receipts.dropped` receipt; `FileSink(shared=True)` for several writers | `tests/test_provenance.py` |

@@ -385,8 +385,9 @@ resolved, a bare `cd` going home). The limits:
   directory the string later moves to, since the parser reads it before the
   `cd` that may run ahead of it. Both err toward a match, not a miss.
 
-Parsing is best-effort and **not a boundary**: obfuscated commands
-(`$'\x72\x6d'`, base64, a downloaded script) get past it. Contain untrusted
+Parsing is best-effort and **not a boundary**: ANSI-C quoting (`$'\x72\x6d'`)
+is decoded, but a base64 payload piped into a shell and a script fetched in one
+command and run by a later one get past it. Contain untrusted
 commands with the [sandbox](sandbox.md).
 
 ## Least privilege: runbooks and HTTP rules

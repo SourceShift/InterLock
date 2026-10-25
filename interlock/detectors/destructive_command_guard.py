@@ -17,10 +17,12 @@ and ``rm -rf / --no-preserve-root`` match while a relative-path clean such as
 slip past it. So the value is also parsed (:mod:`interlock.shell`) and blocked
 when it carries a *critical* intent - a recursive delete or permission change
 of a root-equivalent or system path, a raw disk write, or a disk format - no
-matter how it is spelled or wrapped. The parsed check only adds findings; it
-can never clear a value the pattern matched. A value the parser could only
-partly read (an unclosed quote, nesting deeper than it follows) may hide the
-act, so with no match it escalates to a human instead of passing. Pass
+matter how it is spelled or wrapped. The parsed check can also *clear* a raw
+match: when the whole value parses cleanly and every invocation is harmless
+(``echo rm -rf /``), the pattern was matching text that is never executed, and
+blocking it would be a false positive. A value the parser could only partly
+read (an unclosed quote, nesting deeper than it follows) may hide the act, so
+with no match it escalates to a human instead of passing. Pass
 ``parse=False`` to keep the raw-text check alone. Neither check is a boundary:
 obfuscated commands pass both, and untrusted code belongs in the BRACE sandbox.
 

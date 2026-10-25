@@ -529,11 +529,13 @@ earlier rule blocks a call, that call isn't counted.
 - **Only the text of an SDK result is read.** Images and embedded resources in
   a `CallToolResult` aren't scanned, and a result rewrite replaces the whole
   object.
-- **Labels are trusted as given.** The session wrapper drops labels from the
-  arguments you pass it and adds only `origin=` and `schemas=`. Events you build
-  yourself with `enforce_tool_call` (connects, listings) carry whatever labels
-  your code puts in them, so set them from your own data, never from the model
-  or the server.
+- **Labels are trusted only when your code sets them.** The session wrapper
+  drops reserved `__*__` keys from the arguments you pass it and sets only the
+  labels you configure (`origin=`, `schemas=`). `enforce_tool_call` strips the
+  same keys from model-produced arguments, so a model cannot claim a trusted
+  server. Events you build yourself (connects, listings) carry the labels you
+  pass explicitly, so build them from your own data, never from the model or the
+  server.
 - **State lives in memory.** Surface baselines, consent budgets, and leases
   reset when the process restarts. After a restart, the first listing from each
   server is accepted as a new baseline.

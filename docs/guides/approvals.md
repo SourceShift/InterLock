@@ -120,8 +120,10 @@ prompt asked.
 The approver runs in the agent's process. Code that is already malicious in
 that process could install an approver of its own, the same trust boundary as
 every in-process rule (see the [security model](../security-model.md)). For an
-approval the agent can't reach, decide outside its process. The coding-agent
-hooks hand escalations to the agent's own approval prompt.
+approval the agent can't reach, decide outside its process: the coding-agent
+hooks hand escalations to the agent's own approval prompt, and the
+[review queue](reviews.md) stores the pending call so a human can release it
+from a separate process (`interlock reviews approve`, or the opt-in console).
 
 The Node.js client takes an `onEscalate` callback with the same contract: it
 resolves `true` to run one call, and anything else (including no callback)

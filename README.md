@@ -289,9 +289,10 @@ Start with [getting started](docs/getting-started.md), then
 ## Status
 
 **Alpha (v0.0.1).** The core API is stable and covered by over 2,700 tests. Not
-yet on PyPI or npm. Next on the [roadmap](ROADMAP.md): a false-positive harness
-for the detectors, rules over data flow between tools, automatic interception of
-MCP clients and model SDKs, and signed PyPI/npm releases.
+yet on PyPI or npm. Next on the [roadmap](ROADMAP.md): a committed benign corpus
+and published false-positive numbers (`interlock mesh harness` measures them
+today), rules over data flow between tools, automatic interception of MCP
+clients and model SDKs, and signed PyPI/npm releases.
 
 ## Contributing
 

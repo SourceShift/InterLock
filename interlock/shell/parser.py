@@ -32,8 +32,10 @@ The parser never raises. Input it cannot fully read (an unclosed quote, a
 nesting deeper than :data:`MAX_DEPTH`, more than :data:`MAX_INVOCATIONS`
 commands) yields what it could read with ``partial=True``: a lower bound on
 what the string runs, never a claim that it runs nothing else. A parser is not
-a boundary - obfuscation such as ``$'\\x72\\x6d'`` or base64 passes it - and
-code that must be contained belongs in the BRACE sandbox.
+a boundary: ANSI-C quoting such as ``$'\\x72\\x6d'`` is decoded, but a base64
+payload piped into a shell, or a script fetched in one command and run by a
+later one, passes it - code that must be contained belongs in the BRACE
+sandbox.
 """
 from __future__ import annotations
 

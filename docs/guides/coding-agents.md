@@ -224,8 +224,9 @@ Python it runs still exists (a deleted virtualenv would break every call).
 - **Hooks are cooperative.** They see the tools the agent routes through its
   hook system. They are not an OS boundary: run the agent in a sandbox (or a
   container) if it must be contained.
-- **Command parsing is best-effort.** Obfuscated commands (`$'\x72\x6d'`,
-  base64, a downloaded script) get past it. The locked rules and the sandbox
+- **Command parsing is best-effort.** ANSI-C quoting (`$'\x72\x6d'`) is
+  decoded, but a base64 payload piped into a shell and a script fetched in one
+  command and run by a later one get past it. The locked rules and the sandbox
   are the backstop, not the parser. A command it can only partly read (an
   unclosed quote, nesting deeper than it follows) is never passed as harmless:
   it is asked about, and refused where the agent can't ask (Codex).
