@@ -28,6 +28,12 @@ import sys
 
 def add_arguments(parser) -> None:
     parser.add_argument("--db", metavar="FILE", help="review queue (default ~/.interlock/reviews.db)")
+    parser.add_argument("--key", metavar="FILE",
+                        help="HMAC key that signs rows and the high-water mark "
+                             "(default: next to --db, reviews.key)")
+    parser.add_argument("--head", metavar="FILE",
+                        help="rollback high-water mark (default: <key>.head). Point it at storage "
+                             "your database backups do not restore")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     sub = parser.add_subparsers(dest="reviews_command", metavar="ACTION")
     ls = sub.add_parser("list", help="list reviews")
@@ -82,7 +88,7 @@ def run(args) -> int:
         sys.stderr.write("interlock reviews: choose an action: list, show, approve, reject, "
                          "revoke, wait, mcp\n")
         return 64
-    queue = ReviewQueue(args.db)
+    queue = ReviewQueue(args.db, key_path=args.key, head_path=args.head)
     if command == "mcp":
         serve_mcp(queue)
         return 0

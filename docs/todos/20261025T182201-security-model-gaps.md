@@ -15,7 +15,7 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 | 1 | Python import-time hooks | **partial** | MCP attached at import (`interlock/attach.py`, T12); model SDKs stay adapter-guarded — no class seam to wrap |
 | 2 | MCP trust labels depend on adapter | **closed** | `92eeced` — labels ride `SensorEvent.labels`; reserved keys stripped at every boundary |
 | 3 | Approvals run in the agent's process | **partial** | in-process `set_approver` unchanged; review queue + console approval shipped |
-| 4 | Review queue trusts its file | **closed for forgery** | rows HMAC-signed with a key beside the DB (T09, `1547afc`); rollback replay until `approval_ttl` remains |
+| 4 | Review queue trusts its file | **closed** | rows HMAC-signed with a key beside the DB (T09, `1547afc`) and a signed high-water mark refuses rollback replay (T19); a restore of database, key and mark together stays out of reach |
 | 5 | Shell parsing best-effort | **closed for the two named evasions** | ANSI-C quoting, a base64 payload piped to a shell, and a staged fetched script are decoded/followed (T06, `192b6a8`); other encodings remain; "not add-only" is now documented |
 | 6 | SQL analysis + masking best-effort | **open (accepted)** | `interlock/sql/lexer.py`, no AST dep; `interlock/masking.py:35`; T14 marks it accepted |
 | 7 | Coding-agent hooks cooperative | **open (accepted)** | `interlock/adapters/base.py:25-27` capability matrix; inherent to an in-agent adapter (T14) |
@@ -467,3 +467,35 @@ have no class seam; compatibility contract + import monitor shipped
     bounds, span isolation, the end-to-end result→call round trip and the
     canary shape. `docs/security-model.md` records the honest limit:
     boundary-level matching, not language-level taint.
+
+## T19 — Close the review-queue rollback replay
+
+**Status:** done (2026-10-25)
+
+- **Count every write outside the database**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `interlock/reviews.py` keeps `settings.seq`, bumped inside
+    the same transaction as each state change (`lookup_or_file` when it files or
+    expires, `approve`, `reject`/`revoke` via `_settle`, `claim`, and `get`/
+    `list` only when an expiry changed a row). After the commit it writes
+    `<key>.head` — JSON `{version, seq, mac}`, HMAC under the row key — atomically
+    (temp file, fsync, `os.replace`, 0600).
+- **Refuse backwards, heal forwards**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `_restore_head` refuses a database whose counter is below
+    the mark ("behind its high-water mark") and rewrites the mark when it is
+    behind the database, which is what a crash between commit and write leaves.
+    A malformed or foreign-signed mark is refused at construction.
+- **Surface it**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `head_path=` on `ReviewQueue`, `--key`/`--head` on
+    `interlock reviews`; `docs/guides/reviews.md`, the security-model bullet and
+    `CHANGELOG.md`.
+  - tests: `tests/test_review_rollback.py` — database rollback refused, database
+    plus key restored from the same backup refused when the mark is elsewhere,
+    crash gap heals, foreign/malformed mark refused, reads do not advance the
+    mark, each state change advances it once, expiry counts, relocated mark is
+    0600, CLI flags.

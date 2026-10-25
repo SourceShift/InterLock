@@ -34,6 +34,15 @@ Point ``key_path=`` at a different file to separate the key from the database,
 e.g. when the database lives on shared storage and decisions are made from
 another machine.
 
+A signature cannot see a *rollback*: an older copy of the database is a valid
+set of signed rows, and replaying it restores old approvals. So every state
+change also bumps a signed **high-water mark** (``<key>.head`` by default)
+outside the database, and opening a database whose counter is behind that mark
+is refused as a rollback. Put the mark on storage that is not restored with
+the database (``head_path=``) to cover a restore of both the database and its
+key; restoring the mark too is beyond what any file beside the queue can
+detect, and the receipt log stays the independent record of what ran.
+
 Statuses: ``pending``, ``approved``, ``rejected``, ``revoked``, ``expired``,
 ``executed`` (an approval that was used).
 """
@@ -91,7 +100,8 @@ CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     allow_self_approval INTEGER NOT NULL,
     min_approvals INTEGER NOT NULL,
-    approval_ttl REAL NOT NULL
+    approval_ttl REAL NOT NULL,
+    seq INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -111,6 +121,29 @@ def default_path() -> str:
 def default_key_path(path: str) -> str:
     """Where the signing key for the database at ``path`` lives by default."""
     return os.path.join(os.path.dirname(os.path.abspath(path)), "reviews.key")
+
+
+#: The high-water mark's format. A future change bumps it and the reader refuses
+#: a mark it does not understand rather than guessing.
+HEAD_VERSION = 1
+
+
+def default_head_path(key_path: str) -> str:
+    """Where the rollback high-water mark lives by default: beside the key.
+
+    The key and the mark travel together - a decision made on another machine
+    is verified with the same key, and must see the same "how many writes has
+    this queue ever seen" fact. Pass ``head_path=`` to put it on storage the
+    database is not restored with; that is what catches a restore of the
+    database *and* the key.
+    """
+    return key_path + ".head"
+
+
+def _head_mac(key: bytes, seq: int) -> str:
+    payload = json.dumps({"version": HEAD_VERSION, "seq": int(seq)},
+                         separators=(",", ":")).encode("utf-8")
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
 def _read_or_create_key(path: str) -> bytes:
@@ -210,7 +243,7 @@ class ReviewQueue:
     def __init__(self, path: Optional[str] = None, *, pending_ttl: float = 3600.0,
                  approval_ttl: float = 900.0, min_approvals: int = 1,
                  allow_self_approval: bool = True, key: Optional[bytes] = None,
-                 key_path: Optional[str] = None) -> None:
+                 key_path: Optional[str] = None, head_path: Optional[str] = None) -> None:
         if pending_ttl <= 0 or approval_ttl <= 0:
             raise ValueError("pending_ttl and approval_ttl must be positive")
         if min_approvals < 1:
@@ -225,11 +258,16 @@ class ReviewQueue:
         directory = os.path.dirname(os.path.abspath(self.path))
         os.makedirs(directory, mode=0o700, exist_ok=True)
         self.key_path = key_path or default_key_path(self.path)
+        self.head_path = head_path or default_head_path(self.key_path)
         self._key = key if key is not None else _read_or_create_key(self.key_path)
+        #: The sequence this process has seen. Every write must make it larger;
+        #: a database that moves backwards under a live process is a rollback.
+        self._seq = 0
         with self._db() as db:
             db.executescript(_SCHEMA)
             self._migrate(db)
             self._ratchet(db)
+            self._restore_head(db)
         try:
             os.chmod(self.path, 0o600)
         except OSError:
@@ -247,6 +285,9 @@ class ReviewQueue:
         for name, declaration in _MIGRATED_COLUMNS:
             if name not in columns:
                 db.execute("ALTER TABLE reviews ADD COLUMN {} {}".format(name, declaration))
+        settings_columns = {row[1] for row in db.execute("PRAGMA table_info(settings)")}
+        if "seq" not in settings_columns:
+            db.execute("ALTER TABLE settings ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
         unsigned = [row[0] for row in db.execute("SELECT id FROM reviews WHERE mac IS NULL")]
         for review_id in unsigned:
             self._seal(db, review_id)
@@ -302,6 +343,100 @@ class ReviewQueue:
             db.execute("ROLLBACK")
             raise
 
+    # --- the rollback high-water mark ---------------------------------------
+    @staticmethod
+    def _stored_seq(db: sqlite3.Connection) -> int:
+        row = db.execute("SELECT seq FROM settings WHERE id = 1").fetchone()
+        return 0 if row is None else int(row[0])
+
+    def _read_head(self) -> Optional[int]:
+        """The mark's sequence, ``None`` when it does not exist yet."""
+        try:
+            with open(self.head_path, "rb") as fh:
+                raw = fh.read(4096)
+        except FileNotFoundError:
+            return None
+        try:
+            doc = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise ReviewError(
+                "review high-water mark {} is not valid JSON; refusing to use the queue"
+                .format(self.head_path))
+        seq = doc.get("seq") if isinstance(doc, dict) else None
+        mac = doc.get("mac") if isinstance(doc, dict) else None
+        if (not isinstance(seq, int) or seq < 0 or not isinstance(mac, str)
+                or doc.get("version") != HEAD_VERSION):
+            raise ReviewError(
+                "review high-water mark {} is malformed; refusing to use the queue"
+                .format(self.head_path))
+        if not hmac.compare_digest(mac, _head_mac(self._key, seq)):
+            raise ReviewError(
+                "review high-water mark {} does not match its signature: it was signed with "
+                "another key or edited. If the key was rotated on purpose, remove the mark too."
+                .format(self.head_path))
+        return seq
+
+    def _write_head(self, seq: int) -> None:
+        """Replace the mark atomically, mode 0600, never leaving a half file."""
+        doc = json.dumps({"version": HEAD_VERSION, "seq": int(seq),
+                          "mac": _head_mac(self._key, seq)}, separators=(",", ":")).encode("utf-8")
+        directory = os.path.dirname(os.path.abspath(self.head_path))
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        tmp = os.path.join(directory, ".reviews-head-{}-{}".format(os.getpid(), secrets.token_hex(4)))
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(doc)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            except BaseException:
+                os.unlink(tmp)
+                raise
+            os.replace(tmp, self.head_path)
+        except OSError as exc:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise ReviewError(
+                "cannot write the review high-water mark {}: {}".format(self.head_path, exc))
+
+    def _restore_head(self, db: sqlite3.Connection) -> None:
+        """Refuse a database behind its mark, and heal a mark behind the database.
+
+        Behind means rollback: the counter only ever rises, so an older copy of
+        the file reports fewer writes than the mark recorded. Ahead means a
+        crash between the SQLite commit and the mark write - legitimate, and
+        re-synchronised rather than treated as tampering.
+        """
+        stored = self._stored_seq(db)
+        recorded = self._read_head()
+        if recorded is not None and recorded > stored:
+            raise ReviewError(
+                "review database {} is behind its high-water mark ({} writes recorded, {} "
+                "present): the queue was restored from an older copy; refusing to use it. "
+                "If the restore was intentional, remove {} to start a new history."
+                .format(self.path, recorded, stored, self.head_path))
+        self._seq = stored
+        if recorded != stored:
+            self._write_head(stored)
+
+    def _bump(self, db: sqlite3.Connection) -> int:
+        """Count one state change, inside the caller's transaction."""
+        current = self._stored_seq(db)
+        if current < self._seq:
+            raise ReviewError(
+                "review database {} went backwards under this process ({} -> {}): it was "
+                "replaced while in use; refusing to continue".format(self.path, self._seq, current))
+        db.execute("UPDATE settings SET seq = ? WHERE id = 1", (current + 1,))
+        return current + 1
+
+    def _advance(self, seq: int) -> None:
+        """Record a committed change in memory and in the mark."""
+        self._seq = max(self._seq, seq)
+        self._write_head(self._seq)
+
     @staticmethod
     def _recorded_policy(db: sqlite3.Connection) -> Optional[tuple]:
         row = db.execute(
@@ -337,14 +472,15 @@ class ReviewQueue:
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                self._expire(db, now)
+                expired = self._expire(db, now)
                 row = db.execute(
                     "SELECT * FROM reviews WHERE binding = ? AND (status IN ('pending', 'approved') "
                     "OR (status IN ('rejected', 'revoked') AND decided > ?)) "
                     "ORDER BY created DESC LIMIT 1", (binding, now - self.pending_ttl)).fetchone()
                 # A recent rejection is the answer: retrying the identical call
                 # must not file a fresh review and ask the human again.
-                if row is None:
+                created = row is None
+                if created:
                     review_id = "r-" + secrets.token_hex(4)
                     db.execute(
                         "INSERT INTO reviews (id, binding, status, action, phase, principal, "
@@ -357,26 +493,39 @@ class ReviewQueue:
                          1 if self.allow_self_approval else 0, self.approval_ttl))
                     self._seal(db, review_id)
                     row = db.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
+                seq = self._bump(db) if (created or expired) else None
                 db.execute("COMMIT")
             except BaseException:
                 db.execute("ROLLBACK")
                 raise
-            return self._review(db, row)
+            review = self._review(db, row)
+        if seq is not None:
+            self._advance(seq)
+        return review
 
     def claim(self, review_id: str, *, now: Optional[float] = None) -> bool:
         """Use an approval, once. True for exactly one caller."""
         now = time.time() if now is None else now
         with self._db() as db:
-            row = self._row(db, review_id)
-            self._verify(db, row)
-            cursor = db.execute(
-                "UPDATE reviews SET status = 'executed', executed = ? "
-                "WHERE id = ? AND status = 'approved' AND approval_until > ?",
-                (now, review_id, now))
-            if cursor.rowcount != 1:
-                return False
-            self._seal(db, review_id)
-            return True
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._row(db, review_id)
+                self._verify(db, row)
+                cursor = db.execute(
+                    "UPDATE reviews SET status = 'executed', executed = ? "
+                    "WHERE id = ? AND status = 'approved' AND approval_until > ?",
+                    (now, review_id, now))
+                if cursor.rowcount != 1:
+                    db.execute("ROLLBACK")
+                    return False
+                self._seal(db, review_id)
+                seq = self._bump(db)
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+        self._advance(seq)
+        return True
 
     # --- the human side -----------------------------------------------------
     def approve(self, review_id: str, approver: Optional[str] = None, *,
@@ -404,11 +553,14 @@ class ReviewQueue:
                                "approval_until = ? WHERE id = ?",
                                (now, approver, now + approval_ttl, review_id))
                 self._seal(db, review_id)
+                seq = self._bump(db)
                 db.execute("COMMIT")
             except BaseException:
                 db.execute("ROLLBACK")
                 raise
-            return self._review(db, self._row(db, review_id))
+            review = self._review(db, self._row(db, review_id))
+        self._advance(seq)
+        return review
 
     def reject(self, review_id: str, reason: str = "", approver: Optional[str] = None, *,
                now: Optional[float] = None) -> Review:
@@ -419,23 +571,45 @@ class ReviewQueue:
         return self._settle(review_id, "revoked", ("pending", "approved"), approver, "", now)
 
     def get(self, review_id: str, *, now: Optional[float] = None) -> Review:
+        now = time.time() if now is None else now
         with self._db() as db:
-            self._expire(db, time.time() if now is None else now)
-            return self._review(db, self._row(db, review_id))
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                expired = self._expire(db, now)
+                review = self._review(db, self._row(db, review_id))
+                seq = self._bump(db) if expired else None
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+        if seq is not None:
+            self._advance(seq)
+        return review
 
     def list(self, status: Optional[str] = None, limit: int = 50, *,
              now: Optional[float] = None) -> List[Review]:
         if status is not None and status not in STATUSES:
             raise ReviewError("status must be one of {}".format(", ".join(STATUSES)))
+        now = time.time() if now is None else now
         with self._db() as db:
-            self._expire(db, time.time() if now is None else now)
-            if status:
-                rows = db.execute("SELECT * FROM reviews WHERE status = ? ORDER BY created DESC "
-                                  "LIMIT ?", (status, int(limit))).fetchall()
-            else:
-                rows = db.execute("SELECT * FROM reviews ORDER BY created DESC LIMIT ?",
-                                  (int(limit),)).fetchall()
-            return [self._review(db, row) for row in rows]
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                expired = self._expire(db, now)
+                if status:
+                    rows = db.execute("SELECT * FROM reviews WHERE status = ? ORDER BY created DESC "
+                                      "LIMIT ?", (status, int(limit))).fetchall()
+                else:
+                    rows = db.execute("SELECT * FROM reviews ORDER BY created DESC LIMIT ?",
+                                      (int(limit),)).fetchall()
+                reviews = [self._review(db, row) for row in rows]
+                seq = self._bump(db) if expired else None
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+        if seq is not None:
+            self._advance(seq)
+        return reviews
 
     def wait(self, review_id: str, timeout: float, *, poll: float = 1.0) -> Review:
         """Poll until the review is no longer pending, or ``timeout`` passes."""
@@ -451,26 +625,37 @@ class ReviewQueue:
                 reason: str, now: Optional[float]) -> Review:
         now = time.time() if now is None else now
         with self._db() as db:
-            self._expire(db, now)
-            current = self._row(db, review_id)
-            self._verify(db, current)
-            cursor = db.execute(
-                "UPDATE reviews SET status = ?, decided = ?, decided_by = ?, rejection_reason = ? "
-                "WHERE id = ? AND status IN ({})".format(",".join("?" * len(allowed))),
-                (status, now, approver or _whoami(), reason or None, review_id) + tuple(allowed))
-            if cursor.rowcount != 1:
-                raise ReviewError("review {} is {}; cannot mark it {}".format(
-                    review_id, current["status"], status))
-            self._seal(db, review_id)
-            return self._review(db, self._row(db, review_id))
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                self._expire(db, now)
+                current = self._row(db, review_id)
+                self._verify(db, current)
+                cursor = db.execute(
+                    "UPDATE reviews SET status = ?, decided = ?, decided_by = ?, rejection_reason = ? "
+                    "WHERE id = ? AND status IN ({})".format(",".join("?" * len(allowed))),
+                    (status, now, approver or _whoami(), reason or None, review_id) + tuple(allowed))
+                if cursor.rowcount != 1:
+                    raise ReviewError("review {} is {}; cannot mark it {}".format(
+                        review_id, current["status"], status))
+                self._seal(db, review_id)
+                seq = self._bump(db)
+                review = self._review(db, self._row(db, review_id))
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+        self._advance(seq)
+        return review
 
-    def _expire(self, db: sqlite3.Connection, now: float) -> None:
+    def _expire(self, db: sqlite3.Connection, now: float) -> int:
+        """Expire stale rows; returns how many changed (each one is a write)."""
         stale = [row[0] for row in db.execute(
             "SELECT id FROM reviews WHERE (status = 'pending' AND pending_until <= ?) "
             "OR (status = 'approved' AND approval_until <= ?)", (now, now))]
         for review_id in stale:
             db.execute("UPDATE reviews SET status = 'expired' WHERE id = ?", (review_id,))
             self._seal(db, review_id)
+        return len(stale)
 
     @staticmethod
     def _row(db: sqlite3.Connection, review_id: str) -> sqlite3.Row:

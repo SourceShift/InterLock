@@ -114,10 +114,21 @@ or replacing the key invalidates every decision signed with it.
 An upgrade from a database written before signing seals its existing rows on
 first open, in the reviewer's own process.
 
-A signature cannot see a **wholesale rollback**: restoring an older copy of
-both files replays the decisions made since that copy, until `approval_ttl`
-runs out. A short TTL bounds the window, and the receipt log remains the
-independent record of what actually ran.
+A signature cannot see a **wholesale rollback**: an older copy of the database
+is a valid set of signed rows, so restoring it replays the decisions made since
+that copy. Every state change therefore also advances a **high-water mark**, a
+small signed file (`<key>.head` by default, mode 0600) recording how many writes
+the queue has committed. Opening a database whose counter is behind the mark is
+refused as a rollback. The mark is written *after* the SQLite commit, so a crash
+between the two leaves the database ahead of the mark; that direction heals (the
+mark catches up) rather than blocking the queue.
+
+The mark is only as good as its storage. A backup that restores the database,
+the key and the mark together is invisible to it, so point `head_path=` (or
+`interlock reviews --head`) at storage your database backups do not restore.
+Replacing the key also invalidates the mark's signature: a deliberate rotation
+stops the queue from opening until you remove the old mark as well. Passing
+`--key` and `--head` to the CLI selects both files explicitly.
 
 ## Let the agent check on its review
 
@@ -138,7 +149,8 @@ whether to wait, retry or give up. It never approves anything.
 - Approver names come from the OS login (or `--as`). A name is only as good as
   the key that signed the row: a process that can read both the database and
   `reviews.key` can still claim any name, so keep both private (mode 0600, the
-  default). Editing the database alone no longer buys an approval.
+  default). Editing the database alone no longer buys an approval, and neither
+  does restoring an older copy of it.
 - The queue stores a preview of each call (its arguments, truncated) so the
   approver can see it. Receipts never do.
 - What an approval is bound to includes the policy epoch when it's stable

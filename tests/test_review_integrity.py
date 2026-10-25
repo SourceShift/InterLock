@@ -123,6 +123,14 @@ def test_a_decision_signed_with_another_key_is_refused(tmp_path):
     queue.approve(review_id, "bob", now=1001)
 
     os.unlink(queue.key_path)
+    # The high-water mark is signed with the old key, so the queue refuses to
+    # open at all until a human decides the rotation was real.
+    with pytest.raises(ReviewError, match="does not match its signature"):
+        ReviewQueue(path)
+
+    # Even then, an operator who deletes the mark to accept the rotation is
+    # left with rows the new key cannot vouch for.
+    os.unlink(queue.key_path + ".head")
     reopened = ReviewQueue(path)
     with pytest.raises(ReviewError, match="does not match its signature"):
         reopened.claim(review_id, now=1002)

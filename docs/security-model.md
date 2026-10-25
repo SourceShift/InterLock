@@ -168,9 +168,13 @@ What the DAP path does and does not assume:
   redirect an approval to another binding, edit the preview an approver sees,
   or forge an approver name (`tests/test_review_integrity.py`). The key is the
   boundary: a process that can read both files can forge, and one that can
-  delete either can deny service, and restoring an older copy of *both* files
-  replays decisions until `approval_ttl` expires. Keep `~/.interlock` private;
-  put the key on separate storage (`key_path=`) when the database is shared.
+  delete either can deny service. Restoring an older copy of the database is
+  refused: every write also advances a signed high-water mark outside it
+  (`<key>.head`, 0600, `head_path=` to place it elsewhere), and a database
+  behind that mark is treated as a rollback (`tests/test_review_rollback.py`).
+  A restore that takes the database, the key *and* the mark together is
+  invisible; keep `~/.interlock` private and put the key and mark on storage
+  the backups do not restore.
 - **Coding-agent hooks are cooperative, and agents differ.** Hooks see the tools
   an agent routes through them; they are not an OS boundary. Codex can't ask or
   rewrite at `PreToolUse` (those verdicts are refused) or withhold tool output;

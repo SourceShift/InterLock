@@ -36,6 +36,14 @@ breaking changes land.
   registered. `esm.named-import` moves from `uncovered` to `covered` when the
   loader is installed; the synchronous and handle-returning shapes remain
   reported.
+- Review-queue rollback detection: every state change now advances a signed
+  high-water mark (`<key>.head` by default; `head_path=` or
+  `interlock reviews --head` to relocate it), and opening a database that is
+  behind it is refused with "behind its high-water mark". Restoring an older
+  `reviews.db` — even together with its key — no longer replays the approvals
+  made since that copy. The mark is written after the SQLite commit, so a crash
+  between the two heals forward instead of blocking the queue. `interlock
+  reviews --key FILE --head FILE` selects both files explicitly.
 - Flow-typed policy (ROADMAP R9): `interlock.flow` tracks boundary provenance -
   the value a guarded tool returned is remembered under `tool:<action>` and
   `principal:<id>` and attached to `SensorEvent.origins` when a later call
