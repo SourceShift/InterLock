@@ -96,6 +96,50 @@ The issuer key is not a role in the root. The collectors are told its public
 key directly (`interlock mesh serve --issuer`), so changing it means telling
 them, not a ceremony.
 
+## Aggregators, clouds and non-collusion
+
+Counts leave a node only as secret shares, one to each of two aggregators
+(decision R2). The privacy claim is exactly as strong as the weaker of two
+assumptions: the two aggregators do not collude, and at least one of them does
+not keep the shares it can see long enough to combine them. So a deployment
+must be disclosed, not implied.
+
+### What a deployment must disclose
+
+Before any node is told to report counts to a DAP task, the deployment records
+here and in the task's documentation:
+
+| Item | Required answer |
+|---|---|
+| Leader operator | the legal name of the organisation running `--role dap-leader` |
+| Helper operator | the legal name of the organisation running `--role dap-helper` |
+| Cloud or hosting provider | one per role, from the provider's own published infrastructure, not a reseller's marketing page |
+| Agreement | a signed statement that the two operators are distinct legal entities and do not share the shares they hold, or the plain statement that they do |
+| Task | the task id, its `time_precision`, `min_batch_size`, and the bucket list |
+
+Two roles run by one organisation, or by two organisations under common
+control, are **one aggregator** for the purpose of R2, whatever the process
+topology. Neither the leader nor the helper may be operated from the same
+account or cloud tenancy as the other; a pair that shares an administrator is
+one pair of eyes, not two.
+
+### Current state
+
+| Role | Operator | Cloud | Agreement |
+|---|---|---|---|
+| leader | **open** | — | — |
+| helper | **open** | — | — |
+
+**No independent operator has been recruited yet.** The DAP path ships as code
+and its local leader/helper/collector walkthrough exists so it can be tested,
+not as an independence claim. Until an operator is named in the table above,
+the project's rule is unchanged from decision R2: counts are not uploaded to a
+production pair, and a deployment that runs both roles itself is a test
+deployment and says so.
+
+When a pair is recruited, this section names it, the operators sign the
+agreement, `/v1/stats` names the pair, and the revisit clock in R2 starts.
+
 ## Reporting and the early ring
 
 Reporting from a node is off by default (decision R3), so the network learns

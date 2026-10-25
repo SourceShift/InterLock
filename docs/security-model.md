@@ -75,6 +75,45 @@ Each of these is sometimes the right choice. Make it on purpose.
 | `RemoteEngine(..., unreachable="allow")` (Python or Node.js) | When the sidecar can't be reached, every call is **allowed unchecked** (with a warning each time). A sidecar that answers with an error still blocks | Availability matters more than enforcement, and someone watches the warnings |
 | `RemoteEngine(..., unreachable="degraded")` (Python or Node.js) | When the sidecar can't be reached, only its signed offline fallback policy is enforced, which is a subset of the real one. A missing, tampered or stale fallback file still blocks | You keep the fallback to the rules you need standing with the daemon down |
 
+## Cryptography and the mesh
+
+interlock's mesh primitives are pure Python, because the default install has
+`dependencies = []`: Ed25519 for signatures, X25519, HKDF-SHA256 and
+AES-128-GCM for DAP's HPKE, TurboSHAKE128 for Prio3, and the Prio3 field
+arithmetic. Each is checked against its official test vectors (RFC 8032,
+RFC 9180 A.1, NIST GCM, RFC 9861, the VDAF `test_vec/` files), and each is
+**not constant-time**. A local attacker who can measure cache and branch
+timing against a process holding a secret may recover it; the defence is
+process isolation and a TLS-terminating proxy, not the arithmetic. An optional
+Rust scope store exists, but the DAP path does not depend on it.
+
+What the DAP path does and does not assume:
+
+- **One honest aggregator.** A leader and a helper each see one additive share
+  of every report. Either alone learns nothing about a vector; together, or
+  with a colluding operator, they learn it. The pair must be distinct legal
+  entities ([GOVERNANCE.md](https://github.com/SourceShift/InterLock/blob/main/GOVERNANCE.md)).
+- **The collector is the only reader.** Both aggregate shares are encrypted to
+  the collector's HPKE key, so a compromised aggregator host cannot decrypt the
+  other's share or the result.
+- **A client cannot inflate its counts.** The Prio3 validity proof is verified
+  by the helper; a report that fails is dropped before it joins a batch. The
+  client refuses out-of-range or two-batch counts before it builds a report.
+- **Batches are fixed and collected once.** Overlapping collection is refused,
+  so a caller who may collect cannot difference two totals to isolate a node
+  that way, and a batch below `min_batch_size` is not released.
+- **Transport is the proxy's job.** The reference servers speak plain HTTP on
+  loopback and expect TLS in front. Bearer tokens between the aggregators and
+  from the collector are compared in constant time, but they are secrets like
+  any other.
+- **A malicious leader can still drop reports.** DAP gives integrity and
+  privacy, not guaranteed delivery; dropping is a liveness attack and the
+  collector sees a smaller batch (or a floor refusal), not a wrong total.
+- **No live third-party interop run has been made.** The wire format follows
+  `draft-ietf-ppm-dap-20` and the codecs are tested against the drafts'
+  structures, but a deployment against another implementation should run the
+  guide's interop checklist first.
+
 ## Known gaps
 
 - **Python import-time hooks don't exist yet.** You wrap each session, tool list,

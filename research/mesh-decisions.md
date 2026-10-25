@@ -13,8 +13,9 @@
 > in §0 were re-checked by the operator and hold. The decisions here supersede
 > §11 of `mesh-shared-policy-network.md`; each "Implementation" list is an epic.
 > **Status 2026-10-25:** all five implementation lists shipped (see `ROADMAP.md`,
-> "M0–M3 · The mesh"); the DAP/Prio3 client (R2 step 3) and the operational
-> recruitment of keyholders and an aggregator operator remain.
+> "M0–M3 · The mesh"), including the DAP/Prio3 wire path (R2 step 3, pure Python;
+> see R2 "Status"). What remains is operational: the two non-maintainer root
+> keyholders and an independent DAP operator, neither of which code can invent.
 
 
 - **Run:** `run-1792920000-93111` · 2026-10-25 · target checkout at `36fbfae`.
@@ -437,6 +438,30 @@ maintainer as helper, on different cloud providers, and the arrangement is discl
    section of `docs/guides/mesh.md` that only aggregators see counts.
 6. **Tests:** `tests/test_mesh_report.py`, `tests/test_mesh_consensus.py`,
    `tests/test_mesh_aggregate.py`, `tests/test_mesh_server.py`.
+
+**Status (2026-10-25).**
+- **Step 3 is implemented, with one deviation from the text above.** The DAP/Prio3 path
+  ships as `interlock/mesh/dap/` (wire, messages, task files, client, leader, helper,
+  collector, HTTP server) plus `interlock/mesh/vdaf/`, `hpke.py`, `_aesgcm.py` and
+  `turboshake.py`, against `draft-ietf-ppm-dap-20`, `draft-irtf-cfrg-vdaf-22`
+  (`Prio3SumVec`, codepoint 3) and RFC 9180 base mode
+  (X25519 / HKDF-SHA256 / AES-128-GCM). It is **pure Python**, not the Rust
+  accelerator: the default install has `dependencies = []` and the DAP path must work
+  where the optional `interlock_scopes` build is absent. Correctness rests on the
+  official VDAF and HPKE test vectors, the wire codec tests and a local leader↔helper
+  end-to-end suite; there is no live interop run against another DAP implementation,
+  and the pure-Python crypto is not constant-time (same posture as `ed25519.py`).
+  `interlock mesh dap task|submit|collect` and
+  `interlock mesh serve --role dap-leader|dap-helper` are the user surface.
+  Evidence: `tests/test_mesh_vdaf.py`, `tests/test_mesh_hpke.py`,
+  `tests/test_mesh_dap_wire.py`, `tests/test_mesh_dap_task.py`,
+  `tests/test_mesh_dap.py`, `tests/test_mesh_dap_cli.py`.
+- **Step 4 is partly done.** `GOVERNANCE.md` carries the "Aggregators, clouds and
+  non-collusion" disclosure and states that no independent operator has been recruited
+  and that the reference deployment is not an independence claim. No operator is named,
+  because none has agreed; `/v1/stats` will name the pair once one does.
+- **Revisit-when is unchanged.** The clock in the first bullet starts when an
+  operator agrees, not when the code landed.
 
 **Revisit when.**
 - Two quarters after the DAP path ships, no independent operator has agreed to be leader.

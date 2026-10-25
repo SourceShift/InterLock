@@ -192,11 +192,20 @@ def add_arguments(parser) -> None:
     report_submit.add_argument("--token", default=None, metavar="TOKEN", help="bearer token the collectors require")
     report_submit.add_argument("--dir", default=None, metavar="DIR", help="the mesh state whose consent applies")
 
-    serve = sub.add_parser("serve", help="run a collector role, or mirror this node's verified cache to peers")
-    serve.add_argument("--role", required=True, choices=["consensus", "aggregator", "mirror"])
+    serve = sub.add_parser("serve", help="run a collector role, a DAP aggregator, or mirror this node's cache")
+    serve.add_argument("--role", required=True,
+                       choices=["consensus", "aggregator", "mirror", "dap-leader", "dap-helper"])
     serve.add_argument("--bind", default="127.0.0.1:7949", metavar="HOST:PORT")
     serve.add_argument("--state", default=None, metavar="FILE", help="persist state here")
     serve.add_argument("--token", default=None, metavar="TOKEN", help="require this bearer token on every POST")
+    serve.add_argument("--task", default=None, metavar="FILE",
+                       help="dap roles: the task.json written by `mesh dap task`")
+    serve.add_argument("--keys", default=None, metavar="FILE",
+                       help="dap roles: this role's key file (leader.json or helper.json)")
+    serve.add_argument("--peer-token", default=None, metavar="TOKEN",
+                       help="dap roles: bearer token between leader and helper (default: from the key files)")
+    serve.add_argument("--collector-token", default=None, metavar="TOKEN",
+                       help="dap-leader: bearer token the collector must present (default: from leader.json)")
     serve.add_argument("--known-catalog", action="append", default=[], metavar="ID",
                        help="consensus: accept reports from this detector catalog id; repeatable")
     serve.add_argument("--min-orgs", type=int, default=None, metavar="N")
@@ -208,6 +217,50 @@ def add_arguments(parser) -> None:
                        help="consensus: a credential issuer's public key; repeatable")
     serve.add_argument("--min-batch", type=int, default=None, metavar="N",
                        help="aggregator: release totals over at least N reconciled reports (default 3, at least 2)")
+
+    dap = sub.add_parser(
+        "dap", help="report counts with validity proofs over DAP/Prio3, and run the aggregator roles")
+    dap_sub = dap.add_subparsers(dest="dap_command", metavar="ACTION")
+    dap_task = dap_sub.add_parser(
+        "task", help="create a DAP task: task.json plus one key file per role")
+    dap_task.add_argument("--out", required=True, metavar="DIR",
+                          help="write task.json, leader.json, helper.json, collector.json here")
+    dap_task.add_argument("--leader-url", required=True, metavar="URL",
+                          help="the leader's public endpoint, e.g. https://leader.example")
+    dap_task.add_argument("--helper-url", required=True, metavar="URL")
+    dap_task.add_argument("--bucket", action="append", default=[], metavar="PATTERN",
+                          help="an ordered bucket: policy|verdict|tool_class|phase[|hour]; '*' sums "
+                               "the batch's hours; every count must match exactly one pattern; repeatable")
+    dap_task.add_argument("--batch-hours", type=int, default=24, metavar="N",
+                          help="one batch is N hours; this is the task's time_precision (default 24)")
+    dap_task.add_argument("--min-batch", type=int, default=10, metavar="N",
+                          help="refuse to release a batch with fewer reports (default 10)")
+    dap_task.add_argument("--max-measurement", type=int, default=65535, metavar="N",
+                          help="each bucket's sum must stay at or under this (default 65535)")
+    dap_task.add_argument("--chunk-length", type=int, default=None, metavar="N",
+                          help="VDAF proof chunk length (default: isqrt(length * bits))")
+    dap_task.add_argument("--json", action="store_true")
+    dap_submit = dap_sub.add_parser(
+        "submit", help="shard one batch of counts into a Prio3 report and upload it")
+    dap_submit.add_argument("--report", required=True, metavar="FILE",
+                            help="an envelope written by `mesh report build --out`")
+    dap_submit.add_argument("--task", required=True, metavar="FILE")
+    dap_submit.add_argument("--token", default=None, metavar="TOKEN",
+                            help="bearer token the leader requires for uploads")
+    dap_submit.add_argument("--dir", default=None, metavar="DIR",
+                            help="the mesh state whose consent applies, as `report submit` uses")
+    dap_submit.add_argument("--json", action="store_true")
+    dap_collect = dap_sub.add_parser(
+        "collect", help="open one batch with the collector key")
+    dap_collect.add_argument("--task", required=True, metavar="FILE")
+    dap_collect.add_argument("--keys", required=True, metavar="FILE",
+                             help="the collector key file written by `mesh dap task`")
+    dap_collect.add_argument("--start", required=True, type=int, metavar="N",
+                             help="the batch index (a DAP Time: POSIX seconds / time_precision)")
+    dap_collect.add_argument("--token", default=None, metavar="TOKEN",
+                             help="bearer token the leader requires (default: from the key file)")
+    dap_collect.add_argument("--out", default=None, metavar="FILE")
+    dap_collect.add_argument("--json", action="store_true")
 
     log_cmd = sub.add_parser("log", help="verify a commons' transparency log against its published documents")
     log_cmd.add_argument("site", metavar="DIR_OR_URL", help="a published site directory or mirror URL")
@@ -294,6 +347,8 @@ def run(args) -> int:
         return _verify(args)
     if command == "report":
         return _report(args)
+    if command == "dap":
+        return _dap(args)
     if command == "serve":
         return _serve(args)
     if command == "consensus":
@@ -309,7 +364,7 @@ def run(args) -> int:
     if command == "credential":
         return _credential(args)
     sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, grant, keys, root, publish, "
-                     "verify, report, serve, consensus, harness, forge, log, gossip, credential\n")
+                     "verify, report, dap, serve, consensus, harness, forge, log, gossip, credential\n")
     return 64
 
 
@@ -854,11 +909,161 @@ def _report_submit(args, mesh_dir: str) -> int:
     return 0 if reply.get("accepted") else 2
 
 
+def _dap(args) -> int:
+    from ..mesh import default_mesh_dir
+    from ..mesh.dap import client, collector
+    from ..mesh.dap.task import TaskError, create_task, load_role_keys, load_task
+    from ..mesh.report import ReportError, verify_report
+    from ..mesh.subscriber import Subscriber
+
+    action = args.dap_command
+    if action == "task":
+        try:
+            task, _, _, _ = create_task(
+                leader=args.leader_url, helper=args.helper_url, buckets=args.bucket,
+                batch_hours=args.batch_hours, min_batch_size=args.min_batch,
+                max_measurement=args.max_measurement, chunk_length=args.chunk_length,
+                out_dir=args.out)
+        except (TaskError, OSError) as exc:
+            sys.stderr.write("interlock mesh dap task: {}\n".format(exc))
+            return 3
+        if args.json:
+            print(json.dumps(task.to_json(), indent=1, sort_keys=True))
+            return 0
+        print("task {} ({} buckets, {}h batches)".format(
+            task.task_id_hex, task.length, task.hours_per_batch))
+        print("wrote task.json, leader.json, helper.json, collector.json under {}".format(args.out))
+        print("leader  {}".format(task.leader))
+        print("helper  {}".format(task.helper))
+        print("Keep leader.json, helper.json and collector.json secret (mode 0600): they hold the "
+              "HPKE secrets, the VDAF verify key and the bearer tokens.")
+        return 0
+
+    if action == "submit":
+        from ..mesh import NO_REPORT_ENV, reporting_killed
+
+        if reporting_killed():
+            sys.stderr.write("interlock mesh dap: not sent: {} is set, which refuses every upload from "
+                             "this node whatever is enabled; unset it to submit\n".format(NO_REPORT_ENV))
+            return 2
+        try:
+            task = load_task(args.task)
+            with open(args.report, "r", encoding="utf-8") as fh:
+                envelope = json.load(fh)
+            body = verify_report(envelope)
+            counts = _read_counts(args.report + COUNTS_SUFFIX, body)
+        except (OSError, ValueError, ReportError, TaskError) as exc:
+            sys.stderr.write("interlock mesh dap: {} is not usable: {}\n".format(args.report, exc))
+            return 3
+        refusal = _consent_refusal(body, Subscriber(args.dir or default_mesh_dir()).report_consent(),
+                                   share_counts=True)
+        if refusal:
+            sys.stderr.write("interlock mesh dap: not sent: {}\n".format(refusal))
+            return 2
+        try:
+            batch_index = task.batch_for_counts(counts)
+            plan, result = client.submit_counts(task, counts, token=args.token,
+                                                batch_index=batch_index)
+        except (client.ClientError, TaskError, ReportError, OSError) as exc:
+            sys.stderr.write("interlock mesh dap: not sent: {}\n".format(exc))
+            return 2
+        if args.json:
+            print(json.dumps({
+                "report_id": plan.report.report_id.hex(),
+                "batch": plan.batch_index,
+                "measurement": list(plan.measurement),
+                "accepted": bool(result.accepted),
+                "errors": [{"report_id": e.report_id.hex(),
+                            "error": m_name(e.error)} for e in result.errors],
+            }, indent=1, sort_keys=True))
+            return 0 if result.accepted else 2
+        if result.accepted:
+            print("report {}: accepted by the leader for batch {}".format(
+                plan.report.report_id.hex(), plan.batch_index))
+            return 0
+        for error in result.errors:
+            print("report {}: refused: {}".format(error.report_id.hex(), m_name(error.error)),
+                  file=sys.stderr)
+        return 2
+
+    if action == "collect":
+        try:
+            task = load_task(args.task)
+            keys = load_role_keys(args.keys, task)
+            result = collector.collect(task, keys, args.start, token=args.token)
+        except (OSError, ValueError, TaskError, collector.CollectorError) as exc:
+            sys.stderr.write("interlock mesh dap collect: {}\n".format(exc))
+            return 2
+        document = result.to_json()
+        if args.out:
+            from ..mesh._util import atomic_write
+
+            try:
+                atomic_write(args.out, (json.dumps(document, indent=1, sort_keys=True) + "\n")
+                             .encode("utf-8"), 0o600)
+            except OSError as exc:
+                sys.stderr.write("interlock mesh dap collect: cannot write {}: {}\n".format(args.out, exc))
+                return 3
+        if args.json:
+            print(json.dumps(document, indent=1, sort_keys=True))
+            return 0
+        print("batch {}, {} report(s) (DAP interval start={} duration={})".format(
+            args.start, result.report_count, result.interval.start, result.interval.duration))
+        for label, value in sorted(result.counts.items()):
+            print("  {:>8}  {}".format(value, label))
+        if not result.counts:
+            print("  (no non-zero buckets)")
+        return 0
+
+    sys.stderr.write("interlock mesh dap: choose an action: task, submit, collect\n")
+    return 64
+
+
+def m_name(error) -> str:
+    """A ReportError's wire name, for messages."""
+    return getattr(error, "name", str(error))
+
+
+def _serve_dap(args) -> int:
+    from ..mesh.dap.server import make_dap_server
+    from ..mesh.dap.task import TaskError, load_role_keys, load_task
+
+    if not args.task or not args.keys:
+        sys.stderr.write("interlock mesh serve: --role {} needs --task and --keys\n".format(args.role))
+        return 64
+    role = "leader" if args.role == "dap-leader" else "helper"
+    try:
+        task = load_task(args.task)
+        keys = load_role_keys(args.keys, task)
+        if keys.role != role:
+            raise TaskError("{} holds {!r} keys, but --role {} needs {!r} keys".format(
+                args.keys, keys.role, args.role, role))
+        state_path = args.state or (args.keys + ".state")
+        server = make_dap_server(args.bind, role=role, task=task, keys=keys,
+                                 state_path=state_path, peer_token=args.peer_token,
+                                 collector_token=args.collector_token)
+    except (OSError, TaskError, ValueError) as exc:
+        sys.stderr.write("interlock mesh serve: {}\n".format(exc))
+        return 2
+    print("interlock mesh {} listening on {} (task {}, state: {})".format(
+        args.role, server.url, task.task_id_hex, state_path), flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def _serve(args) -> int:
     from ..mesh import default_mesh_dir
     from ..mesh.server import make_server
 
     from ..mesh.aggregate import MIN_BATCH_FLOOR
+
+    if args.role in ("dap-leader", "dap-helper"):
+        return _serve_dap(args)
 
     config = {}
     if args.min_orgs:

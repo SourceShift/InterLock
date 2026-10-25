@@ -1436,6 +1436,7 @@ Each phase shipped on its own and is usable without the next; usage is in
 | M1 | Counting | `shipped` | `interlock mesh report init\|build\|submit`: rule counts, argument digests (never from redacting rules), false-positive sightings; additive secret shares to two aggregators; consensus with known-catalog check, reporter trust, distinct-org thresholds, demotion, expiry; `mesh_indicator_guard`; `interlock mesh serve` | `tests/test_mesh_report.py`, `tests/test_mesh_aggregate.py`, `tests/test_mesh_consensus.py`, `tests/test_mesh_server.py` |
 | M2 | Similarity and the forge | `shipped` | decision observers; LDP fingerprints (redact, dense SimHash, randomised response); campaigns and `mesh_similarity_guard`; `interlock mesh harness` (the R5 false-positive gate); `interlock mesh forge` writing gated proposals | `tests/test_mesh_fingerprint.py`, `tests/test_mesh_harness.py`, `tests/test_mesh_forge.py` |
 | M3 | Decentralise | `shipped` | RFC 6962/9162 transparency log with signed checkpoints, inclusion and consistency proofs; subscribers refuse unlogged or rewritten history; `interlock mesh log\|gossip`; `serve --role mirror` peer seeding; per-epoch membership credentials with revocation; `doctor` fails on a split view | `tests/test_mesh_log.py`, `tests/test_mesh_credential.py`, `tests/test_mesh_decentral.py` |
+| R2.3 | DAP/Prio3 wire path | `shipped` | `draft-ietf-ppm-dap-20` binary wire and HPKE (RFC 9180 base mode, X25519 / HKDF-SHA256 / AES-128-GCM); `Prio3SumVec` validity proofs (`draft-irtf-cfrg-vdaf-22`, TurboSHAKE128); `interlock mesh dap task\|submit\|collect`; `serve --role dap-leader\|dap-helper` with fixed, non-overlapping batches, a `min_batch_size` floor, proof drops, replay and overlap refusals, idempotent retries; counts consent and the kill switch reused | `tests/test_mesh_vdaf.py`, `tests/test_mesh_hpke.py`, `tests/test_mesh_dap_wire.py`, `tests/test_mesh_dap_task.py`, `tests/test_mesh_dap.py`, `tests/test_mesh_dap_cli.py` |
 
 The five governance questions (root-key custody, aggregator operators, default
 reporting posture, data licence, `block` by default) were decided on 2026-10-25 in
@@ -1447,9 +1448,12 @@ operator grant, ungranted blocks escalate or run as shadow (`67c9f1e`); the root
 stays offline and rotates in a detached-signature ceremony, with `GOVERNANCE.md`
 (`4e59446`); reporting is off, local and never retroactive by default (`9cd0545`);
 packs are Apache-2.0 and data is CC0-1.0 under `LICENSE-DATA` with a DCO data
-warranty (`7e0ce33`, `c8ea610`). What stays open is operational, not code: recruit
-the two non-maintainer root keyholders and an independent DAP operator, and build
-the DAP/Prio3 client the record names as R2 step 3. Known upgrades the
-modules leave room for: range proofs on secret-shared counts (Prio3 / DAP), a
-semantic embedder behind the fingerprint API, and zero-knowledge membership in
-place of issuer-linkable certificates.
+warranty (`7e0ce33`, `c8ea610`). The DAP/Prio3 wire path the record names as R2
+step 3 shipped in pure Python (`interlock/mesh/dap/`, `interlock/mesh/vdaf/`),
+with the official vectors and a local leader↔helper suite rather than a live
+third-party interop run. What stays open is operational, not code: recruit the
+two non-maintainer root keyholders and an independent DAP operator — no code can
+invent people. Known upgrades the modules leave room for: leader-selected
+batches and other VDAF types on the DAP path, a semantic embedder behind the
+fingerprint API, and zero-knowledge membership in place of issuer-linkable
+certificates.

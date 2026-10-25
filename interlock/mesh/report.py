@@ -44,10 +44,13 @@ node's consent does not cover. ``INTERLOCK_MESH_NO_REPORT=1`` makes
 """
 from __future__ import annotations
 
+import io
 import json
 import os
 import time
+import urllib.error
 import urllib.request
+from email.message import Message
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from .. import __version__
@@ -58,7 +61,8 @@ from .aggregate import count_key
 
 __all__ = [
     "REPORT_VERSION", "BUCKET_SECONDS", "MAX_DIGESTS", "LAYERS", "BASE_LAYERS", "ReportError", "ReporterKey",
-    "tool_class", "build_report", "build_counts", "sign_report", "verify_report", "submit",
+    "tool_class", "build_report", "build_counts", "sign_report", "verify_report",
+    "submit", "submit_bytes", "post_bytes",
     "WARRANTY", "new_attestation", "check_attestation",
 ]
 
@@ -391,22 +395,66 @@ def verify_report(envelope: Any, *, max_bytes: int = MAX_ENVELOPE) -> Dict[str, 
     return body
 
 
-def submit(url: str, payload: Mapping[str, Any], *, token: Optional[str] = None,
-           timeout: float = 10.0) -> Dict[str, Any]:
-    """POST a JSON payload and return the JSON reply (or raise ``OSError``).
+def post_bytes(url: str, data: bytes, content_type: str, *, token: Optional[str] = None,
+               timeout: float = 30.0, max_reply: int = 8 * 1024 * 1024) -> tuple:
+    """POST raw bytes and return ``(status, content_type, body)``.
 
-    Every upload the mesh client makes goes through here, so this is where the
-    kill switch sits: with ``INTERLOCK_MESH_NO_REPORT=1`` it raises
-    :class:`ReportError` before opening a connection."""
-    if reporting_killed():
-        raise ReportError("INTERLOCK_MESH_NO_REPORT is set: every mesh upload is refused on this node")
-    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    headers = {"Content-Type": "application/json", "User-Agent": "interlock-mesh"}
+    HTTP error statuses are returned rather than raised, because DAP reports
+    them in a problem document the caller should be able to print. This does
+    *not* consult the kill switch; it is also used for aggregator-to-aggregator
+    traffic, which carries no counts. A node's own uploads go through
+    :func:`submit_bytes`."""
+    headers = {"Content-Type": content_type, "User-Agent": "interlock-mesh"}
     if token:
         headers["Authorization"] = "Bearer " + token
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-        raw = response.read(1024 * 1024)
+    request = urllib.request.Request(url, data=bytes(data), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return response.status, _reply_type(response.headers), response.read(max_reply)
+    except urllib.error.HTTPError as exc:
+        return exc.code, _reply_type(exc.headers), exc.read(max_reply)
+
+
+def _reply_type(headers) -> str:
+    """The reply's media type, keeping DAP's ``message`` parameter.
+
+    ``HTTPMessage.get_content_type()`` answers only ``application/ppm-dap``, but
+    DAP distinguishes an empty success upload from ``upload-errors`` (and every
+    other message) by that parameter, so it must survive.
+    """
+    value = headers.get("Content-Type", "")
+    parts = [part.strip() for part in value.split(";") if part.strip()]
+    if not parts:
+        return ""
+    kind = parts[0].lower()
+    params = [part for part in parts[1:] if part.lower().startswith("message=")]
+    return ";".join([kind] + params)
+
+
+def submit_bytes(url: str, data: bytes, content_type: str, *, token: Optional[str] = None,
+                 timeout: float = 30.0) -> tuple:
+    """A node's own upload: the kill switch applies before any connection.
+
+    With ``INTERLOCK_MESH_NO_REPORT=1`` this raises :class:`ReportError` without
+    reaching the network, whichever transport the caller is using."""
+    if reporting_killed():
+        raise ReportError("INTERLOCK_MESH_NO_REPORT is set: every mesh upload is refused on this node")
+    return post_bytes(url, data, content_type, token=token, timeout=timeout)
+
+
+def submit(url: str, payload: Mapping[str, Any], *, token: Optional[str] = None,
+           timeout: float = 10.0) -> Dict[str, Any]:
+    """POST a JSON payload and return the JSON reply.
+
+    An HTTP error status raises :class:`urllib.error.HTTPError` (an ``OSError``)
+    carrying the reply body, which is what this function always did; the binary
+    DAP transport returns the status instead and its callers read the problem
+    document themselves."""
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    status, _, raw = submit_bytes(url, data, "application/json", token=token, timeout=timeout)
+    if status >= 400:
+        raise urllib.error.HTTPError(
+            url, status, "HTTP {}".format(status), Message(), io.BytesIO(raw))
     try:
         reply = json.loads(raw.decode("utf-8"))
     except ValueError:

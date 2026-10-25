@@ -406,10 +406,12 @@ usage: interlock mesh publish [-h] --source DIR --out DIR --keys DIR [--timestam
                               [--no-validate] [--json]
 usage: interlock mesh verify [-h] [--root FILE] [--json] DIR
 usage: interlock mesh report [-h] ACTION ...
-usage: interlock mesh serve [-h] --role {consensus,aggregator,mirror} [--bind HOST:PORT]
-                            [--state FILE] [--token TOKEN] [--known-catalog ID] [--min-orgs N]
-                            [--dir DIR] [--require-credential] [--issuer HEX_PUBLIC]
-                            [--min-batch N]
+usage: interlock mesh serve [-h] --role {consensus,aggregator,mirror,dap-leader,dap-helper}
+                            [--bind HOST:PORT] [--state FILE] [--token TOKEN] [--task FILE]
+                            [--keys FILE] [--peer-token TOKEN] [--collector-token TOKEN]
+                            [--known-catalog ID] [--min-orgs N] [--dir DIR] [--require-credential]
+                            [--issuer HEX_PUBLIC] [--min-batch N]
+usage: interlock mesh dap [-h] ACTION ...
 usage: interlock mesh log [-h] [--root FILE] [--json] DIR_OR_URL
 usage: interlock mesh gossip [-h] --peer URL [--dir DIR] [--token TOKEN]
 usage: interlock mesh credential [-h] ACTION ...

@@ -96,6 +96,27 @@ breaking changes land.
   organisations behind it instead of restating `min_orgs`. `interlock mesh
   consensus forget --state FILE --sample DIGEST`
   (`ConsensusEngine.forget_sample`) erases a sample from a consensus state.
+- Full DAP/Prio3 wire compatibility for mesh counts (decision R2 step 3).
+  Counts can now be reported as one **Prio3** report over
+  `draft-ietf-ppm-dap-20`: `interlock mesh dap task` writes a `task.json` and
+  one key file per role; `interlock mesh dap submit` maps a node's counts to an
+  ordered bucket vector, refuses an out-of-range or two-batch report, shards it
+  with `Prio3SumVec` (VDAF `draft-irtf-cfrg-vdaf-22`, codepoint `3`, validity
+  proofs over Field128 with TurboSHAKE128), and HPKE-encrypts one share to each
+  aggregator (RFC 9180 base mode, X25519 / HKDF-SHA256 / AES-128-GCM);
+  `interlock mesh dap collect` unshards both aggregate shares with the
+  collector key. `interlock mesh serve --role dap-leader|dap-helper` runs both
+  aggregator roles: binary DAP messages, the `/hpke_config` route, uploads,
+  aggregation jobs, collection jobs and aggregate shares, RFC 9457 problem
+  documents with the draft's error tokens, and a batch rule that releases only
+  a fixed `time_precision` interval, once, over at least `min_batch_size`
+  verified reports. A failed proof is dropped, a replay is refused, and a
+  second collection of an overlapping interval is refused. The upload path
+  reuses the counts consent and `INTERLOCK_MESH_NO_REPORT=1` refuses before a
+  socket is opened. Pure-Python X25519/AES-GCM/TurboSHAKE128 are correct but
+  not constant-time, as documented for the mesh's Ed25519; there is no live
+  interop test against a third-party DAP implementation, so correctness rests
+  on the official VDAF and HPKE vectors plus wire and end-to-end tests.
 
 - The console (`python -m interlock.console`, `interlock-console`): a local
   web app on loopback for the person running the agent - activity, the review

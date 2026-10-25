@@ -341,9 +341,9 @@ floor. The reason is subtraction: a total over one report *is* that report, and
 with two, either reporter can subtract its own counts from the total and read
 the other's. A repeated or unknown report id does not count toward the batch.
 The floor does not stop someone who may call `/v1/totals` from differencing
-two overlapping batches (four reports minus three of them is the fourth); the
-fixed, non-overlapping batches of the DAP protocol close that, and are the
-planned upgrade.
+two overlapping batches (four reports minus three of them is the fourth). The
+**DAP path** below closes that with fixed, non-overlapping batches, and adds
+validity proofs so a node cannot lie about its own counts.
 
 `GET /v1/indicators` (or
 `interlock mesh consensus export --state consensus.json`) is the indicator
@@ -353,6 +353,157 @@ rings that caps it to an escalate, and the stable ring does not install it
 until a maintainer promotes the pack; it blocks only where an operator has
 granted it. The commons publishes it like any other
 pack, so indicators reach nodes through the same verified path.
+
+## Counts with validity proofs: Prio3 over DAP
+
+The secret-share path above is interlock's own protocol, and it trusts the
+shape of a report: a node could claim ten million blocked calls for a rule it
+never ran, and the aggregators could not tell. The DAP path replaces it with a
+published standard and two upgrades that matter:
+
+- **Validity proofs.** Each count vector is sharded with **Prio3** (VDAF
+  `draft-irtf-cfrg-vdaf-22`, `Prio3SumVec`, codepoint `3`). The report carries a
+  proof that every bucket sum is inside the task's range; an aggregator that
+  verifies it learns nothing about the individual vector, and a report whose
+  proof fails is dropped before it reaches a total.
+- **Fixed, non-overlapping batches.** A batch is one `time_precision` interval,
+  defined by the task, and it is collected once. A second collection of an
+  overlapping interval is refused as `batchOverlap`, and reports that arrive
+  after their batch was collected are refused as `batchCollected`. Differencing
+  two overlapping totals is impossible because overlapping totals do not exist.
+
+The transport is DAP `draft-ietf-ppm-dap-20`: HPKE-encrypted input shares
+(RFC 9180 base mode, X25519 / HKDF-SHA256 / AES-128-GCM), binary messages, and
+RFC 9457 problem documents. A third-party DAP deployment can host the leader
+and the helper; the reference servers here are standard-library only and are
+expected to sit behind a TLS-terminating proxy.
+
+### Create a task
+
+A task fixes everything both aggregators and the collector must agree on. One
+command writes four files:
+
+```bash
+interlock mesh dap task --out /srv/dap \
+    --leader-url https://leader.example.org \
+    --helper-url https://helper.example.org \
+    --bucket 'rule-a|block|shell|pre|*' \
+    --bucket 'rule-b|allow|read|post|*' \
+    --batch-hours 24 --min-batch 10 --max-measurement 65535
+```
+
+| File | Mode | Holds |
+|---|---|---|
+| `task.json` | 644 | task id, URLs, time precision, minimum batch size, VDAF configuration, the ordered bucket patterns, the collector's **public** HPKE config, and pinned leader/helper public keys |
+| `leader.json` | 600 | the leader's HPKE secret, the shared VDAF verify key, the helper bearer token, the collector bearer token |
+| `helper.json` | 600 | the helper's HPKE secret, the same verify key, the bearer token |
+| `collector.json` | 600 | the collector's HPKE secret and the leader bearer token |
+
+`task.json` is shareable; the other three never are. The command refuses to
+overwrite an existing task, because a new task id silently strands every
+report queued under the old one. `--json` prints the public task instead of the
+summary.
+
+**Buckets.** A pattern has four components, `policy_id|verdict|tool_class|phase`,
+or five, with an hour. `*` is allowed only in the hour position and sums the
+batch's hours. Every count in a report must match **exactly one** pattern;
+unmatched counts and overlapping patterns are refused when the task is created,
+never silently dropped. A bucket's sum must stay at or under
+`--max-measurement`. Adding a rule or a dimension needs a new task.
+
+**Kinds of nothing else.** One VDAF (`Prio3SumVec`), one batch mode
+(`time_interval`), and one query shape: a single fixed batch per collection job.
+
+### Run the two aggregators
+
+```bash
+interlock mesh serve --role dap-helper --task /srv/dap/task.json \
+    --keys /srv/dap/helper.json --bind 127.0.0.1:7961
+interlock mesh serve --role dap-leader --task /srv/dap/task.json \
+    --keys /srv/dap/leader.json --bind 127.0.0.1:7960
+```
+
+Each role reads its own key file and refuses one that belongs to the other
+role. State is an atomic JSON file, mode 0600, defaulting to `<keys>.state`; it
+holds report ids, report metadata, committed aggregate shares and collection
+responses, **never** a count or a label. `--peer-token` and
+`--collector-token` override the tokens from the key files. TLS is the proxy's
+job.
+
+### Upload, then collect
+
+`dap submit` reuses the same consent gate as `report submit`: it needs counts
+consent, and `INTERLOCK_MESH_NO_REPORT=1` refuses before it opens a socket to
+fetch a key.
+
+```bash
+interlock mesh report enable                                  # counts consent, once
+interlock mesh report build --receipts ~/.interlock/receipts.jsonl \
+    --since 24h --out report.json                            # envelope + report.json.counts.json
+interlock mesh dap submit --report report.json --task /srv/dap/task.json
+interlock mesh dap collect --task /srv/dap/task.json \
+    --keys /srv/dap/collector.json --start 20743 --json
+```
+
+`submit` maps the counts to the bucket vector, refuses a count outside one
+batch or over the bucket ceiling, shards it with Prio3, encrypts one share to
+each aggregator and posts the report. It prints the report id and whether the
+leader accepted it; a refusal exits 2 and names the wire error.
+
+`--start` is a DAP **Time**: POSIX seconds divided by the task's
+`time_precision`, which is also the batch index. With `--batch-hours 24`, batch
+`n` covers `[n × 86400, (n + 1) × 86400)` in POSIX seconds. A collection job
+asks for exactly one batch, so its duration is always 1. The command opens both
+aggregate shares with the collector key, unshards, and prints the per-bucket
+totals; `--out` writes them to a 0600 file.
+
+### What each side refuses, and why
+
+| Refusal | Where | Why |
+|---|---|---|
+| `invalidBatchSize` | leader, helper | fewer than `min_batch_size` verified reports: a total over one report is that report |
+| `vdaf_verify_error`, then a drop | helper | the proof does not match the share; the report never counts |
+| `report_replayed` | leader | the same report id twice: one report is one report, however often it arrives |
+| `batch_collected`, `batchOverlap` | leader, helper | the batch is closed; a late report or a second overlapping query would allow differencing |
+| `unrecognizedTask` | both | the path or `task_id` names a task this aggregator does not serve |
+| `invalidMessage` with 401 | both | missing or wrong bearer token between leader and helper, or from the collector |
+| `invalidBatchSize`/`batchMismatch` | helper | the leader's count or checksum of committed report ids disagrees with the helper's |
+| `stepMismatch` (409) | helper | a continuation poll: Prio3 finishes during initialization, so there is no second round |
+
+The leader commits a report's output share only after the helper's `continue`
+response verifies it, and the helper caches responses by the SHA-256 of the
+request body, so a retried job after a lost reply is answered idempotently
+instead of tripping a replay or overlap rule.
+
+**One inherent limit.** If a report is dropped *after* the helper committed its
+share but before the leader counts it, the two aggregators disagree and the
+batch cannot be released. That is a liveness loss, not a privacy loss, and it
+is the honest cost of committing shares early. Rebuild the task only when you
+mean to discard the batch.
+
+### Interop checklist for a third-party deployment
+
+- Give both aggregators the same **byte-identical** `TaskConfiguration`.
+  `task.json`'s `task_config_b64` is re-encoded on load and refused if it does
+  not round-trip, because the HPKE associated data is derived from those exact
+  bytes.
+- Pin the deployment's leader and helper HPKE public keys in `task.json`; the
+  client refuses a config that differs from the pin.
+- Use the DAP suite from the draft: KEM `0x0020`, KDF `0x0001`, AEAD `0x0001`.
+- Share the bearer tokens out of band; the reference servers expect
+  `Authorization: Bearer …` on aggregator-to-aggregator and collection
+  traffic.
+- The CLI mints new tasks. To adopt an existing deployment, write `task.json`
+  around its `TaskConfiguration`; `load_task` is the check that it is faithful.
+
+**Honest limits.** There is no live interop test against another DAP
+implementation in this repository; correctness rests on the official VDAF test
+vectors, RFC 9180 HPKE vectors, the wire conformance tests and the local
+leader↔helper end-to-end tests. The pure-Python X25519, AES-GCM and
+TurboSHAKE128 are correct but **not constant-time**, the same posture as the
+mesh's Ed25519 (see the [security model](../security-model.md)). Run them in an
+isolated process behind TLS, and keep bucket lists small: a Prio3 proof is tens
+of kilobytes per report.
 
 ## Find similar attacks without sharing text
 

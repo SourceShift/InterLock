@@ -35,8 +35,23 @@ minutes), then read [how interlock works](concepts.md).
 | [Scopes](guides/scopes.md) | Give each tenant, agent, and sub-agent its own rules |
 | [Audit log](guides/audit-log.md) | Keep a tamper-evident record of every decision |
 | [Sandbox](guides/sandbox.md) | Run subprocesses under OS-level confinement built from your policy |
-| [Mesh](guides/mesh.md) | Subscribe to community policy packs, verified from a pinned root and applied in monitor mode first; or publish a commons |
+| [Mesh](guides/mesh.md) | Subscribe to community policy packs, verified from a pinned root and applied in monitor mode first; publish a commons; or report counts with Prio3 validity proofs over DAP |
 | [Production checklist](guides/production.md) | Roll out safely: prove protection is on, monitor mode, refusals, logging, deployment |
+
+### What the mesh adds
+
+| Capability | What it buys you | Where |
+|---|---|---|
+| Signed commons | Policy packs verified from a pinned root, with rollback and split-view defences | [Mesh](guides/mesh.md#subscribe-to-a-commons) |
+| Monitor-first installs | A new pack escalates on a canary and early rings, and blocks only where an operator grants it | [Mesh](guides/mesh.md#subscribe-to-a-commons) |
+| Operator grants | A pack the operator has not granted never blocks | [Mesh](guides/mesh.md#grant-a-block) |
+| Consent-gated reporting | Nothing leaves a node until `report enable`, layer by layer, never retroactively | [Mesh](guides/mesh.md#report-what-your-guard-stopped) |
+| Secret-shared counts | Aggregators see one additive share each; only their sum is a total, above a batch floor | [Mesh](guides/mesh.md#run-the-collectors) |
+| **Prio3 counts over DAP** | Validity proofs stop a node from lying about its counts; fixed, non-overlapping batches stop differencing; any DAP deployment can host the leader and helper | [Mesh](guides/mesh.md#counts-with-validity-proofs-prio3-over-dap) |
+| Transparency log and mirrors | Every published entry is appendable and attributable; mirrors and gossip expose split views | [Mesh](guides/mesh.md#the-transparency-log) |
+| Membership credentials | A consensus service can require a credential before a report counts | [Mesh](guides/mesh.md#membership-credentials) |
+| Data licence and erasure | Samples carry a warranty and a licence; an erasure request names what it removes | [Mesh](guides/mesh.md#licences-and-the-data-warranty) |
+| Offline root ceremony | Root keys are held by distinct people, offline, with a published quorum | [Root ceremony](guides/mesh-root-ceremony.md) |
 
 ## Reference
 
@@ -44,7 +59,7 @@ minutes), then read [how interlock works](concepts.md).
 |---|---|
 | [Python API](reference/python-api.md) | Every public class and function, with signatures |
 | [Detector catalog](reference/detectors.md) | All 121 detectors: what they catch, which calls they see, how to build them |
-| [Command line](reference/cli.md) | `interlock doctor`, `report`, `hook`, `install-hook`, `policy`, `learn`, `trust`, `mcp`, `reviews`, `drift` |
+| [Command line](reference/cli.md) | `interlock doctor`, `report`, `hook`, `install-hook`, `policy`, `learn`, `trust`, `mcp`, `reviews`, `drift`, `mesh` (including `mesh dap task\|submit\|collect` and `serve --role dap-leader\|dap-helper`) |
 | [Sidecar](reference/sidecar.md) | The `interlock-sidecar` daemon for Node.js agents, and its wire protocol |
 | [Node.js client](https://github.com/SourceShift/InterLock/blob/main/js/README.md) | The `interlock-guard` npm package |
 | [Native scope store](https://github.com/SourceShift/InterLock/blob/main/rust/README.md) | The optional Rust backend for very large scope trees |
