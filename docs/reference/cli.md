@@ -351,12 +351,15 @@ enable never reaches back before its own date:
 ```bash
 interlock mesh report init                # this node's reporting key
 interlock mesh report build --receipts ~/.interlock/receipts.jsonl --out report.json   # local only
-interlock mesh report enable [--digests] [--fingerprints] [--sample RULE]   # the one consent point
+interlock mesh report enable [--digests] [--fingerprints] [--sample RULE --i-warrant-samples]   # the one consent point
 interlock mesh report status              # what may leave, since when, and a preview
 interlock mesh report submit report.json --consensus URL --aggregator URL --aggregator URL
 ```
 
-INTERLOCK_MESH_NO_REPORT=1 refuses every upload, whatever is enabled.
+INTERLOCK_MESH_NO_REPORT=1 refuses every upload, whatever is enabled. A node
+that shares redacted samples gives the data warranty (CONTRIBUTING.md): the
+samples were lawfully obtained and hold no personal data and no third party's
+confidential data. Without it, a report carries no samples.
 
 For a maintainer (the people who run a commons):
 
@@ -364,6 +367,7 @@ For a maintainer (the people who run a commons):
 interlock mesh keys init --out keys/      # one Ed25519 key per role; raise counts/thresholds for a real root
 interlock mesh publish --source commons/ --out site/ --keys keys/   # needs no root key while the root is current
 interlock mesh verify site/               # walk the site exactly as a subscriber would
+interlock mesh consensus forget --state consensus.json --sample DIGEST   # erase a sample (GOVERNANCE.md)
 ```
 
 A new root is signed in a ceremony, each root keyholder on their own machine

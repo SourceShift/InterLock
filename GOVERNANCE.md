@@ -1,9 +1,11 @@
 # Governance
 
 This file says who holds the keys of the mesh commons this project runs, and
-the rules for changing who holds them. How code gets into the repository is in
+the rules for changing who holds them. It also says what data the commons
+takes in and how a sample is erased. How code gets into the repository is in
 [CONTRIBUTING.md](CONTRIBUTING.md). The reasoning behind these rules is
-decision R1 in [`research/mesh-decisions.md`](research/mesh-decisions.md).
+decision R1 (keys) and decision R4 (data) in
+[`research/mesh-decisions.md`](research/mesh-decisions.md).
 
 Every subscribed node trusts the commons through one pinned file, its **root**:
 the keys and thresholds of every role. Whoever can sign a new root can change
@@ -101,8 +103,52 @@ only from organisations that choose to report. Early-ring membership
 credentials (`interlock mesh credential issue --scope early`) go to
 organisations that report.
 
+## Data
+
+Code and packs are Apache-2.0 ([LICENSE](LICENSE)), except a pack taken in
+under the intake floor below, which keeps its upstream licence. Indicators,
+fingerprints and redacted samples, wherever they appear, are CC0-1.0
+([LICENSE-DATA](LICENSE-DATA)). Every contribution of data carries the data
+warranty in [CONTRIBUTING.md](CONTRIBUTING.md): lawfully obtained, no personal
+data, no third party's confidential data. A node that shares samples gives the
+same warranty with `interlock mesh report enable --sample RULE
+--i-warrant-samples`, which records it with the node's reporting consent, and
+the consensus service refuses samples without it.
+There is no CLA.
+
+### Intake floor
+
+A pack, rule or sample taken from another project is ingested only when its
+licence permits all three of **ingest, modification and redistribution**. A
+licence that withholds any of them is refused, however good the content: a
+non-commercial clause, a no-derivatives clause, or a source-available licence
+such as ELv2. The pack keeps its upstream licence as an SPDX identifier in its
+`license` field (or a rule's, when only that rule came from upstream), and the
+pull request that ingests it names the source.
+
+### Erasure
+
+A sample reported to contain personal data is erased:
+
+1. Report it privately, the way [SECURITY.md](SECURITY.md) describes, so the
+   report does not publish it again. Name the file, or the sample's digest
+   (the first 16 hex characters of the SHA-256 of its text).
+2. Within **30 days** of the report, the sample leaves the tree (a commons'
+   `packs/*.tests.json`, and any forge proposal that carries it) and the next
+   release.
+3. A consensus operator removes it from the service's state file with
+   `interlock mesh consensus forget --state FILE --sample DIGEST`, with the
+   service stopped, since a running service writes its own copy back.
+
+Erasure covers the tree, the next release and the consensus state. It does not
+rewrite git history, which is a publication of its own. Samples are never in
+the signed site or the transparency log, so mirrors and peer caches do not
+hold them. If an erasure cannot be met within 30 days, decision R4 is reopened,
+and samples stop being published in tests files and are kept maintainer-only.
+
 ## Changing this file
 
 A change to the keyholder table lands in the pull request of the ceremony that
-makes it true. A change to the rules above starts as a change to decision R1,
-which records why they are what they are, and this file follows it.
+makes it true. A change to the rules above starts as a change to decision R1
+(keys) or decision R4 (data), which record why they are what they are, and this
+file follows them.

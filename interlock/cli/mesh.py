@@ -17,17 +17,21 @@ enable never reaches back before its own date:
 
   interlock mesh report init                # this node's reporting key
   interlock mesh report build --receipts ~/.interlock/receipts.jsonl --out report.json   # local only
-  interlock mesh report enable [--digests] [--fingerprints] [--sample RULE]   # the one consent point
+  interlock mesh report enable [--digests] [--fingerprints] [--sample RULE --i-warrant-samples]   # the one consent point
   interlock mesh report status              # what may leave, since when, and a preview
   interlock mesh report submit report.json --consensus URL --aggregator URL --aggregator URL
 
-INTERLOCK_MESH_NO_REPORT=1 refuses every upload, whatever is enabled.
+INTERLOCK_MESH_NO_REPORT=1 refuses every upload, whatever is enabled. A node
+that shares redacted samples gives the data warranty (CONTRIBUTING.md): the
+samples were lawfully obtained and hold no personal data and no third party's
+confidential data. Without it, a report carries no samples.
 
 For a maintainer (the people who run a commons):
 
   interlock mesh keys init --out keys/      # one Ed25519 key per role; raise counts/thresholds for a real root
   interlock mesh publish --source commons/ --out site/ --keys keys/   # needs no root key while the root is current
   interlock mesh verify site/               # walk the site exactly as a subscriber would
+  interlock mesh consensus forget --state consensus.json --sample DIGEST   # erase a sample (GOVERNANCE.md)
 
 A new root is signed in a ceremony, each root keyholder on their own machine
 (docs/guides/mesh-root-ceremony.md):
@@ -169,7 +173,10 @@ def add_arguments(parser) -> None:
                                     "(default 1.5)")
     report_enable.add_argument("--sample", action="append", default=[], metavar="RULE_ID",
                                help="also record, and upload, redacted samples for this rule, for the forge; "
-                                    "repeatable")
+                                    "repeatable (needs --i-warrant-samples)")
+    report_enable.add_argument("--i-warrant-samples", action="store_true",
+                               help="with --sample: you warrant that every sample is lawfully obtained, contains "
+                                    "no personal data, and contains no third party's confidential data")
     report_enable.add_argument("--off", action="store_true", help="turn every layer off, recording included")
     report_enable.add_argument("--dir", default=None, metavar="DIR")
     report_status = report_sub.add_parser("status", help="what this node may upload, since when, and a preview")
@@ -257,6 +264,12 @@ def add_arguments(parser) -> None:
                                   help="with --stats: an aggregator whose combined totals give per-rule fire "
                                        "counts; give at least two")
     consensus_export.add_argument("--token", default=None, metavar="TOKEN", help="bearer token the aggregators require")
+    consensus_forget = consensus_sub.add_parser(
+        "forget", help="erase a sample from a consensus state file (stop the service first)")
+    consensus_forget.add_argument("--state", required=True, metavar="FILE")
+    consensus_forget.add_argument("--sample", required=True, metavar="DIGEST",
+                                  help="the sample's digest as the state holds it: the first 16 hex characters "
+                                       "of the SHA-256 of its text")
 
 
 def run(args) -> int:
@@ -491,11 +504,17 @@ def _report(args) -> int:
 
 def _report_enable(args, mesh_dir: str) -> int:
     from ..mesh.fingerprint import DEFAULT_ALPHA
-    from ..mesh.report import BASE_LAYERS
+    from ..mesh.report import BASE_LAYERS, new_attestation
     from ..mesh.subscriber import Subscriber, SubscriberError
 
-    if args.off and (args.digests or args.fingerprints or args.sample or args.alpha is not None):
+    if args.off and (args.digests or args.fingerprints or args.sample or args.i_warrant_samples
+                     or args.alpha is not None):
         sys.stderr.write("interlock mesh report: --off turns every layer off and takes no other flag\n")
+        return 64
+    if args.sample and not args.i_warrant_samples:
+        sys.stderr.write("interlock mesh report: --sample needs --i-warrant-samples: you warrant that every sample "
+                         "is lawfully obtained, contains no personal data, and contains no third party's "
+                         "confidential data (CONTRIBUTING.md)\n")
         return 64
     if args.alpha is not None and not args.fingerprints:
         sys.stderr.write("interlock mesh report: --alpha is the fingerprint budget; give it with --fingerprints\n")
@@ -511,7 +530,9 @@ def _report_enable(args, mesh_dir: str) -> int:
     # without subscribing. A watched policy reloads on it, which is how the
     # recorder in the agent's process starts or stops.
     try:
-        consent = Subscriber(mesh_dir).set_report_consent(layers, alpha=alpha, sample_rules=args.sample)
+        consent = Subscriber(mesh_dir).set_report_consent(
+            layers, alpha=alpha, sample_rules=args.sample,
+            attestation=new_attestation() if args.sample else None)
     except (SubscriberError, OSError) as exc:
         sys.stderr.write("interlock mesh report: {}\n".format(exc))
         return 2
@@ -522,6 +543,9 @@ def _report_enable(args, mesh_dir: str) -> int:
         from ..mesh._util import iso
         print("nothing observed before {} is ever uploaded; `report build` shows a report, `report submit` "
               "sends it".format(iso(consent["enabled_at"])))
+        if "samples" in consent["layers"]:
+            print("you warranted those samples: lawfully obtained, no personal data, no third party's "
+                  "confidential data; they are CC0-1.0 once shared (LICENSE-DATA)")
         if "fingerprints" in consent["layers"] or "samples" in consent["layers"]:
             print("a watched policy starts the recorder at its next check; otherwise at the next policy load")
     return 0
@@ -561,16 +585,20 @@ def _enable_command(consent, layer=None, rule=None) -> str:
             words.append("--alpha {:g}".format(consent["alpha"]))
     if "samples" in layers:
         words.extend("--sample " + r for r in rules or ["RULE"])
+        words.append("--i-warrant-samples")
     return " ".join(words)
 
 
 def _projection(receipts, mesh_dir: str, since: float, now: float, consent, *, include_digests: bool = True,
                 sightings=(), catalog: str = "", reporter: str = ""):
-    """The report body and count vector ``build`` makes from ``receipts``.
+    """The report body and count vector ``build`` makes from ``receipts``, and
+    how many recorded samples it left out for want of the data warranty.
 
     While reporting is off this is the full local preview, so the operator sees
     what enabling would let leave. Once on, the window opens no earlier than the
-    enable, and only the enabled layers (and sample rules) are in it."""
+    enable, and only the enabled layers (and sample rules) are in it. Samples
+    go in only under the warranty the consent holds (decision R4), so with
+    reporting off the preview carries none."""
     import os
 
     from ..mesh.fingerprint import read_records
@@ -584,11 +612,15 @@ def _projection(receipts, mesh_dir: str, since: float, now: float, consent, *, i
     samples = read_records(os.path.join(mesh_dir, "samples.jsonl"), since, now, 20)
     if enabled_at is not None:
         samples = [s for s in samples if s.get("policy_id") in consent["sample_rules"]]
+    attestation = consent.get("attestation")
+    unwarranted = 0 if attestation else len(samples)
+    if unwarranted:
+        samples = []
     body = build_report(receipts, since=since, until=now, catalog_id=catalog, reporter_id=reporter,
                         include_digests=include_digests, sightings=sightings, fingerprints=fingerprints,
-                        samples=samples, enabled_since=enabled_at, enabled_layers=layers)
+                        samples=samples, enabled_since=enabled_at, enabled_layers=layers, attestation=attestation)
     counts = build_counts(receipts, since, now, enabled_since=enabled_at, enabled_layers=layers)
-    return body, counts
+    return body, counts, unwarranted
 
 
 #: The preview reads at most this much of a receipt log.
@@ -613,7 +645,7 @@ def _report_preview(mesh_dir: str, consent, receipts_path=None, hours: float = 2
                 receipts_path))
         receipts, _bad = read_receipts(receipts_path)
         now = time.time()
-        body, counts = _projection(receipts, mesh_dir, now - hours * 3600, now, consent)
+        body, counts, _unwarranted = _projection(receipts, mesh_dir, now - hours * 3600, now, consent)
     except Exception as exc:  # a preview must never break `status` or `doctor`
         return dict(out, error="{}: {}".format(type(exc).__name__, exc))
     return dict(out, decisions=sum(counts.values()), count_rows=len(counts), digests=len(body["digests"]),
@@ -647,7 +679,8 @@ def _report_status(args, mesh_dir: str) -> int:
     if reporting_killed():
         print("  INTERLOCK_MESH_NO_REPORT is set: every upload is refused")
     if consent["enabled_at"] is None:
-        print("  to enable: interlock mesh report enable [--digests] [--fingerprints] [--sample RULE]")
+        print("  to enable: interlock mesh report enable [--digests] [--fingerprints] "
+              "[--sample RULE --i-warrant-samples]")
     return 0
 
 
@@ -687,7 +720,7 @@ def _report_build(args, key_path: str) -> int:
             return 3
     try:
         key = ReporterKey.load_or_create(key_path)
-        body, counts = _projection(
+        body, counts, unwarranted = _projection(
             receipts, mesh_dir, since, now, consent, include_digests=not args.no_digests,
             sightings=[{"policy_id": r, "kind": "false_positive"} for r in args.false_positive],
             catalog=catalog_id(), reporter=key.keyid)
@@ -695,6 +728,9 @@ def _report_build(args, key_path: str) -> int:
     except ReportError as exc:
         sys.stderr.write("interlock mesh report: {}\n".format(exc))
         return 2
+    if unwarranted:
+        sys.stderr.write("interlock mesh report: {} sample(s) left out: no data warranty on record "
+                         "(interlock mesh report enable --sample RULE --i-warrant-samples)\n".format(unwarranted))
     # The count vector never goes into the envelope. It stays beside it, readable
     # by this user only, until `submit` sends it as secret shares.
     text = json.dumps(envelope, sort_keys=True, indent=1)
@@ -866,8 +902,10 @@ def _serve(args) -> int:
 def _consensus(args) -> int:
     from ..mesh.consensus import ConsensusEngine
 
+    if args.consensus_command == "forget":
+        return _consensus_forget(args)
     if args.consensus_command != "export":
-        sys.stderr.write("interlock mesh consensus: choose an action: export\n")
+        sys.stderr.write("interlock mesh consensus: choose an action: export, forget\n")
         return 64
     if args.aggregator and (not args.stats or len(args.aggregator) < 2):
         sys.stderr.write("interlock mesh consensus: --aggregator goes with --stats, given at least twice\n")
@@ -900,6 +938,36 @@ def _consensus(args) -> int:
         print("wrote {}".format(args.out))
     else:
         sys.stdout.write(text + "\n")
+    return 0
+
+
+def _consensus_forget(args) -> int:
+    """Erasure (GOVERNANCE.md): drop a sample from the state and save it the engine's own way."""
+    import re
+
+    from ..mesh.consensus import ConsensusEngine
+
+    digest = args.sample.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{16}", digest):
+        sys.stderr.write("interlock mesh consensus: --sample takes the sample's 16-hex digest, not {!r}\n".format(
+            args.sample))
+        return 64
+    try:
+        engine = ConsensusEngine.load(args.state)
+    except (OSError, ValueError) as exc:
+        sys.stderr.write("interlock mesh consensus: cannot load {}: {}\n".format(args.state, exc))
+        return 3
+    removed = engine.forget_sample(digest)
+    if not removed:
+        sys.stderr.write("interlock mesh consensus: no sample {} in {}\n".format(digest, args.state))
+        return 2
+    try:
+        engine.save(args.state)
+    except OSError as exc:
+        sys.stderr.write("interlock mesh consensus: cannot write {}: {}\n".format(args.state, exc))
+        return 3
+    print("forgot sample {} ({} cop{}) in {}".format(digest, removed, "y" if removed == 1 else "ies", args.state))
+    print("also remove it from the commons' packs/*.tests.json and any proposal that carries it (GOVERNANCE.md)")
     return 0
 
 

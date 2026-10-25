@@ -218,7 +218,7 @@ def test_submit_refuses_a_layer_that_is_not_enabled(servers, tmp_path, monkeypat
     with_samples = dict(base, layers=["counts", "sightings", "samples"], sample_rules=["prompt_injection"])
     assert _consent_refusal(samples, with_samples, share_counts=False) == (
         "samples for other_rule are not enabled: run `interlock mesh report enable --sample other_rule "
-        "--sample prompt_injection`")
+        "--sample prompt_injection --i-warrant-samples`")
     assert "counts are not enabled" in _consent_refusal({"period": period}, dict(base, layers=["sightings"]),
                                                         share_counts=True)
     assert _consent_refusal({"period": period, "digests": []}, base, share_counts=True) is None
@@ -442,8 +442,10 @@ def test_enable_needs_no_commons_and_status_and_doctor_show_it(tmp_path, monkeyp
 
     enabled_at = enabled_a_minute_ago(monkeypatch)
     assert main(["mesh", "report", "enable", "--digests", "--fingerprints", "--alpha", "2",
-                 "--sample", "prompt_injection"]) == 0
+                 "--sample", "prompt_injection", "--i-warrant-samples"]) == 0
     consent = node.report_consent()
+    attestation = consent.pop("attestation")  # the sample warranty recorded by --i-warrant-samples (M5)
+    assert attestation["warranty"] == "lawful,no-personal-data,no-confidential"
     assert consent == {"enabled_at": enabled_at, "alpha": 2.0, "sample_rules": ["prompt_injection"],
                        "layers": ["counts", "sightings", "digests", "fingerprints", "samples"]}
     assert stat.S_IMODE(os.stat(node.state_path).st_mode) == 0o600
@@ -458,7 +460,8 @@ def test_enable_needs_no_commons_and_status_and_doctor_show_it(tmp_path, monkeyp
     assert line in out and "report preview, last 24h since the enable: 1 count row(s), 1 digest(s)" in out
     assert main(["mesh", "report", "status", "--json"]) == 0
     shown = json.loads(capsys.readouterr().out)
-    assert shown["report"] == consent and shown["preview"]["digests"] == 1 and shown["kill_switch"] is False
+    shown_consent = {k: v for k, v in shown["report"].items() if k != "attestation"}
+    assert shown_consent == consent and shown["preview"]["digests"] == 1 and shown["kill_switch"] is False
 
     assert main(["mesh", "report", "enable", "--off"]) == 0
     assert node.report_consent() == {"enabled_at": None, "layers": [], "alpha": 1.5, "sample_rules": []}

@@ -135,6 +135,23 @@ def test_only_a_capped_mesh_rule_marks_its_escalation():
     assert engine.evaluate(ev(g=1)).verdict is Verdict.BLOCK
 
 
+def test_licence_and_provenance_are_metadata():
+    doc = {"version": 1, "license": "CC0-1.0",
+           "provenance": {"source": "indicators", "organisations": 3, "generated": "2027-01-15T10:00:00Z"},
+           "rules": [rule(id="annotated", license="MIT", when={"arg": "x", "eq": 1}),
+                     rule(id="plain", when={"arg": "x", "eq": 1})]}
+    engine = load_policy(doc)
+    assert not engine.quarantined
+    # The licence changes nothing a rule decides.
+    assert engine.evaluate(ev(x=1)).verdict is Verdict.BLOCK and engine.evaluate(ev(x=2)).verdict is Verdict.ALLOW
+    # Shapes are still checked: a rule's bad licence quarantines it, a document's refuses the document.
+    engine = load_policy({"rules": [rule(id="bad", license=7, when={"arg": "x", "eq": 1})]})
+    assert engine.quarantined and "license" in engine.quarantined[0]
+    for bad in ({"license": ""}, {"license": ["MIT"]}, {"provenance": "forge"}):
+        with pytest.raises(PolicyError):
+            load_policy(dict({"rules": [rule(when={"arg": "x", "eq": 1})]}, **bad))
+
+
 # --- load-time checks ------------------------------------------------------------
 
 

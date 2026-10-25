@@ -29,6 +29,12 @@ reported which digest or sighting, under a pseudonymous key, and nothing about
 how often anything happened at any node. Its per-rule statistics count
 organisations, never events: a reporter that sent a digest or a sighting for a
 rule saw that rule fire.
+
+What the engine exports is data, not code: the indicator and similarity packs
+carry ``"license": "CC0-1.0"`` (``LICENSE-DATA``, decision R4). A redacted
+sample is kept only with the reporter's attestation (the data warranty,
+:func:`~interlock.mesh.report.check_attestation`), and :meth:`forget_sample`
+erases one when it turns out to hold personal data.
 """
 from __future__ import annotations
 
@@ -38,9 +44,12 @@ import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set
 
 from ._util import atomic_write, read_bounded
-from .report import ReportError, verify_report
+from .report import ReportError, check_attestation, verify_report
 
-__all__ = ["DEFAULT_CONFIG", "ConsensusEngine"]
+__all__ = ["DEFAULT_CONFIG", "DATA_LICENSE", "ConsensusEngine"]
+
+#: The licence of everything the engine exports: machine-generated facts.
+DATA_LICENSE = "CC0-1.0"
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "min_orgs": 3,                 # distinct reporters before an indicator is active
@@ -85,6 +94,7 @@ class ConsensusEngine:
         self.campaigns: Dict[str, Dict[str, Any]] = {}    # cluster id -> {fp, alpha, orgs, policy_ids, ...}
         self.samples: Dict[str, List[Dict[str, Any]]] = {}  # policy_id -> redacted samples
         self.rejected = 0
+        self._dropped_samples: Dict[str, int] = {}        # digest -> unattested copies load() left on disk
 
     # --- maintainer inputs ------------------------------------------------------
 
@@ -191,7 +201,7 @@ class ConsensusEngine:
                 rule["last"] = now
 
             campaigns_touched = self._ingest_fingerprints(reporter, body.get("fingerprints", []), now)
-            samples_kept = self._ingest_samples(reporter, body.get("samples", []), now)
+            samples_kept = self._ingest_samples(reporter, body.get("samples", []), body.get("attestation"), now)
             return {"accepted": True, "reporter": reporter, "digests_counted": counted,
                     "campaigns": campaigns_touched, "samples": samples_kept,
                     "trust": round(self.trust(reporter), 3)}
@@ -235,9 +245,13 @@ class ConsensusEngine:
             touched += 1
         return touched
 
-    def _ingest_samples(self, reporter: str, entries: List[Dict[str, Any]], now: float) -> int:
+    def _ingest_samples(self, reporter: str, entries: List[Dict[str, Any]], attestation: Any, now: float) -> int:
         import hashlib
 
+        try:
+            warranty = check_attestation(attestation)  # verify_report already refused samples without one
+        except ReportError:
+            return 0
         kept = 0
         for entry in entries[:20]:
             text = entry.get("text")
@@ -252,9 +266,29 @@ class ConsensusEngine:
                 continue
             bucket.append({"digest": digest, "reporter": reporter, "text": text[:4096], "ts": now,
                            "tool_class": str(entry.get("tool_class", "other")),
-                           "arg_names": [n for n in (entry.get("arg_names") or []) if isinstance(n, str)][:8]})
+                           "arg_names": [n for n in (entry.get("arg_names") or []) if isinstance(n, str)][:8],
+                           "attestation": dict(warranty)})
             kept += 1
         return kept
+
+    def forget_sample(self, digest: str) -> int:
+        """Erase every copy of the sample with this digest (the first 16 hex
+        characters of the SHA-256 of its text, as stored), for every rule.
+        Returns how many were removed; the caller saves the state. Copies
+        :meth:`load` dropped for want of an attestation count too: they are
+        still in the file until that save."""
+        removed = 0
+        with self._lock:
+            removed += self._dropped_samples.pop(digest, 0)
+            for policy_id in list(self.samples):
+                bucket = self.samples[policy_id]
+                kept = [s for s in bucket if not (isinstance(s, dict) and s.get("digest") == digest)]
+                removed += len(bucket) - len(kept)
+                if kept:
+                    self.samples[policy_id] = kept
+                else:
+                    del self.samples[policy_id]
+        return removed
 
     @staticmethod
     def _new_reporter(now: float) -> Dict[str, Any]:
@@ -351,6 +385,7 @@ class ConsensusEngine:
             "version": 1,
             "name": self.config["pack_name"] + "-similarity",
             "channel": self.config["pack_channel"],
+            "license": DATA_LICENSE,
             "description": "fingerprints of attack payloads at least {} organisations' guards blocked; "
                            "a similar live call is escalated to a human".format(self.config["min_orgs"]),
             "rules": rules,
@@ -363,6 +398,7 @@ class ConsensusEngine:
             "version": 1,
             "name": self.config["pack_name"],
             "channel": self.config["pack_channel"],
+            "license": DATA_LICENSE,
             "description": "exact-match indicators: arguments that at least {} organisations' guards "
                            "blocked, as seen by the mesh consensus engine".format(self.config["min_orgs"]),
             "rules": [{
@@ -412,6 +448,8 @@ class ConsensusEngine:
                      "catalogs": sorted(self.catalogs), "canaries": self.canaries, "rejected": self.rejected,
                      "campaigns": self.campaigns, "samples": self.samples}
         atomic_write(path, json.dumps(state, sort_keys=True).encode("utf-8"), mode=0o600)
+        with self._lock:
+            self._dropped_samples.clear()
 
     @classmethod
     def load(cls, path: str, *, now: Callable[[], float] = time.time) -> "ConsensusEngine":
@@ -428,5 +466,26 @@ class ConsensusEngine:
         engine.canaries = dict(state.get("canaries", {}))
         engine.rejected = int(state.get("rejected", 0))
         engine.campaigns = dict(state.get("campaigns", {}))
-        engine.samples = dict(state.get("samples", {}))
+        engine.samples = {}
+        for policy_id, bucket in dict(state.get("samples", {})).items():
+            # A sample from an older state has no attestation: it is dropped, and the next save drops it.
+            kept = []
+            for sample in bucket if isinstance(bucket, list) else []:
+                if not isinstance(sample, dict):
+                    continue
+                if _attested(sample):
+                    kept.append(sample)
+                elif isinstance(sample.get("digest"), str):
+                    digest = sample["digest"].lower()
+                    engine._dropped_samples[digest] = engine._dropped_samples.get(digest, 0) + 1
+            if kept:
+                engine.samples[policy_id] = kept
         return engine
+
+
+def _attested(sample: Mapping[str, Any]) -> bool:
+    try:
+        check_attestation(sample.get("attestation"))
+    except ReportError:
+        return False
+    return True

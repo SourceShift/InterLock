@@ -122,9 +122,21 @@ form rather than asking you to rename the branch.
 - **One approving review** and resolved conversations, for anything that touches
   `interlock/`, `js/`, `web/` or a workflow. Documentation-only PRs can land
   with checks green.
-- **DCO, not a CLA.** Sign off your commits with `git commit -s`
+- **DCO; there is no CLA.** Sign off your commits with `git commit -s`
   (`Signed-off-by:` line) to certify you wrote or have the right to contribute
   the change. There is no separate paperwork.
+- **Data comes with a warranty.** A change that adds data to the mesh
+  commons (indicators, fingerprints, redacted samples, or the sample strings in
+  a pack's `*.tests.json`) is covered by the same `Signed-off-by:`, which then
+  also warrants that the data:
+  1. was lawfully obtained;
+  2. contains no personal data;
+  3. contains no third party's confidential data.
+
+  You warrant that you have the data, not that you wrote it: attackers wrote
+  the payloads. That data is CC0-1.0 under [LICENSE-DATA](LICENSE-DATA); code
+  and packs stay Apache-2.0 under [LICENSE](LICENSE). A sample later found to
+  hold personal data is erased as [GOVERNANCE.md](GOVERNANCE.md#erasure) says.
 - **Auto-merge is welcome** once `ci-ok` is green and the PR has its review.
 
 ## Adding a detector

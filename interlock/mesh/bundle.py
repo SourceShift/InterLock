@@ -38,6 +38,11 @@ rule does not go dark again just because the community trusts it more.
 
 Mesh packs may not lock rules: ``locked`` is stripped, because a subscriber
 must always be able to disable a community rule in its own policy file.
+
+A pack names its licence as an SPDX id in ``license`` (decision R4): packs are
+``Apache-2.0`` unless they say otherwise, and the targets metadata publishes
+it. A rule may carry its own ``license`` (one taken from a project with another
+licence); like ``description`` it is metadata and not part of the rule's logic.
 """
 from __future__ import annotations
 
@@ -50,7 +55,7 @@ from ._util import canonical
 __all__ = [
     "STATUSES", "RINGS", "DEFAULT_CEILINGS", "VERDICT_RANK", "DEFAULT_MONITOR_SECONDS",
     "PackError", "normalize_pack", "rule_digest", "pack_summary", "apply_ring", "RingResult",
-    "GRANT_STATUSES", "check_grants", "grant_matches",
+    "GRANT_STATUSES", "check_grants", "grant_matches", "DEFAULT_PACK_LICENSE",
 ]
 
 STATUSES = ("experimental", "test", "stable", "deprecated")
@@ -66,6 +71,8 @@ DEFAULT_CEILINGS: Dict[str, Optional[str]] = {
 }
 VERDICT_RANK = {"escalate": 1, "modify": 2, "block": 3}
 DEFAULT_MONITOR_SECONDS = 7 * 86400
+#: A pack is code: Apache-2.0, the project's own licence, unless it says otherwise.
+DEFAULT_PACK_LICENSE = "Apache-2.0"
 
 #: How far a grant for a status reaches: a grant for ``test`` covers ``test``
 #: and ``stable`` rules. ``deprecated`` rules are never installed, so never granted.
@@ -74,7 +81,7 @@ GRANT_STATUSES: Dict[str, int] = {"experimental": 0, "test": 1, "stable": 2}
 #: Keys the subscriber sets on a rule when applying a ring; a pack author may
 #: not set them, so a pack cannot pre-empt the node's own safety settings.
 _SUBSCRIBER_KEYS = ("mode", "ceiling", "origin")
-_IGNORED_FOR_DIGEST = ("status", "mode", "ceiling", "origin", "description", "locked")
+_IGNORED_FOR_DIGEST = ("status", "mode", "ceiling", "origin", "description", "locked", "license")
 
 
 class PackError(ValueError):
@@ -85,7 +92,8 @@ def normalize_pack(doc: Any, *, name: str = "<pack>") -> Dict[str, Any]:
     """Validate the pack-level shape and fill in defaults.
 
     Every rule gets an explicit ``status`` (``experimental`` when missing), may
-    not carry subscriber-only keys, and may not be locked. Rule validity itself
+    not carry subscriber-only keys, and may not be locked. The pack gets an
+    explicit ``license`` (``Apache-2.0`` when missing). Rule validity itself
     (conditions, detectors, verdicts) is the policy loader's job and is checked
     when the pack is published and again when it is installed.
     """
@@ -96,7 +104,11 @@ def normalize_pack(doc: Any, *, name: str = "<pack>") -> Dict[str, Any]:
     rules = doc.get("rules")
     if not isinstance(rules, list) or not rules:
         raise PackError("{}: a pack needs a non-empty 'rules' list".format(name))
+    licence = doc.get("license", DEFAULT_PACK_LICENSE)
+    if not isinstance(licence, str) or not licence.strip():
+        raise PackError("{}: 'license' must be an SPDX licence identifier".format(name))
     out = copy.deepcopy(dict(doc))
+    out["license"] = licence
     out["rules"] = []
     seen = set()
     for index, rule in enumerate(rules):
@@ -124,7 +136,7 @@ def normalize_pack(doc: Any, *, name: str = "<pack>") -> Dict[str, Any]:
 
 
 def rule_digest(rule: Mapping[str, Any]) -> str:
-    """Identity of a rule's *logic*: everything but its status and prose.
+    """Identity of a rule's *logic*: everything but its status, prose and licence.
 
     Used to decide whether a rule is new to a node (monitor window) and to
     report which exact rule fired.
@@ -144,6 +156,7 @@ def pack_summary(doc: Mapping[str, Any]) -> Dict[str, Any]:
         "channel": doc.get("channel"),
         "rule_count": len(doc.get("rules", [])),
         "statuses": dict(sorted(counts.items())),
+        "license": doc.get("license", DEFAULT_PACK_LICENSE),
     }
 
 

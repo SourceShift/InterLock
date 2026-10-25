@@ -154,7 +154,9 @@ def test_the_recorder_follows_the_reporting_consent(tmp_path):
         node.set_report_consent(["counts", "sightings", "fingerprints"], alpha=2.5)
         recorder = install_recorder(node.dir)
         assert recorder.alpha == 2.5 and recorder.sample_rules == frozenset()
-        node.set_report_consent(["counts", "sightings", "samples"], sample_rules=["prompt_injection"])
+        from interlock.mesh.report import new_attestation
+        node.set_report_consent(["counts", "sightings", "samples"], sample_rules=["prompt_injection"],
+                                attestation=new_attestation())  # samples need the data warranty (M5)
         again = install_recorder(node.dir)
         assert again is not recorder and again.sample_rules == {"prompt_injection"}
         node.set_report_consent([])

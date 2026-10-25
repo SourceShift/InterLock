@@ -10,7 +10,8 @@ import pytest
 
 from interlock import SensorEvent, Verdict
 from interlock.mesh import catalog, metadata
-from interlock.mesh.bundle import DEFAULT_CEILINGS, PackError, apply_ring, check_grants, normalize_pack, rule_digest
+from interlock.mesh.bundle import (DEFAULT_CEILINGS, PackError, apply_ring, check_grants, normalize_pack, pack_summary,
+                                   rule_digest)
 from interlock.mesh.repository import PublishError, init_keys, load_signers, publish, verify_site
 from interlock.mesh.subscriber import Subscriber, SubscriberError, parse_spec
 from interlock.policy.declarative import PolicyError, load_policy, load_policy_file
@@ -75,6 +76,41 @@ def test_publish_writes_a_verifiable_site(commons):
     assert again["root_version"] == 1 and not again["root_changed"]
     assert again["targets_version"] == 2 and again["timestamp_version"] == 2
     assert verify_site(str(commons["site"]))["timestamp_version"] == 2
+
+
+def test_a_pack_is_apache_licensed_unless_it_says_otherwise(commons, tmp_path):
+    # The default, as normalised and as the targets metadata publishes it (custom field).
+    rule = {"id": "r", "verdict": "block", "when": {"arg": "x", "eq": 1}}
+    doc = normalize_pack({"version": 1, "rules": [rule]})
+    assert doc["license"] == "Apache-2.0" and pack_summary(doc)["license"] == "Apache-2.0"
+    assert pack_summary({"rules": [rule]})["license"] == "Apache-2.0"  # a raw document too
+    assert commons["publish"]["packs"]["packs/coding-agent.json"]["license"] == "Apache-2.0"
+    targets = json.loads((commons["site"] / "metadata" / "targets.json").read_text())
+    (entry,) = [t for name, t in targets["signed"]["targets"].items() if name.endswith("coding-agent.json")]
+    assert entry["custom"]["license"] == "Apache-2.0"
+    # An explicit licence is kept, published, and compiles: the loader takes it as metadata.
+    upstream = normalize_pack({"version": 1, "license": "DRL-1.1", "rules": [dict(rule, license="MIT")]})
+    assert upstream["license"] == "DRL-1.1" and pack_summary(upstream)["license"] == "DRL-1.1"
+    assert not load_policy(upstream, source="upstream").quarantined
+    for bad in ("", 3, None, ["Apache-2.0"]):
+        with pytest.raises(PackError, match="license"):
+            normalize_pack({"version": 1, "license": bad, "rules": [rule]})
+    # A per-rule licence is metadata: annotating a rule does not restart its monitor window.
+    assert rule_digest(dict(PACK["rules"][0], license="CC0-1.0")) == rule_digest(PACK["rules"][0])
+    source = tmp_path / "licensed"
+    (source / "packs").mkdir(parents=True)
+    licensed = dict(PACK, license="CC0-1.0", rules=[dict(PACK["rules"][0], license="MIT")] + PACK["rules"][1:])
+    (source / "packs" / "coding-agent.json").write_text(json.dumps(licensed))
+    result = publish(str(source), str(tmp_path / "licensed-site"), str(commons["keys"]))
+    assert result["packs"]["packs/coding-agent.json"]["license"] == "CC0-1.0"
+
+
+def test_an_installed_pack_keeps_its_licence(node, tmp_path):
+    doc, _, _ = node.resolve("coding-agent", "canary")
+    assert doc["license"] == "Apache-2.0"
+    policy = tmp_path / "p.json"
+    policy.write_text(json.dumps({"version": 1, "extends": "mesh:coding-agent@canary", "rules": []}))
+    assert not load_policy_file(str(policy)).quarantined
 
 
 def test_publish_refuses_a_pack_with_a_quarantined_rule(tmp_path):

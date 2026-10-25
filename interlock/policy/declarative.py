@@ -114,12 +114,15 @@ RULE_STATUSES: FrozenSet[str] = frozenset({"experimental", "test", "stable", "de
 RULE_MODES: FrozenSet[str] = frozenset({"enforce", "shadow"})
 RULE_CEILINGS: Dict[str, int] = {"escalate": 1, "modify": 2, "block": 3}
 RULE_ORIGINS: FrozenSet[str] = frozenset({"mesh"})
+#: ``license`` (an SPDX id, on a document or a rule) and a document's
+#: ``provenance`` are metadata (decision R4): they are checked for shape and
+#: never change what a rule decides.
 _RULE_KEYS = frozenset(
     {"id", "verdict", "reason", "when", "set", "locked", "phase", "detector", "with",
-     "widenable", "description", "on", "status", "mode", "ceiling", "origin"}
+     "widenable", "description", "on", "status", "mode", "ceiling", "origin", "license"}
 )
 _DOC_KEYS = frozenset({"version", "name", "description", "extends", "rules", "disable", "tools",
-                       "channel"})
+                       "channel", "license", "provenance"})
 _OVERLAY_KEYS = frozenset({"version", "name", "description", "rules", "widen", "tools"})
 
 #: Longest regex a ``matches`` condition may use, and the longest string it scans.
@@ -528,6 +531,9 @@ def _compile_with_extends(doc: Mapping[str, Any], source: str, base_dir: Optiona
     if depth > 8:
         raise PolicyError("'extends' nests deeper than 8 levels", source)
     _check_keys(doc, _DOC_KEYS, source, "policy")
+    _check_license(doc.get("license"), source)
+    if not isinstance(doc.get("provenance", {}), dict):
+        raise PolicyError("'provenance' must be an object", source)
     version = doc.get("version", SCHEMA_VERSION)
     if version != SCHEMA_VERSION:
         raise PolicyError("unsupported version {!r} (this interlock reads {})".format(
@@ -754,6 +760,11 @@ def _check_keys(obj: Mapping[str, Any], allowed: FrozenSet[str], where: str, wha
             what, ", ".join(hints), ", ".join(sorted(allowed))), where)
 
 
+def _check_license(value: Any, where: str) -> None:
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        raise PolicyError("'license' must be an SPDX licence identifier, e.g. \"Apache-2.0\"", where)
+
+
 def _compile_rule(raw: Any, where: str) -> _Compiled:
     if not isinstance(raw, dict):
         raise PolicyError("a rule must be an object", where)
@@ -775,6 +786,7 @@ def _compile_rule(raw: Any, where: str) -> _Compiled:
     origin = raw.get("origin")
     if origin is not None and origin not in RULE_ORIGINS:
         raise PolicyError("'origin' must be one of {}".format(", ".join(sorted(RULE_ORIGINS))), where)
+    _check_license(raw.get("license"), where)
     scope = _action_condition(raw["on"], where + " on") if "on" in raw else None
     scope_names = _actions_in([{"action": raw["on"]}]) if "on" in raw else None
     if "detector" in raw:

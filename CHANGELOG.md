@@ -76,6 +76,26 @@ breaking changes land.
   `x-interlock-keyowner` and `x-interlock-term-start`. New `GOVERNANCE.md`
   (who holds the commons' keys) and
   [root ceremony guide](docs/guides/mesh-root-ceremony.md).
+- A data licence and a data warranty for the mesh commons (decision R4). New
+  top-level `LICENSE-DATA`: indicators, fingerprints and redacted samples,
+  wherever they appear, are CC0-1.0, while code and packs stay Apache-2.0
+  under `LICENSE`. `CONTRIBUTING.md` adds a three-clause data warranty under
+  the DCO sign-off (lawfully obtained, no personal data, no third party's
+  confidential data) and says there is no CLA. `GOVERNANCE.md` adds the intake
+  floor for upstream packs (the licence must permit ingest, modification and
+  redistribution) and the erasure procedure (a sample with personal data
+  leaves the tree and the next release within 30 days). A pack names its
+  licence as an SPDX id in `license` (`normalize_pack` defaults it to
+  `Apache-2.0`, and `pack_summary` publishes it in the targets `custom`
+  field); a rule may carry its own `license`, metadata only and outside
+  `rule_digest`; the policy loader also accepts a document's `provenance`.
+  `ConsensusEngine.export_indicators` and `export_similarity` stamp
+  `"license": "CC0-1.0"`, and every forge proposal's `pack.json` and
+  `PROPOSAL.md` carry its licence and `provenance` (source, organisations, run
+  time); an indicator or similarity candidate's `organisations` now counts the
+  organisations behind it instead of restating `min_orgs`. `interlock mesh
+  consensus forget --state FILE --sample DIGEST`
+  (`ConsensusEngine.forget_sample`) erases a sample from a consensus state.
 
 - The console (`python -m interlock.console`, `interlock-console`): a local
   web app on loopback for the person running the agent - activity, the review
@@ -200,6 +220,21 @@ breaking changes land.
   `--fingerprints`; and the recorder follows the consent, not `config.json`'s
   `recorder`, so a node that recorded before this change records again only
   after `report enable --fingerprints` or `--sample RULE`.
+- Mesh samples need the reporter's data warranty. `interlock mesh report
+  enable --sample RULE` refuses (exit 64) without `--i-warrant-samples`, which
+  records `{"warranty": "lawful,no-personal-data,no-confidential", "at": TIME}`
+  as the `attestation` of the reporting consent in `state.json`
+  (`Subscriber.set_report_consent(..., attestation=)`, which refuses samples
+  without it). A consent record whose samples have no warranty reads as no
+  samples, so the recorder keeps none and `report build` leaves them out.
+  `build_report(..., attestation=)` puts it in every body that carries samples
+  (`interlock.mesh.report.WARRANTY`, `new_attestation`, `check_attestation`),
+  `verify_report` refuses samples without it, and the consensus engine stores
+  it with each sample and drops unattested samples from an older state on
+  load. Breaking: a report with samples built before this change is refused,
+  so nodes that share samples upgrade with the consensus service, and a node
+  that enabled samples before this change runs `report enable --sample RULE
+  --i-warrant-samples` again.
 
 ### Fixed
 

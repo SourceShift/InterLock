@@ -23,6 +23,13 @@ GRIDAI and FALCON generate and repair rules) may add candidates; whatever it
 returns goes through the same gates. The gates are the harness's: no
 quarantined rule, a false-positive rate on the benign corpus under budget, a
 p95 cost under budget, and recall over the samples above a floor.
+
+Every ``pack.json`` names its licence and its provenance (decision R4). The
+indicator and similarity packs are the consensus engine's exports, data under
+``CC0-1.0``; a drafted rule (pattern or drafter) is a rule like any other pack's,
+``Apache-2.0``. ``provenance`` says where the candidate came from, how many
+organisations stand behind it and when the forge ran. The sample strings in
+``tests.json`` are CC0-1.0 whatever the pack's licence (``LICENSE-DATA``).
 """
 from __future__ import annotations
 
@@ -32,10 +39,11 @@ import json
 import os
 import re
 import time
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from ..event import SensorEvent
 from ._util import atomic_write
+from .bundle import DEFAULT_PACK_LICENSE
 from .consensus import ConsensusEngine
 from .harness import DEFAULT_MAX_FP_RATE, DEFAULT_MAX_P95_US, gate, measure, recall
 
@@ -60,6 +68,7 @@ class Proposal:
 
     def markdown(self) -> str:
         ev = self.evidence
+        provenance = self.pack.get("provenance") or {}
         lines = ["# Proposal {}: {}".format(self.id, self.pack.get("name", "")), "",
                  self.pack.get("description", ""), "",
                  "**Gates:** {}".format("PASS" if self.passed else "FAIL: " + "; ".join(self.reasons)), "",
@@ -71,7 +80,15 @@ class Proposal:
                 if isinstance(value, float):
                     value = "{:.4%}".format(value) if key in ("fp_rate", "recall") else "{:.3f}".format(value)
                 lines.append("| {} | {} |".format(key, value))
-        lines += ["", "Every rule is `experimental`: on the canary ring it may only escalate, and it spends",
+        lines += ["", "| Licence and provenance | Value |", "|---|---|",
+                  "| license | `{}` |".format(self.pack.get("license", ""))]
+        lines += ["| provenance.{} | {} |".format(key, provenance[key])
+                  for key in ("source", "organisations", "generated") if key in provenance]
+        lines += ["", "The strings in `tests.json` are data: CC0-1.0 once in a commons (`LICENSE-DATA`), and the",
+                  "pull request that adds them carries the data warranty (lawfully obtained, no personal data,",
+                  "no third party's confidential data). Check them before you open it; a sample later found to",
+                  "hold personal data is erased as GOVERNANCE.md says.",
+                  "", "Every rule is `experimental`: on the canary ring it may only escalate, and it spends",
                   "the monitor window in shadow mode before it decides anything anywhere.", ""]
         return "\n".join(lines)
 
@@ -167,6 +184,11 @@ def _event_from_sample(sample: Mapping[str, Any]) -> Dict[str, Any]:
     return {"action": action, "args": {names[0]: sample["text"]}}
 
 
+def _orgs_behind(records: Mapping[str, Mapping[str, Any]], keys: Iterable[str]) -> int:
+    """Distinct organisations behind the ``keys`` of an engine's indicators or campaigns."""
+    return len({org for key in keys for org in records.get(key, {}).get("orgs", [])})
+
+
 def forge(engine: ConsensusEngine, *, benign: Sequence[SensorEvent], out_dir: str,
           attack_samples: Sequence[SensorEvent] = (), max_fp_rate: float = DEFAULT_MAX_FP_RATE,
           max_p95_us: int = DEFAULT_MAX_P95_US, min_recall: float = DEFAULT_MIN_RECALL,
@@ -179,20 +201,23 @@ def forge(engine: ConsensusEngine, *, benign: Sequence[SensorEvent], out_dir: st
     if indicators["rules"][0]["with"]["indicators"]:
         pack = copy.deepcopy(indicators)
         pack["rules"][0]["status"] = "experimental"
+        active = {"{}|{}".format(d["policy_id"], d["args_digest"]) for d in engine.decisions() if d["status"] == "active"}
         candidates.append({"source": "indicators", "pack": pack,
-                           "evidence": {"organisations": engine.config["min_orgs"],
+                           "evidence": {"organisations": _orgs_behind(engine.indicators, active),
                                         "rules": len(pack["rules"][0]["with"]["indicators"])}})
     similarity = engine.export_similarity()
     if any(r["with"]["fingerprints"] for r in similarity["rules"]):
         pack = copy.deepcopy(similarity)
         for rule in pack["rules"]:
             rule["status"] = "experimental"
+        active = {c["id"] for c in engine.campaign_status() if c["status"] == "active"}
         candidates.append({"source": "similarity", "pack": pack,
-                           "evidence": {"organisations": engine.config["min_orgs"],
+                           "evidence": {"organisations": _orgs_behind(engine.campaigns, active),
                                         "rules": sum(len(r["with"]["fingerprints"]) for r in pack["rules"])}})
     for rule in _pattern_candidates(engine):
         evidence = rule.pop("_evidence")
         pack = {"version": 1, "name": "forge-" + rule["id"], "channel": engine.config["pack_channel"],
+                "license": DEFAULT_PACK_LICENSE,
                 "description": "drafted by the forge from redacted samples: {!r}".format(evidence["fragment"][:80]),
                 "rules": [rule]}
         candidates.append({"source": "pattern", "pack": pack, "evidence": evidence})
@@ -210,9 +235,11 @@ def forge(engine: ConsensusEngine, *, benign: Sequence[SensorEvent], out_dir: st
                 rule.pop("locked", None)
                 rule.setdefault("id", "draft-{}-{}".format(re.sub(r"[^A-Za-z0-9_.-]", "-", policy_id)[:40], index))
                 pack = {"version": 1, "name": "draft-" + rule["id"], "channel": engine.config["pack_channel"],
+                        "license": DEFAULT_PACK_LICENSE,
                         "description": "drafted for {} by the configured drafter".format(policy_id), "rules": [rule]}
                 candidates.append({"source": "drafter", "pack": pack,
-                                   "evidence": {"samples": len(samples),
+                                   "evidence": {"organisations": len({s["reporter"] for s in samples}),
+                                                "samples": len(samples),
                                                 "sample_events": [_event_from_sample(s) for s in samples]}})
 
     proposals: List[Proposal] = []
@@ -238,6 +265,10 @@ def forge(engine: ConsensusEngine, *, benign: Sequence[SensorEvent], out_dir: st
             evidence["recall"] = recalled["recall"]
         proposal_id = "{}-{}".format(candidate["source"], hashlib.sha256(
             json.dumps(pack, sort_keys=True).encode("utf-8")).hexdigest()[:10])
+        # After the id, so the same evidence forged again keeps its proposal id.
+        pack = dict(pack, provenance={
+            "source": candidate["source"], "organisations": evidence.get("organisations"),
+            "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))})
         tests = [{"name": "sample {}".format(i), "expect": "ESCALATE_OR_BLOCK",
                   "event": {"action": e.action, "args": e.args}} for i, e in enumerate(sample_events[:20])]
         tests += [{"name": "benign {}".format(i), "expect": "ALLOW", "event": {"action": e.action, "args": e.args}}

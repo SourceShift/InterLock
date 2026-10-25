@@ -307,4 +307,7 @@ Release history is in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+The code and the policy packs are Apache-2.0. See [LICENSE](LICENSE).
+
+The data the mesh commons shares (indicators, fingerprints and redacted
+samples) is CC0-1.0. See [LICENSE-DATA](LICENSE-DATA).

@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from . import default_mesh_dir, metadata
 from ._util import atomic_write, iso, load_json, read_bounded
@@ -39,7 +39,7 @@ from .bundle import (DEFAULT_CEILINGS, DEFAULT_MONITOR_SECONDS, RINGS, PackError
                      normalize_pack)
 from .fingerprint import DEFAULT_ALPHA
 from .metadata import MetadataError, TrustedMetadata
-from .report import LAYERS
+from .report import LAYERS, ReportError, check_attestation
 
 __all__ = ["Subscriber", "SubscriberError", "Fetcher", "Config", "parse_spec", "resolve_extends",
            "watch_info", "DEFAULT_RING", "SPEC_PREFIX"]
@@ -292,26 +292,40 @@ class Subscriber:
 
     def report_consent(self) -> Dict[str, Any]:
         """What the operator enabled for upload: ``enabled_at`` (None while
-        reporting is off), the ``layers``, the fingerprint ``alpha`` and the
-        ``sample_rules``. A missing or malformed record reads as off."""
+        reporting is off), the ``layers``, the fingerprint ``alpha``, the
+        ``sample_rules`` and, while samples are enabled, the data warranty
+        (``attestation``, decision R4). A missing or malformed record reads as
+        off, and a samples layer without the warranty reads as no samples."""
         return _consent(self._load_state().get("report"))
 
     def set_report_consent(self, layers: Sequence[str] = (), *, alpha: float = DEFAULT_ALPHA,
-                           sample_rules: Sequence[str] = ()) -> Dict[str, Any]:
+                           sample_rules: Sequence[str] = (),
+                           attestation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
         """Record the node's one consent point; no ``layers`` turns reporting off.
 
         The record replaces the previous one. ``enabled_at`` stays put only when
         the new record enables nothing the old one did not (no new layer, no new
         sample rule); otherwise it moves to now, so a layer never covers time
         before its own enable, and an off-then-on never reaches back over the gap.
+
+        The samples layer needs the operator's data warranty (decision R4,
+        :func:`interlock.mesh.report.new_attestation`), which the record keeps
+        as ``attestation``; samples asked for without it raise
+        :class:`SubscriberError` and nothing is written.
         """
         unknown = sorted(set(layers) - set(LAYERS))
         if unknown:
             raise SubscriberError("unknown report layer(s): {}".format(", ".join(unknown)))
         rules = sorted({r for r in sample_rules if isinstance(r, str) and r})
         wanted = [layer for layer in LAYERS if layer in layers and (layer != "samples" or rules)]
+        warranty = None
+        if "samples" in wanted:
+            try:
+                warranty = check_attestation(attestation)
+            except ReportError as exc:
+                raise SubscriberError(str(exc))
         record: Dict[str, Any] = {"enabled_at": None, "layers": wanted, "alpha": float(alpha),
-                                  "sample_rules": rules if "samples" in wanted else []}
+                                  "sample_rules": rules if "samples" in wanted else [], "attestation": warranty}
         with _state_lock:
             state = self._load_state()
             before = _consent(state.get("report"))
@@ -648,14 +662,20 @@ class Subscriber:
 
 def _consent(raw: Any) -> Dict[str, Any]:
     """A ``state.json`` ``report`` record, normalised. Anything malformed reads
-    as off: consent is never inferred."""
-    off: Dict[str, Any] = {"enabled_at": None, "layers": [], "alpha": DEFAULT_ALPHA, "sample_rules": []}
+    as off: consent is never inferred, and samples without the data warranty
+    (decision R4) are no samples."""
+    off: Dict[str, Any] = {"enabled_at": None, "layers": [], "alpha": DEFAULT_ALPHA, "sample_rules": [],
+                           "attestation": None}
     if not isinstance(raw, dict):
         return off
     enabled_at, layers = raw.get("enabled_at"), raw.get("layers")
     if not isinstance(enabled_at, (int, float)) or isinstance(enabled_at, bool) or not isinstance(layers, list):
         return off
     rules = sorted({r for r in raw.get("sample_rules") or [] if isinstance(r, str) and r})
+    try:
+        attestation: Optional[Dict[str, Any]] = check_attestation(raw.get("attestation"))
+    except ReportError:
+        attestation, rules = None, []
     wanted = [layer for layer in LAYERS if layer in layers and (layer != "samples" or rules)]
     if not wanted:
         return off
@@ -663,7 +683,8 @@ def _consent(raw: Any) -> Dict[str, Any]:
     if not isinstance(alpha, (int, float)) or isinstance(alpha, bool) or alpha <= 0:
         alpha = DEFAULT_ALPHA
     return {"enabled_at": float(enabled_at), "layers": wanted, "alpha": float(alpha),
-            "sample_rules": rules if "samples" in wanted else []}
+            "sample_rules": rules if "samples" in wanted else [],
+            "attestation": attestation if "samples" in wanted else None}
 
 
 def _count_capped(subscriptions: Dict[str, Any]) -> int:
@@ -717,7 +738,10 @@ def install_recorder(mesh_dir: Optional[str] = None) -> Optional[Any]:
     if "fingerprints" not in consent["layers"] and "samples" not in consent["layers"]:
         return None
     from .fingerprint import Recorder
-    _RECORDER = Recorder(subscriber.dir, alpha=consent["alpha"], sample_rules=consent["sample_rules"])
+    # The samples layer stands only with the data warranty (decision R4):
+    # without one, _consent drops it and the recorder keeps no sample.
+    sample_rules = consent["sample_rules"] if consent["attestation"] else []
+    _RECORDER = Recorder(subscriber.dir, alpha=consent["alpha"], sample_rules=sample_rules)
     add_decision_observer(_RECORDER)
     return _RECORDER
 

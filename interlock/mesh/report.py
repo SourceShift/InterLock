@@ -15,7 +15,13 @@ decisions, or from anything without a published rule id.
 positive), so the consensus engine can demote it.
 
 **Fingerprints** and **samples**, recorded by the mesh recorder
-(:mod:`.fingerprint`) once the operator enabled them.
+(:mod:`.fingerprint`) once the operator enabled them. A body that carries
+samples also carries the reporter's **attestation**, the data warranty of
+decision R4 and when it was given: the samples were lawfully obtained and hold
+no personal data and no third party's confidential data (:data:`WARRANTY`).
+:func:`build_report` will not put samples in a body without one, and
+:func:`verify_report` refuses a body whose samples arrive without it.
+Fingerprints and samples are CC0-1.0 (``LICENSE-DATA``).
 
 **Counts** (Layer 0) are not part of a report. How many times each published
 rule fired, per verdict, tool class, phase and hour, is a separate projection
@@ -53,6 +59,7 @@ from .aggregate import count_key
 __all__ = [
     "REPORT_VERSION", "BUCKET_SECONDS", "MAX_DIGESTS", "LAYERS", "BASE_LAYERS", "ReportError", "ReporterKey",
     "tool_class", "build_report", "build_counts", "sign_report", "verify_report", "submit",
+    "WARRANTY", "new_attestation", "check_attestation",
 ]
 
 REPORT_VERSION = 1
@@ -80,6 +87,29 @@ _PAY = ("pay", "payment", "transfer", "charge", "refund", "invoice", "order")
 
 class ReportError(ValueError):
     """A report that cannot be built, signed or trusted."""
+
+
+#: What a reporter warrants about every sample it shares (decision R4,
+#: CONTRIBUTING.md): lawfully obtained, no personal data, no third party's
+#: confidential data. ``interlock mesh report enable --sample RULE`` records it
+#: only with ``--i-warrant-samples``.
+WARRANTY = "lawful,no-personal-data,no-confidential"
+
+
+def new_attestation(at: Optional[float] = None) -> Dict[str, Any]:
+    """The data warranty, given now (or at ``at``)."""
+    return {"warranty": WARRANTY, "at": float(time.time() if at is None else at)}
+
+
+def check_attestation(value: Any) -> Dict[str, Any]:
+    """Return ``value`` as ``{"warranty", "at"}`` if it is the data warranty,
+    or raise :class:`ReportError`."""
+    if (not isinstance(value, Mapping) or value.get("warranty") != WARRANTY
+            or not isinstance(value.get("at"), (int, float)) or isinstance(value.get("at"), bool)
+            or value["at"] <= 0):
+        raise ReportError("samples need the reporter's attestation (warranty {}: lawfully obtained, no personal "
+                          "data, no third party's confidential data)".format(WARRANTY))
+    return {"warranty": WARRANTY, "at": float(value["at"])}
 
 
 def tool_class(action: Any) -> str:
@@ -197,13 +227,16 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
                  fingerprints: Sequence[Mapping[str, Any]] = (),
                  samples: Sequence[Mapping[str, Any]] = (),
                  enabled_since: Optional[float] = None,
-                 enabled_layers: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+                 enabled_layers: Optional[Sequence[str]] = None,
+                 attestation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Project receipts in ``[since, until)`` into an unsigned report body.
 
     The body carries no counts; :func:`build_counts` projects those separately.
     ``fingerprints`` and ``samples`` come from the mesh recorder
     (:class:`interlock.mesh.fingerprint.Recorder`), which saw the arguments at
-    decision time; they are passed through with caps and shape checks.
+    decision time; they are passed through with caps and shape checks. A body
+    with samples carries ``attestation`` (see :func:`check_attestation`), and
+    samples without one raise :class:`ReportError`.
 
     ``enabled_since`` (the operator's enable timestamp) clamps ``since``, and
     then fingerprints and samples without a ``ts`` at or after it are left out
@@ -272,7 +305,7 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
                               "text": text[:MAX_SAMPLE_TEXT], "arg_names": names})
         if len(clean_samples) >= MAX_SAMPLES:
             break
-    return {
+    body: Dict[str, Any] = {
         "version": REPORT_VERSION,
         "reporter": reporter_id,
         "catalog": catalog_id,
@@ -283,6 +316,9 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
         "fingerprints": clean_fps,
         "samples": clean_samples,
     }
+    if clean_samples:
+        body["attestation"] = check_attestation(attestation)
+    return body
 
 
 _COUNTS_REFUSED = ("report field 'counts' is not allowed: counts leave a node only as secret shares "
@@ -350,6 +386,8 @@ def verify_report(envelope: Any, *, max_bytes: int = MAX_ENVELOPE) -> Dict[str, 
         if (not isinstance(s, dict) or not isinstance(s.get("policy_id"), str)
                 or not isinstance(s.get("text"), str) or len(s["text"]) > MAX_SAMPLE_TEXT):
             raise ReportError("malformed sample entry")
+    if body.get("samples") or "attestation" in body:
+        check_attestation(body.get("attestation"))
     return body
 
 

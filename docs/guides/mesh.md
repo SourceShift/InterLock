@@ -216,7 +216,7 @@ leave the node by two different routes:
 | sightings | `report enable` | "rule X is wrong here", an operator's false-positive statement | the **consensus** service, in the signed report | |
 | digests | `report enable --digests` | the SHA-256 of the arguments a rule **blocked or escalated**, exactly as the receipt stores it | the **consensus** service, in the signed report | arguments; anything a redacting or masking rule saw; rewrites; monitor-mode decisions |
 | fingerprints | `report enable --fingerprints` | a noised fingerprint of what a rule stopped ([below](#find-similar-attacks-without-sharing-text)) | the **consensus** service, in the signed report | the text |
-| samples | `report enable --sample RULE` | the redacted text, for the rules you name | the **consensus** service, in the signed report | text from rules you did not name |
+| samples | `report enable --sample RULE --i-warrant-samples` | the redacted text, for the rules you name | the **consensus** service, in the signed report | text from rules you did not name |
 
 ```bash
 interlock mesh report init                                  # an Ed25519 key: the only identity the mesh sees
@@ -233,8 +233,9 @@ interlock mesh report submit report.json --consensus https://consensus.example.o
 the enable time and the enabled layers in the mesh state (`state.json` in the
 mesh directory). It needs no commons, so a node can report without
 subscribing. A bare `enable` turns on counts and sightings, and `--digests`,
-`--fingerprints` (with `--alpha`) and `--sample RULE` each add their own layer.
-Each `enable` replaces the one before it, so name every layer you want.
+`--fingerprints` (with `--alpha`) and `--sample RULE` (with the data warranty,
+`--i-warrant-samples`, [below](#licences-and-the-data-warranty)) each add their
+own layer. Each `enable` replaces the one before it, so name every layer you want.
 `report enable --off` turns every layer off, the recorder included.
 
 **Never retroactive.** A report never holds anything observed before the
@@ -360,7 +361,7 @@ so a node can also record a **fingerprint** of what its guard blocked:
 
 ```bash
 interlock mesh report enable --fingerprints --alpha 1.5       # fingerprints (with counts and sightings)
-interlock mesh report enable --fingerprints --sample tool_result_injection   # plus redacted samples for one rule
+interlock mesh report enable --fingerprints --sample tool_result_injection --i-warrant-samples   # plus redacted samples for one rule
 interlock mesh report enable --off
 ```
 
@@ -387,7 +388,9 @@ fingerprints each call's arguments the same way (without the noise) and
 Similarity is evidence, not proof, so the default is to ask a human.
 
 A **sample** is the redacted text itself, kept only for rules you name, capped,
-and carrying the argument names it came from. Samples exist for the forge.
+and carrying the argument names it came from. Samples exist for the forge, and
+sharing one means giving the data warranty
+([Licences and the data warranty](#licences-and-the-data-warranty)).
 
 ## Measure a rule before you ship it
 
@@ -421,6 +424,80 @@ fragment most samples share as an `escalate` rule on the argument names the
 samples named. A `drafter` callable (an LLM behind a validation loop) can be
 plugged in through the Python API; whatever it returns runs through the same
 gates. A human reviews the proposal and opens the pull request.
+
+## Licences and the data warranty
+
+The commons holds two kinds of thing under two licences (decision R4 in
+`research/mesh-decisions.md`):
+
+| What | Licence | Where it says so |
+|---|---|---|
+| code and policy packs | Apache-2.0 ([LICENSE](https://github.com/SourceShift/InterLock/blob/main/LICENSE)) | a pack's `license` field; a pack that names none is `Apache-2.0` |
+| indicators, fingerprints and redacted samples, wherever they appear | CC0-1.0 ([LICENSE-DATA](https://github.com/SourceShift/InterLock/blob/main/LICENSE-DATA)) | `"license": "CC0-1.0"` on the indicator and similarity packs the consensus engine exports |
+
+A pack names its licence as an SPDX identifier in `license`, and `publish`
+writes it into the targets metadata (each pack's `custom.license`), so a node
+sees it before it installs anything. A rule may carry its own `license` when
+only that rule came from a project with another licence. Both are metadata:
+they never change what a rule decides, and annotating a rule does not restart
+its monitor window.
+
+Every forge proposal's `pack.json` carries a `license` and a `provenance`
+block: where the candidate came from (`source`), how many organisations stand
+behind it (`organisations`) and when the forge ran (`generated`).
+`PROPOSAL.md` shows both. The indicator and similarity candidates are
+CC0-1.0, and a drafted rule is Apache-2.0, like any other pack. The sample
+strings in `tests.json` are CC0-1.0 whatever the pack's licence.
+
+**The data warranty.** A redacted sample is text an attacker wrote and your
+guard saw, so sharing one means warranting what you hold, not that you wrote
+it. `--sample` therefore needs an explicit flag:
+
+```bash
+interlock mesh report enable --sample tool_result_injection --i-warrant-samples
+```
+
+With it you warrant that every sample is lawfully obtained, contains no
+personal data, and contains no third party's confidential data. These are the
+three clauses a contributor's sign-off covers
+([CONTRIBUTING.md](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md)).
+Without the flag, `report enable --sample` refuses (exit 64). The warranty is
+recorded with the reporting consent in the node's `state.json`, with the time
+it was given, and every report that carries samples carries it too, inside the
+signed body:
+
+```json
+{"attestation": {"warranty": "lawful,no-personal-data,no-confidential", "at": 1800000000.0}}
+```
+
+The recorder keeps no samples on a node that has not given the warranty: a
+consent record whose samples carry none (one written before this change, or
+edited by hand) reads as no samples. `report build` leaves recorded samples
+out, saying so, when no warranty is on record (for example, after a `report
+enable` without `--sample`, or while reporting is off).
+
+The consensus service refuses a report whose samples arrive without the
+attestation, and stores the attestation with each sample it keeps. **This
+changes the wire format:** a report with samples, built by a node from before
+this change, is refused whole, so nodes that share samples upgrade together
+with the consensus service. Reports without samples are unaffected. A
+consensus state file written before the change drops its unattested samples
+when it is loaded.
+
+**Erasure.** A sample reported to contain personal data leaves a commons'
+tree and its next release within 30 days
+([GOVERNANCE.md](https://github.com/SourceShift/InterLock/blob/main/GOVERNANCE.md#erasure)). On the consensus side:
+
+```bash
+interlock mesh consensus forget --state consensus.json --sample 8e91205596c31285
+```
+
+removes every copy of the sample with that digest, under every rule, and
+rewrites the state file the engine's own way (mode 0600). The digest is the
+one the state holds: the first 16 hex characters of the SHA-256 of the
+sample's text. Stop the consensus service first, because it keeps the state in
+memory and writes it back after the next report. Exit 2 means no sample has
+that digest; exit 3 means the state file could not be read or written back.
 
 ## The transparency log
 
