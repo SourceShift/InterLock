@@ -276,7 +276,8 @@ gaps are permanent, so they're listed by name in `installInterceptors().uncovere
 
 - **ESM named imports.** `import { readFile } from "node:fs"` and
   `import * as fs from "node:fs"` are bound to the original function when the
-  module loads, and no patch can redirect them. Only `require("node:fs")` and a
+  module loads, and no patch can redirect them. The report names this hole
+  `esm.named-import`; it is a binding, not an action, so no rule can fire on it. Only `require("node:fs")` and a
   **default** import (`import fs from "node:fs"`, which is the same object) see
   the interceptor. Write your agent's file and process code with default imports
   or `require`.

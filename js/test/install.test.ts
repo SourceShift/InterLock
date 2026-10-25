@@ -30,6 +30,7 @@ test("install: the coverage report names what is and is not guarded", async () =
         assert.ok(interceptors.covered.includes(action), `covered: ${action}`);
       }
       for (const action of [
+        "esm.named-import",
         "fs.readFileSync",
         "child_process.spawn",
         "http.request",
