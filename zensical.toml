@@ -6,6 +6,8 @@
 #
 #   zensical serve      # preview at http://localhost:8000/docs/
 #   zensical build      # write site/docs/
+#   make docs           # build both halves into site/ and check them
+#   make docs-serve     # serve the finished tree, both halves linked
 #
 # The manual lives under /docs/, not at the host's root. `site_url` carries
 # that path and `site_dir` mirrors it, so the local site/ tree has the same
@@ -194,6 +196,10 @@ pymdownx.keys = {}
 pymdownx.magiclink = {}
 pymdownx.mark = {}
 pymdownx.smartsymbols = {}
+# Drops HTML comments from the output. The landing's prose and the generated
+# references keep maintainer notes in <!-- --> blocks, and without this they
+# would ship in every page's source.
+pymdownx.striphtml = {}
 pymdownx.superfences.custom_fences = [
   { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
 ]

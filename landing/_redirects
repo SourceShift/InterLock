@@ -8,10 +8,11 @@
 # Rules match top to bottom and the first match wins. Pages follows a
 # matching redirect even when a file exists at the source path, so there is
 # no catch-all `/* /docs/:splat` (it would match /docs/... itself and loop)
-# and no `/assets/*` rule (the landing page's own assets live there). Every
-# source below is a path the manual served at the host root before it moved
-# under /docs/ on 2026-10-25. The list is frozen: a page added since never
-# lived at the root, so it needs no entry here.
+# and no `/assets/*` splat (the landing page's own assets live there; the
+# manual-only files are listed one by one instead). Every source below is a
+# path the manual served at the host root before it moved under /docs/ on
+# 2026-10-25. The list is frozen: a page or asset added since never lived at
+# the root, so it needs no entry here.
 #
 # Static rules first, then splat rules, as Pages requires.
 
@@ -27,6 +28,11 @@
 /concepts/ /docs/concepts/ 301
 /security-model /docs/security-model/ 301
 /security-model/ /docs/security-model/ 301
+
+# Assets only the manual has. The theme's own assets exist at both roots.
+/assets/stylesheets/landing.css /docs/assets/stylesheets/landing.css 301
+/assets/stylesheets/diagram.css /docs/assets/stylesheets/diagram.css 301
+/assets/javascripts/diagram.js /docs/assets/javascripts/diagram.js 301
 
 /guides/* /docs/guides/:splat 301
 /reference/* /docs/reference/:splat 301

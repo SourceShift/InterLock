@@ -30,6 +30,7 @@ on:
       - "overrides/**"
       - "zensical.toml"
       - "zensical.landing.toml"
+      - "scripts/check_site.py"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
@@ -38,6 +39,7 @@ on:
       - "overrides/**"
       - "zensical.toml"
       - "zensical.landing.toml"
+      - "scripts/check_site.py"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -72,20 +74,17 @@ jobs:
       - name: Build the manual
         run: zensical build --clean --strict
 
-      # The shape the deploy relies on. The landing build owns the root of
-      # site/: its index, its 404.html, and landing/_redirects copied in (the
-      # only place Pages reads a _redirects). The manual build owns site/docs/,
-      # whose own 404.html Pages picks for anything missing under /docs/, since
-      # it serves the closest 404.html walking up from the requested path. If
-      # either config's site_dir drifts, fail here rather than on the host.
-      - name: Check the deploy tree
-        run: |
-          test -f site/index.html
-          test -f site/404.html
-          test -f site/_redirects
-          test -f site/robots.txt
-          test -f site/docs/index.html
-          test -f site/docs/404.html
+      # What neither build can check for itself: that the landing config still
+      # mirrors the manual's, that the landing's links into the manual resolve
+      # (they are served URLs, because the landing build cannot see the
+      # manual's files), and that the tree has the shape the deploy relies on.
+      # The landing build owns the root of site/ -- its index, its 404.html,
+      # and landing/_redirects copied in, the only place Pages reads one. The
+      # manual build owns site/docs/, whose own 404.html Pages picks for
+      # anything missing under /docs/, since it serves the closest 404.html
+      # walking up from the requested path.
+      - name: Check the site
+        run: python3 scripts/check_site.py
 
       - name: Upload the built site
         uses: actions/upload-artifact@v4

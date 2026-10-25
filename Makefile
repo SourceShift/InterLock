@@ -8,9 +8,12 @@
 PY ?= python3
 NPM ?= npm
 RUFF ?= ruff
+# Zensical is pinned in .github/workflows/docs.yml; without an install, run
+# `make docs ZENSICAL='uvx --from zensical==0.0.70 zensical'`.
+ZENSICAL ?= zensical
 
 .DEFAULT_GOAL := help
-.PHONY: help check check-python check-js check-web check-rust check-all
+.PHONY: help check check-python check-js check-web check-rust check-all docs docs-serve
 
 help: ## Show the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -42,3 +45,16 @@ check-rust: ## Build the native scope store and run its parity suite
 	$(PY) -m pytest -q tests/test_scope_backend.py tests/test_scopes.py
 
 check-all: check check-js check-web ## Everything except the optional Rust build
+
+docs: ## Build the whole site into site/ (landing, then the manual) and check it
+	# Two builds, in this order: the landing build owns site/ and empties it,
+	# the manual's then writes site/docs/ beside it. See zensical.landing.toml.
+	rm -rf site
+	$(ZENSICAL) build -f zensical.landing.toml --clean --strict
+	$(ZENSICAL) build --clean --strict
+	$(PY) scripts/check_site.py
+
+docs-serve: docs ## Serve the built site at http://localhost:8000/ with both halves linked
+	# `zensical serve` previews one build at a time and the links between the
+	# two lead nowhere; this serves the finished tree, so they resolve.
+	$(PY) -m http.server 8000 --bind 127.0.0.1 --directory site

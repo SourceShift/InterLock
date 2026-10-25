@@ -63,6 +63,15 @@ console binds loopback only; start it on a free port and stop it when done.
 
 **Tight fix-loops:** batch iterative fixes on the branch; ship once at the end.
 
+## Docs are public
+
+Everything under `docs/` is built and published at https://interlock.sourceshift.ai/docs/
+by the Docs workflow, Markdown or not; Zensical has no exclude list. Scratch -- todos,
+audits, notes -- goes in `todos/`, never `docs/todos/`, and `tests/test_site_config.py`
+fails if that directory comes back. The landing page at the host root is `landing/`,
+a second one-page build; `make docs` builds both halves into `site/` and checks them,
+`make docs-serve` serves the result.
+
 ## Guards
 
 Install once per clone, and again whenever `.githooks/` changes:

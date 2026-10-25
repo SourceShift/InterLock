@@ -13,8 +13,10 @@
 #   zensical serve -f zensical.landing.toml   # preview at http://localhost:8000/
 #   zensical build -f zensical.landing.toml   # write site/
 #
-# In the preview the links into the manual lead nowhere, because the manual
-# is the other build; on the host they resolve.
+# In that preview the links into the manual lead nowhere, because the manual
+# is the other build; `make docs-serve` serves the finished tree with both
+# halves in place, and `make docs` runs the two builds in the right order and
+# scripts/check_site.py after them.
 #
 # What is here mirrors zensical.toml where the theme needs it on this page
 # (palette, fonts, favicon, Markdown extensions, so the prose renders the
@@ -106,6 +108,10 @@ pymdownx.keys = {}
 pymdownx.magiclink = {}
 pymdownx.mark = {}
 pymdownx.smartsymbols = {}
+# Drops HTML comments from the output. The landing's prose and the generated
+# references keep maintainer notes in <!-- --> blocks, and without this they
+# would ship in every page's source.
+pymdownx.striphtml = {}
 pymdownx.superfences.custom_fences = [
   { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
 ]

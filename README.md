@@ -283,6 +283,8 @@ settings that weaken protection.
 
 ## Documentation
 
+The manual is published at [interlock.sourceshift.ai/docs](https://interlock.sourceshift.ai/docs/);
+the same pages are the Markdown linked below, so either reads the same.
 Start with [getting started](docs/getting-started.md), then
 [concepts](docs/concepts.md). Everything else is indexed on the
 [docs home page](docs/index.md): guides for each task, the

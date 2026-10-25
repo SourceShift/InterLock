@@ -11,9 +11,10 @@ Each test is named for the drift it prevents:
 The scan is deliberately narrow. A detector count is a number immediately
 followed by "detector(s)" (or "ready-made rule(s)"/"built-in rule(s)"), or the
 standalone number in the landing page's ``il-card__num`` stat tile. Not any
-number that happens to appear near the word. The generated detector catalog and
-``docs/todos/`` are excluded: the first is owned by
-``scripts/gen_detector_catalog.py``, the second is scratch.
+number that happens to appear near the word. The generated detector catalog is
+excluded: it is owned by ``scripts/gen_detector_catalog.py``. The landing page,
+``landing/index.md``, is scanned alongside ``docs/``: its stat tile is the
+headline count, and it is its own Zensical build (see zensical.landing.toml).
 """
 from __future__ import annotations
 
@@ -27,14 +28,13 @@ from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
 DOCS = ROOT / "docs"
+LANDING = ROOT / "landing"
 CLI_REF = DOCS / "reference" / "cli.md"
 API_REF = DOCS / "reference" / "python-api.md"
 
 #: Generated from the detector modules; its count line is checked by
 #: ``scripts/gen_detector_catalog.py --check`` instead.
 EXCLUDED_COUNT_FILES = {DOCS / "reference" / "detectors.md"}
-#: Scratch notes, not published documentation.
-EXCLUDED_COUNT_DIRS = {DOCS / "todos"}
 
 COUNT_PATTERNS = (
     re.compile(r"(?i)\bdetectors?\s*:\s*(\d+)\b"),
@@ -81,10 +81,8 @@ SIGNATURE_START = re.compile(r"^([A-Za-z_]\w*)\(")
 
 def _count_files() -> Iterator[Path]:
     yield README
-    for path in sorted(DOCS.rglob("*.md")):
+    for path in sorted([*DOCS.rglob("*.md"), *LANDING.rglob("*.md")]):
         if path in EXCLUDED_COUNT_FILES:
-            continue
-        if any(parent in EXCLUDED_COUNT_DIRS for parent in path.parents):
             continue
         yield path
 

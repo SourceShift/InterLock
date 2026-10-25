@@ -18,7 +18,10 @@
  * fullscreen). Both states share the il-diagram--fullscreen class, so the
  * stylesheet has one thing to style.
  *
- * No dependencies and no network: this file and diagram.css are the feature.
+ * No dependencies and no network of its own: this file and diagram.css are
+ * the whole feature. It only ever runs once the theme's bundle has fetched
+ * Mermaid from unpkg.com; where that load is blocked the fence stays a <pre>
+ * and nothing here fires.
  */
 (function () {
   "use strict";
