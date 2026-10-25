@@ -37,6 +37,7 @@ minutes), then read [how interlock works](concepts.md).
 | [Sandbox](guides/sandbox.md) | Run subprocesses under OS-level confinement built from your policy |
 | [Mesh](guides/mesh.md) | Subscribe to community policy packs, verified from a pinned root and applied in monitor mode first; publish a commons; or report counts with Prio3 validity proofs over DAP |
 | [Production checklist](guides/production.md) | Roll out safely: prove protection is on, monitor mode, refusals, logging, deployment |
+| [Releasing](guides/releasing.md) | Cut a signed PyPI/npm release from a tag with trusted publishing and provenance attestations |
 
 ### What the mesh adds
 

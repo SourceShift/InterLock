@@ -73,7 +73,7 @@ worse at both jobs.
 | R19 | Tiered sidecar failure posture | `shipped` | M | agentjail review |
 | R20 | Placeholder credentials | `shipped` | M | agentjail review |
 | R21 | MCP inventory scan | `shipped` | S | agentjail review |
-| R22 | Signed PyPI/npm distribution | `not started` | S | agentjail review |
+| R22 | Signed PyPI/npm distribution | `shipped` | S | agentjail review |
 | H1–H7 | SQL analysis, masking engine, review queue, runbooks, HTTP rules, metrics, MCP limits | `shipped` | L | hoop review |
 | R23 | OTLP event export | `shipped` | M | operational review |
 | R24 | Behavioural baseline → policy generator | `shipped` | L | operational review |
@@ -1137,7 +1137,7 @@ here in short.
 | R19 | `RemoteEngine(unreachable="deny" \| "degraded" \| "allow")` in Python and Node.js; the sidecar publishes a signed offline fallback policy (`--fallback-policy`). `deny` stays the default | `tests/test_sidecar_fallback.py`, `js/test/fallback.test.ts` |
 | R20 | `interlock.credentials`: `{{secret:id}}` placeholders filled after the decision at the enforcement boundary (not as a rule, which a later rule could observe), bounded by action and host, scrubbed from results | `tests/test_credentials.py` |
 | R21 | `interlock mcp scan` / `where`: every MCP server in seven clients' configs, risk notes (unpinned packages and images, plain HTTP, inline credentials), and `--emit-policy` | `tests/test_mcp_inventory.py` |
-| R22 | `not started`: publish to PyPI and npm with trusted publishing and provenance attestations. Left out of this round because it needs network access to the registries | — |
+| R22 | `.github/workflows/release.yml` publishes on a `v*` tag with trusted publishing (OIDC — no registry token in the repo) and provenance: PyPI gets a PEP 740 attestation, npm gets `--provenance`, and the tag only reaches a publish step after `scripts/check_release.py` proves it agrees with `pyproject.toml`, `js/package.json`, `web/package.json` and `CHANGELOG.md`, the suite passes, and the wheel installs and reports the same version. Publishing itself waits on the trusted publisher configured on each registry (`docs/guides/releasing.md`) | `tests/test_release_check.py`; `python3 scripts/check_release.py v0.0.1` |
 
 Also adopted from the review: `tool_output_secret_redactor`, a result-phase
 detector masking credentials in tool output before the agent reads it.

@@ -59,3 +59,6 @@ include = ["interlock*"]
 [tool.setuptools.package-data]
 # PEP 561: ships the inline type hints to type checkers and IDEs.
 interlock = ["py.typed"]
+# The vendored VDAF code carries its own licence; a wheel that drops it
+# distributes the code without the notice it was taken under.
+"interlock.mesh.vdaf" = ["LICENSE.md"]

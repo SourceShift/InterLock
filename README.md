@@ -301,8 +301,11 @@ all gated in CI. In-process overhead is **243 µs p50 / 392 µs p95** over an
 empty-engine baseline ([methodology](benchmarks/overhead/README.md)). MCP
 client sessions attach with `interlock.attach()`; its compatibility contract is
 `interlock attach --check`, and `interlock.attach_monitor()` notices a guarded
-client changing underneath. Next on the [roadmap](ROADMAP.md): rules over data
-flow between tools, and signed PyPI/npm releases.
+client changing underneath. A tag-cut release workflow publishes to PyPI and
+npm with trusted publishing and provenance attestations
+([releasing](docs/guides/releasing.md)); the registries' trusted publishers are
+the one remaining setup step. Next on the [roadmap](ROADMAP.md): the first
+signed release, and mitigations for the accepted limits in the security model.
 
 ## Contributing
 

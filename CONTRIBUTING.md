@@ -259,8 +259,10 @@ While the version is `0.x`, breaking changes land in the minor number; from 1.0
 the project follows Semantic Versioning. Maintainers cut a release from `main`
 by moving the `Unreleased` entries under a new version heading, bumping
 `version` in `pyproject.toml`, `js/package.json` and `web/package.json`, and
-publishing the Python package and Node client from that commit. Contributors do
-not bump versions.
+tagging that commit. The tag publishes both packages; the steps and the
+one-time trusted-publisher setup on PyPI and npm are in
+[docs/guides/releasing.md](docs/guides/releasing.md). Contributors do not bump
+versions.
 
 ## Maintainer tooling (not needed to contribute)
 

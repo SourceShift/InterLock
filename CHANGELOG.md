@@ -11,6 +11,17 @@ breaking changes land.
 
 ### Added
 
+- Signed release pipeline (ROADMAP R22): `.github/workflows/release.yml` runs
+  on a `v*` tag and publishes `interlock-guard` to PyPI and npm using trusted
+  publishing (OpenID Connect) instead of a long-lived registry token. PyPI
+  uploads carry a PEP 740 provenance attestation (`attestations: true`) and the
+  npm publish uses `--provenance`, so each artifact is tied to the repository
+  and commit that built it. `scripts/check_release.py` gates the irreversible
+  step: the tag must agree with `pyproject.toml`, `js/package.json`,
+  `web/package.json` and a `CHANGELOG.md` section, the suite must pass, and the
+  wheel must install and report the tagged version. See
+  [docs/guides/releasing.md](docs/guides/releasing.md). The vendored VDAF
+  licence now ships in the wheel's package data.
 - Flow-typed policy (ROADMAP R9): `interlock.flow` tracks boundary provenance -
   the value a guarded tool returned is remembered under `tool:<action>` and
   `principal:<id>` and attached to `SensorEvent.origins` when a later call

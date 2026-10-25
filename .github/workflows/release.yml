@@ -1,0 +1,190 @@
+name: Release
+
+# Publishing happens on a tag, never on a branch: the tag names the exact
+# commit whose artifacts are published, so "which commit is 0.0.2?" has one
+# answer. Everything the registry can hold onto — metadata, changelog, code —
+# is checked before the first upload, because PyPI and npm do not allow a
+# version number to be re-used.
+#
+# Both registries are set up for TRUSTED PUBLISHING (OIDC): there is no
+# long-lived API token in this repo's secrets. The workflow proves its identity
+# with the `id-token: write` permission and the registry checks it against the
+# publisher configured for the project. See docs/guides/releasing.md for the
+# one-time setup on pypi.org and npmjs.com.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: verify the tag against the tree
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The changelog check must read the tagged commit, not a merge ref.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" build twine
+
+      - name: Tag agrees with pyproject.toml, js/package.json and CHANGELOG.md
+        id: version
+        run: |
+          version="$(python3 scripts/check_release.py --print-version "${GITHUB_REF_NAME}")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Test suite
+        run: python3 -m pytest -q
+
+      - name: Build the sdist and wheel
+        run: python3 -m build
+
+      - name: Check the distribution metadata
+        run: python3 -m twine check dist/*
+
+      - name: The wheel is importable and carries the version
+        run: |
+          python3 -m venv /tmp/wheelcheck
+          /tmp/wheelcheck/bin/pip install --quiet dist/*.whl
+          /tmp/wheelcheck/bin/python - <<'PY'
+          import importlib.metadata
+          import interlock
+          expected = importlib.metadata.version("interlock-guard")
+          print("installed", expected, "from", interlock.__file__)
+          assert expected == "${{ steps.version.outputs.version }}"
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+
+  verify-node:
+    name: verify the npm package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: js/package-lock.json
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      - name: The tarball contains exactly what ships
+        run: npm pack --dry-run
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: [verify]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # The only credential: an OIDC token GitHub mints for this run and the
+      # registry verifies. No password, no PYPI_API_TOKEN secret.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Publish
+        # `release/v1` is the action's maintained release branch; it uploads
+        # with `pypa/gh-action-pypi-publish`'s default attestations, so the
+        # PyPI page shows a PEP 740 provenance attestation for the files.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+          print-hash: true
+
+  publish-npm:
+    name: publish to npm
+    needs: [verify, verify-node]
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      # npm trusted publishing: the CLI exchanges this OIDC token for a
+      # short-lived publish token, and `--provenance` attaches a signed
+      # statement that the tarball was built in this repository at this ref.
+      id-token: write
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Trusted publishing needs a recent npm
+        # Node 22 bundles npm 10; OIDC publishing landed in npm 11.5.
+        run: npm install --global npm@11
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Publish with provenance
+        run: npm publish --provenance --access public
+
+  github-release:
+    name: attach the artifacts to a GitHub release
+    needs: [verify, publish-pypi, publish-npm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --verify-tag \
+            --title "interlock ${GITHUB_REF_NAME}" \
+            --generate-notes
