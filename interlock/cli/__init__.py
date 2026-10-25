@@ -25,6 +25,7 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("report", "summarize a receipt log: blocks, monitor findings, latency", "report"),
     ("hook", "decide one coding-agent tool call (run by the agent)", "hook"),
     ("install-hook", "put interlock in front of Claude Code, Codex or Cursor", "install_hook"),
+    ("attach", "check the import seams attach() patches (compatibility contract)", "attach"),
     ("policy", "check a declarative policy file, or show a built-in pack", "policy"),
     ("learn", "draft a reviewable policy from observed receipts", "learn"),
     ("trust", "trust a project's policy overlay", "trust"),

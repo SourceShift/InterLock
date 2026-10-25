@@ -294,10 +294,11 @@ committed benign corpora: **0 false positives over 70 events plus a 20-event
 held-out split**, per-rule and per-detector numbers, **0 of 560 poisoned calls
 induced to block**, and **28 ms worst case** on pathological-but-legal input —
 all gated in CI. In-process overhead is **243 µs p50 / 392 µs p95** over an
-empty-engine baseline ([methodology](benchmarks/overhead/README.md)). Next on
-the [roadmap](ROADMAP.md): rules over data flow between tools, an import
-monitor that notices a guarded client changing underneath (MCP client sessions
-already attach with `interlock.attach()`), and signed PyPI/npm releases.
+empty-engine baseline ([methodology](benchmarks/overhead/README.md)). MCP
+client sessions attach with `interlock.attach()`; its compatibility contract is
+`interlock attach --check`, and `interlock.attach_monitor()` notices a guarded
+client changing underneath. Next on the [roadmap](ROADMAP.md): rules over data
+flow between tools, and signed PyPI/npm releases.
 
 ## Contributing
 

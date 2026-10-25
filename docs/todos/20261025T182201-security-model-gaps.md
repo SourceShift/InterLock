@@ -251,7 +251,7 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 ## T12 — Python import-time hooks (ROADMAP R11)
 
 **Status:** done (2026-10-25) — MCP attached at import; model SDKs confirmed to
-have no class seam
+have no class seam; compatibility contract + import monitor shipped
 
 - **Ship the opt-in import hook**
   - status: done
@@ -272,10 +272,32 @@ have no class seam
     attach wraps nothing twice, detach restores, sync sessions, a failing
     install does not break the import, and the same verdict from
     `guard_mcp_session(session)` and from the attached class.
-  - Not shipped, and now recorded in `ROADMAP.md` R11: the model SDKs are
-    adapter-guarded by design (they never execute tools — the application's
-    dispatcher does), and the import **monitor** / compatibility contract are
-    still open.
+  - The model SDKs stay adapter-guarded by design (they never execute tools —
+    the application's dispatcher does); the import **monitor** and
+    compatibility contract follow.
+- **Compatibility contract**
+  - status: done (2026-10-25)
+  - last worked on: 2026-10-25
+  - `Seam`/`MCP_SEAM`, `check_seam()`, `inspect_surfaces()` and
+    `interlock attach --check` (exit 1 on an installed, attachable,
+    incompatible seam). `attach()` raises `_Incompatible` internally and
+    reports `incompatible seam: ...` in `missed`; nothing is patched.
+  - Tests: `tests/test_attach_monitor.py` (contract accepts async, sync and
+    `*args` shapes; names each break; refuses before patching); a real-SDK
+    check runs under `importorskip("mcp.client.session")`.
+- **Import monitor**
+  - status: done (2026-10-25)
+  - last worked on: 2026-10-25
+  - `attach_monitor()` / `from interlock.attach import monitor` records
+    provenance at attach (class object, wrapper, file SHA-256, distribution
+    version) and reports `missing`, `replaced`, `unpatched`, `modified`,
+    `removed`, `version`. `attach()` repairs replaced/unpatched classes and
+    adds the findings to `AttachReport.drifts` (`repaired` true/false).
+  - A second default `attach()` now reuses the existing attachment rather than
+    replacing it, so provenance survives; a changed file is never re-hashed
+    away by a second attach.
+  - Tests: restore, replace, file modify, module removal, version change,
+    monitor-then-guarded-call, inspection without attaching, CLI JSON.
 
 ## T13 — Node.js: report ESM named imports as uncovered
 

@@ -13,6 +13,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`report`](#interlock-report) | summarize a receipt log: blocks, monitor findings, latency |
 | [`hook`](#interlock-hook) | decide one coding-agent tool call (run by the agent) |
 | [`install-hook`](#interlock-install-hook) | put interlock in front of Claude Code, Codex or Cursor |
+| [`attach`](#interlock-attach) | check the import seams attach() patches (compatibility contract) |
 | [`policy`](#interlock-policy) | check a declarative policy file, or show a built-in pack |
 | [`learn`](#interlock-learn) | draft a reviewable policy from observed receipts |
 | [`trust`](#interlock-trust) | trust a project's policy overlay |
@@ -152,6 +153,32 @@ usage: interlock install-hook [-h] --for {claude-code,codex,cursor,all} [--setti
   --monitor                  install in monitor mode
   --dry-run                  print the change only
   --uninstall                remove interlock's hooks
+```
+
+## `interlock attach`
+
+Check that the import seams interlock attaches to still exist.
+
+```bash
+interlock attach --check
+interlock attach --check --json
+```
+
+``attach()`` monkey-patches another library's class, which is the most fragile
+thing in interlock: a client update that renames the class or moves the method
+turns a guard into a no-op. This command runs the same structural contract
+check on the installed packages without installing any hook, so a dependency
+upgrade can be verified in CI before it reaches an agent.
+
+Only attachable surfaces are imported (MCP today); the model SDKs are listed as
+adapter-guarded and not imported. Exit codes: 0 every installed attachable
+surface is compatible, 1 at least one is not (or failed to import), 64 the
+command line was wrong.
+
+```text
+usage: interlock attach [-h] [--check] [--json]
+  --check                    exit non-zero when an installed attachable surface is incompatible
+  --json                     machine-readable output
 ```
 
 ## `interlock policy`
@@ -410,13 +437,15 @@ usage: interlock mesh serve [-h] --role {consensus,aggregator,mirror,dap-leader,
                             [--bind HOST:PORT] [--state FILE] [--token TOKEN] [--task FILE]
                             [--keys FILE] [--peer-token TOKEN] [--collector-token TOKEN]
                             [--known-catalog ID] [--min-orgs N] [--dir DIR] [--require-credential]
-                            [--issuer HEX_PUBLIC] [--min-batch N]
+                            [--issuer HEX_PUBLIC] [--revoked FILE] [--min-batch N]
 usage: interlock mesh dap [-h] ACTION ...
 usage: interlock mesh log [-h] [--root FILE] [--json] DIR_OR_URL
 usage: interlock mesh gossip [-h] --peer URL [--dir DIR] [--token TOKEN]
 usage: interlock mesh credential [-h] ACTION ...
-usage: interlock mesh harness [-h] --policy FILE --benign FILE [--samples FILE]
-                              [--max-fp-rate RATE] [--max-p95-us US] [--min-recall RATE] [--json]
+usage: interlock mesh harness [-h] --policy FILE --benign FILE [--samples FILE] [--poisons FILE]
+                              [--stress] [--max-fp-rate RATE] [--max-p95-us US]
+                              [--max-induced-rate RATE] [--max-stress-p95-us US]
+                              [--min-recall RATE] [--json]
 usage: interlock mesh forge [-h] --state FILE --benign FILE --out DIR [--samples FILE]
                             [--max-fp-rate RATE] [--min-recall RATE]
 usage: interlock mesh consensus [-h] ACTION ...

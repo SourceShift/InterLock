@@ -62,7 +62,7 @@ worse at both jobs.
 | R8 | BRACE escape-resistance suite + unprivileged egress | `shipped` | M | T7 |
 | R9 | Flow-typed policy dimension | `not started` | L | T6 · a constraint on R10 |
 | R10 | Declarative YAML/JSON policies | `shipped` | L | carried from M0 → M2 · agentjail review |
-| R11 | Automatic interception (import hooks) | `partial` | L | carried from M0 → M1/M3 · MCP attached at import |
+| R11 | Automatic interception (import hooks) | `shipped` | L | MCP attached at import · seam contract + `attach_monitor` |
 | R12 | Overhead benchmark suite, with methodology | `shipped` | S | `scripts/bench_overhead.py` · floor vs guarded p50/p95/p99 |
 | R13 | Node.js sensor | `shipped` | L | carried from M0 |
 | R14 | Parsed shell commands and intents | `shipped` | M | agentjail review |
@@ -844,14 +844,16 @@ Depends on the R9 design decision; blocks nothing else.
 
 ## R11 · Automatic interception (import hooks)
 
-**Status:** `partial` (2026-10-25) — `attach()` guards MCP client sessions at
+**Status:** `shipped` (2026-10-25) — `attach()` guards MCP client sessions at
 ``ClientSession.call_tool`` on import (or immediately if already imported),
 idempotently and reversibly, and `uncovered()` reports what is still unguarded.
 The model SDKs stay adapter-guarded deliberately: they return a tool-call
 request and the application dispatches it, so there is no library method to
-wrap that would not also wrap the application's code. The import **monitor**
-(dependency tamper detection) and the explicit compatibility contract are not
-built.
+wrap that would not also wrap the application's code. The explicit
+**compatibility contract** (`MCP_SEAM`, `check_seam`, `interlock attach
+--check`) and the **import monitor** (`attach_monitor()`) now ship.
+Residual: the real-SDK integration test is `importorskip`ed, so CI exercises
+the contract against the real package only where it is installed.
 **Size:** L
 **Pull:** internal. The decorator docstring: "Automatic interception (import
 hooks for MCP and the model SDKs) lands in M1 and M3; this decorator is what
@@ -874,15 +876,27 @@ for: `enforce_tool_call` is already the one transport-agnostic core that MCP and
 LangChain both funnel through, so an import hook has a single place to attach
 rather than one per framework.
 
-### What changes
+### What shipped
 
-- Import hooks that wrap MCP client sessions and model SDKs (OpenAI, Anthropic)
-  at import time, routing through the existing `enforce_tool_call` core.
-- An import **monitor**: dependency tamper detection, so a wrapped client that
-  changes underneath is noticed.
-- A compatibility contract, because monkey-patching other people's libraries is
-  the most fragile thing in this entire roadmap — a hook that breaks a client
-  update is worse than no hook.
+- **Import hook for MCP client sessions** (earlier pass): `attach()` patches
+  `ClientSession.call_tool` at the class, before or after the SDK is imported,
+  through the existing `enforce_tool_call` core. Idempotent, reversible, and a
+  broken install never breaks the user's import.
+- **Compatibility contract:** the seam the hook relies on is data (`MCP_SEAM`:
+  a `ClientSession` class with a callable `call_tool` accepting two positional
+  arguments). `check_seam()` reports every break; `attach()` refuses an
+  incompatible seam with `incompatible seam: ...` instead of half-guarding it;
+  `inspect_surfaces()` / `python -m interlock attach --check` run the same check
+  against the installed package (exit 1 on a break), so a dependency upgrade is
+  verified before an agent uses it.
+- **Import monitor:** `attach_monitor()` compares every guarded module against
+  what `attach()` recorded - class object, wrapper identity, source-file
+  SHA-256, installed version - and reports `missing`, `replaced`, `unpatched`,
+  `modified`, `removed` or `version`. `attach()` runs it and repairs a
+  replaced/unpatched class; a changed file is reported, never re-blessed.
+- **Residual:** the model SDKs have no class seam and stay adapter-guarded by
+  design. The real-SDK contract test is `importorskip`ed; environments without
+  `mcp` exercise the contract against stand-ins that mirror its shape.
 
 ### Impact
 

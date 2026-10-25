@@ -10,7 +10,8 @@ each section says which one.
 
 - [Setup](#setup): `install`, `get_engine`, `set_engine`
 - [Guarding calls](#guarding-calls): `guard`, `monitor`, `guard_mcp_session`,
-  `attach`, `detach`, `uncovered`, `guard_langchain_tools`,
+  `attach`, `attach_monitor`, `check_seam`, `inspect_surfaces`, `detach`,
+  `uncovered`, `guard_langchain_tools`,
   `guard_tool_loop`, `guard_litellm_tool_loop`, `guard_crewai_tool_loop`,
   `guard_adk_tool_loop`, `enforce_tool_call`, `enforce_tool_result`
 - [Rules and engines](#rules-and-engines): `Rule`, `PolicyEngine`, `deny_tool`,
@@ -293,18 +294,54 @@ report = interlock.attach()
 # with the reason ("the module is not installed here", "install failed: ...")
 ```
 
-Idempotent: a second call adds no second hook and wraps no class twice.
-`AttachReport` is truthy when nothing was missed and has `to_dict()` for
-logging. A failing `install` never breaks the user's import - the failure lands
+Idempotent: a second call adds no second hook and wraps no class twice. It also
+runs the import monitor and repairs a replaced or unpatched class, recording
+the finding in `report.drifts`. `AttachReport` is truthy when nothing was
+missed **and** no drift was found; `.to_dict()` carries `guarded`, `missed` and
+`drifts`. A failing `install` never breaks the user's import - the failure lands
 in `report.missed` instead.
 
+Before patching, `attach()` checks the [compatibility
+contract](../guides/mcp.md#the-compatibility-contract): `ClientSession` is a
+class, `call_tool` is callable, and it accepts at least two positional
+arguments. A break is reported as `incompatible seam: ...` and nothing is
+patched.
+
 `attachments=` replaces the default list with `Attachment` objects
-(`site`, `module`, `install(module) -> bool`, optional `uninstall()`), for a
-test double or a surface interlock does not ship.
+(`site`, `module`, `install(module) -> bool`, optional `uninstall()`, optional
+`seam=Seam(...)`), for a test double or a surface interlock does not ship.
 
 Only MCP has a class-level seam. The model SDKs return a tool-call request and
 your dispatcher runs it, so the dispatcher is what to guard (see the
 `guard_*_tool_loop` adapters below).
+
+### `attach_monitor`
+
+```python
+attach_monitor() -> list[Drift]
+```
+
+The import monitor (also `from interlock.attach import monitor`). Compares every
+guarded module with the provenance `attach()` recorded: class object, wrapper
+identity, source-file SHA-256, installed distribution version. Empty means the
+guards are the ones that were installed. `Drift` has `site`, `module`, `kind`
+(`missing`, `replaced`, `unpatched`, `modified`, `removed`, `version`),
+`detail`, `repaired` and `to_dict()`. A changed file is reported, never
+re-blessed: re-hashing without reloading would hide the tamper.
+
+### `check_seam`, `inspect_surfaces`, `MCP_SEAM`
+
+```python
+check_seam(module, seam=None) -> list[str]   # []; seam defaults to MCP_SEAM
+inspect_surfaces() -> list[dict]
+```
+
+`check_seam` is the contract as a pure function; `inspect_surfaces` reports
+every known surface with `site`, `module`, `installed`, `version`,
+`attachable`, `compatible`, `problems`, `guarded`, `drifts` and `how`. Unlike
+`uncovered()` it imports an attachable package, because the check is about the
+installed object. `python -m interlock attach --check` prints it and exits 1 on
+an installed, attachable, incompatible surface.
 
 ### `detach`
 

@@ -106,6 +106,55 @@ adapter that guards each; the model SDKs are on that list by design, because
 they do not execute tools - your dispatcher does, and the `guard_*_tool_loop`
 adapters guard it.
 
+### The compatibility contract
+
+Patching another library's class is the most fragile part of interlock, so the
+shape it relies on is data (`MCP_SEAM`): `ClientSession` must be a class,
+`call_tool` must be callable, and it must accept at least two positional
+arguments. That is deliberately structural rather than a version pin - a client
+release that keeps the seam keeps working, and a refactor that renames the
+class or turns the method into a property is refused instead of half-guarded:
+
+```python
+interlock.attach()
+# AttachReport(guarded=[], missed=[{'site': 'mcp-session', ...,
+#                                  'reason': 'incompatible seam: mcp.client.session
+#                                             has no ClientSession'}])
+```
+
+Check an upgrade before it reaches an agent:
+
+```bash
+python -m interlock attach --check        # exit 1 on an incompatible installed seam
+python -m interlock attach --check --json # the same, for CI
+```
+
+### The import monitor
+
+A hook wraps a class object. If the module is replaced in `sys.modules`, the
+method is restored by hand, the source file is edited on disk, or the
+distribution is upgraded underneath the running process, the guard that is
+attached is no longer the guard that was installed. `attach_monitor()` compares
+each guarded module against what `attach()` recorded:
+
+```python
+import interlock
+
+drifts = interlock.attach_monitor()
+for drift in drifts:              # [] means every guarded module still matches
+    print(drift.kind, drift.module, drift.detail)
+```
+
+Kinds: `missing` (module left `sys.modules`), `replaced` (a different class
+object owns the seam), `unpatched` (the method is no longer the wrapper),
+`modified` (source file digest changed), `removed` (source file gone) and
+`version` (installed version changed). `attach()` runs the same check and
+**repairs** `replaced`/`unpatched` by guarding the new class; the report still
+lists the drift with `repaired: true`, because a tamper is a finding even when
+it is fixed. A changed file is reported, not re-blessed: the running code did
+not change, so re-hashing it would hide the evidence. Call the monitor on a
+schedule, or before a sensitive session, when the process is long-lived.
+
 ## Results from the official SDK
 
 The official SDK doesn't return a string. It returns a `CallToolResult` object

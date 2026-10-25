@@ -26,15 +26,47 @@ entry on ``import interlock`` would change every process that imports it.
 from __future__ import annotations
 
 import functools
+import hashlib
 import importlib.abc
+import importlib.metadata
 import importlib.util
+import inspect
+import os
 import sys
 import threading
 import types
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-__all__ = ["Attachment", "AttachReport", "Surface", "SURFACES", "attach", "detach", "uncovered"]
+__all__ = ["Attachment", "AttachReport", "Drift", "Seam", "Surface", "SURFACES",
+           "MCP_SEAM", "attach", "check_seam", "detach", "inspect_surfaces", "monitor",
+           "uncovered"]
+
+#: A file is re-hashed whole; a dependency source file is small, and a partial
+#: digest would miss a tampered tail.
+MAX_DIGEST_BYTES = 64 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class Seam:
+    """The exact shape an attachment relies on in someone else's module.
+
+    The fields are deliberately structural rather than a version pin: a client
+    release that keeps the class and method but changes an internal helper is
+    compatible, while one that renames the class or changes the method to a
+    property is not. :func:`check_seam` reads the installed object.
+    """
+
+    target: str
+    method: str
+    #: Parameter names the method must accept positionally. Names beyond these
+    #: are its business; a ``*args`` signature satisfies the requirement.
+    positional: Tuple[str, ...] = ("name", "arguments")
+
+
+#: The seam ``attach()`` patches. Kept as data so a compatibility check can run
+#: without installing anything, and so the contract is one reviewable object.
+MCP_SEAM = Seam("ClientSession", "call_tool", ("name", "arguments"))
 
 
 @dataclass(frozen=True)
@@ -45,11 +77,12 @@ class Surface:
     module: str
     how: str
     attachable: bool = False
+    seam: Optional[Seam] = None
 
 
 SURFACES: Tuple[Surface, ...] = (
     Surface(
-        "mcp-session", "mcp.client.session", attachable=True,
+        "mcp-session", "mcp.client.session", attachable=True, seam=MCP_SEAM,
         how="interlock.attach() guards ClientSession.call_tool; without it, call "
             "interlock.guard_mcp_session(session) on each session",
     ),
@@ -82,6 +115,83 @@ SURFACES: Tuple[Surface, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class Drift:
+    """A guarded module that no longer matches what was attached.
+
+    ``kind`` is ``missing`` (the module left ``sys.modules``), ``replaced``
+    (a different class object now owns the seam), ``unpatched`` (the method is
+    no longer the wrapper), ``modified`` (the source file's digest changed),
+    ``removed`` (the source file is gone), or ``version`` (the installed
+    distribution version changed).
+    """
+
+    site: str
+    module: str
+    kind: str
+    detail: str
+    repaired: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"site": self.site, "module": self.module, "kind": self.kind,
+                "detail": self.detail, "repaired": self.repaired}
+
+
+@dataclass(frozen=True)
+class Provenance:
+    """What the module looked like when it was guarded."""
+
+    target: str
+    method_name: str
+    class_object: Any = field(repr=False, compare=False)
+    method: Any = field(repr=False, compare=False)
+    file: Optional[str]
+    sha256: Optional[str]
+    version: Optional[str]
+
+
+def check_seam(module: types.ModuleType, seam: Optional[Seam] = None) -> List[str]:
+    """Return the ways ``module`` breaks ``seam``; empty means compatible.
+
+    ``seam`` defaults to :data:`MCP_SEAM`. The check is structural on purpose.
+    It answers "can this hook patch and delegate without changing behaviour?",
+    not "is this the version we tested against": a compatible client release
+    should keep working, and an incompatible one should be refused loudly
+    instead of half-guarded.
+    """
+    seam = seam or MCP_SEAM
+    problems: List[str] = []
+    target = getattr(module, seam.target, None)
+    if target is None:
+        return ["{} has no {}".format(module.__name__, seam.target)]
+    if not isinstance(target, type):
+        problems.append("{}.{} is not a class".format(module.__name__, seam.target))
+        return problems
+    method = getattr(target, seam.method, None)
+    if method is None:
+        problems.append("{}.{} has no {}".format(
+            module.__name__, seam.target, seam.method))
+        return problems
+    if not callable(method):
+        problems.append("{}.{}.{} is not callable".format(
+            module.__name__, seam.target, seam.method))
+        return problems
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return problems  # callable, but opaque (a C method): patchable
+    parameters = [p for p in signature.parameters.values() if p.name != "self"]
+    positional = [p for p in parameters if p.kind in (
+        inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    takes_varargs = any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in parameters)
+    if not takes_varargs and len(positional) < len(seam.positional):
+        problems.append(
+            "{}.{}.{} takes {} positional parameter(s); the hook needs {} ({})".format(
+                module.__name__, seam.target, seam.method, len(positional),
+                len(seam.positional), ", ".join(seam.positional)))
+    return problems
+
+
 @dataclass
 class Attachment:
     """One module to watch, and the function that guards it once imported."""
@@ -92,6 +202,8 @@ class Attachment:
     uninstall: Optional[Callable[[], None]] = None
     guarded: bool = False
     reason: str = ""
+    seam: Optional[Seam] = None
+    provenance: Optional[Provenance] = None
 
 
 @dataclass
@@ -100,12 +212,14 @@ class AttachReport:
 
     guarded: List[str] = field(default_factory=list)
     missed: List[Dict[str, str]] = field(default_factory=list)
+    drifts: List[Dict[str, Any]] = field(default_factory=list)
 
     def __bool__(self) -> bool:
-        return not self.missed
+        return not self.missed and not self.drifts
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"guarded": list(self.guarded), "missed": list(self.missed)}
+        return {"guarded": list(self.guarded), "missed": list(self.missed),
+                "drifts": list(self.drifts)}
 
 
 class _Loader(importlib.abc.Loader):
@@ -168,16 +282,79 @@ def _module_available(module: str) -> bool:
         return False
 
 
+class _Incompatible(Exception):
+    """The installed module no longer has the shape the hook needs."""
+
+
+def _file_digest(path: str) -> Optional[Tuple[str, int]]:
+    """SHA-256 and size of ``path``, or ``None`` when it cannot be read.
+
+    Whole-file on purpose: a partial digest would let a tampered tail pass.
+    The cap only guards against pointing this at something enormous; a real
+    client source file is far below it.
+    """
+    try:
+        size = os.path.getsize(path)
+        if size > MAX_DIGEST_BYTES:
+            return None
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+        return digest.hexdigest(), size
+    except OSError:
+        return None
+
+
+def _distribution_version(module: str) -> Optional[str]:
+    top = module.split(".", 1)[0]
+    try:
+        return importlib.metadata.version(top)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    except Exception:  # metadata can be broken independently of the import
+        return None
+
+
+def _capture_provenance(attachment: Attachment, module: types.ModuleType) -> None:
+    seam = attachment.seam
+    if seam is None:
+        return
+    cls = getattr(module, seam.target, None)
+    method = getattr(cls, seam.method, None) if cls is not None else None
+    path = getattr(module, "__file__", None)
+    digest = None
+    if isinstance(path, str) and path:
+        path = os.path.realpath(path)
+        digested = _file_digest(path)
+        digest = digested[0] if digested is not None else None
+    else:
+        path = None
+    attachment.provenance = Provenance(
+        target=seam.target, method_name=seam.method, class_object=cls, method=method,
+        file=path, sha256=digest, version=_distribution_version(module.__name__))
+
+
 def _run_install(attachment: Attachment, module: types.ModuleType) -> None:
     try:
         ok = bool(attachment.install(module))
+    except _Incompatible as exc:  # refuse the seam, but never break the import
+        attachment.guarded = False
+        attachment.reason = "incompatible seam: {}".format(exc)
+        attachment.provenance = None
+        return
     except Exception as exc:  # a hook must not break the user's import
         attachment.guarded = False
         attachment.reason = "install failed: {}".format(exc)
+        attachment.provenance = None
         return
     attachment.guarded = ok
     if not ok:
         attachment.reason = attachment.reason or "the module has no attachable seam"
+        attachment.provenance = None
+        return
+    attachment.reason = ""
+    _capture_provenance(attachment, module)
 
 
 def _installed(fullname: str, module: types.ModuleType) -> None:
@@ -197,10 +374,11 @@ def _install_mcp(module: types.ModuleType) -> bool:
     """
     from .interceptors.mcp import guard_mcp_session
 
-    cls = getattr(module, "ClientSession", None)
-    original = getattr(cls, "call_tool", None)
-    if cls is None or original is None:
-        return False
+    problems = check_seam(module, MCP_SEAM)
+    if problems:
+        raise _Incompatible("; ".join(problems))
+    cls = getattr(module, MCP_SEAM.target)
+    original = getattr(cls, MCP_SEAM.method)
     if getattr(original, "__interlock_attached__", False):
         return True
 
@@ -223,7 +401,105 @@ def _restore_mcp() -> None:
 
 def _mcp_attachment() -> Attachment:
     return Attachment(site="mcp-session", module="mcp.client.session",
-                      install=_install_mcp, uninstall=_restore_mcp)
+                      install=_install_mcp, uninstall=_restore_mcp, seam=MCP_SEAM)
+
+
+def _drifts_for(attachment: Attachment) -> List[Drift]:
+    if not attachment.guarded or attachment.provenance is None:
+        return []
+    provenance = attachment.provenance
+    module = sys.modules.get(attachment.module)
+    if module is None:
+        return [Drift(attachment.site, attachment.module, "missing",
+                      "the module was removed from sys.modules; no call is guarded now")]
+    drifts: List[Drift] = []
+    cls = getattr(module, provenance.target, None)
+    if cls is not provenance.class_object:
+        replacement = "a different {}.{}".format(attachment.module, provenance.target)
+        if getattr(cls, "__interlock_attached__", False) is False:
+            replacement += " that is not patched"
+        drifts.append(Drift(attachment.site, attachment.module, "replaced", replacement))
+    elif getattr(cls, provenance.method_name, None) is not provenance.method:
+        drifts.append(Drift(attachment.site, attachment.module, "unpatched",
+                            "{}.{} is no longer the guard wrapper".format(
+                                provenance.target, provenance.method_name)))
+    if provenance.file is not None and provenance.sha256 is not None:
+        if not os.path.exists(provenance.file):
+            drifts.append(Drift(attachment.site, attachment.module, "removed",
+                                "{} no longer exists".format(provenance.file)))
+        else:
+            digested = _file_digest(provenance.file)
+            if digested is not None and digested[0] != provenance.sha256:
+                drifts.append(Drift(attachment.site, attachment.module, "modified",
+                                    "{} changed on disk after the guard was installed".format(
+                                        provenance.file)))
+    version = _distribution_version(attachment.module)
+    if provenance.version and version and version != provenance.version:
+        drifts.append(Drift(attachment.site, attachment.module, "version",
+                            "installed version changed from {} to {}".format(
+                                provenance.version, version)))
+    return drifts
+
+
+def monitor() -> List[Drift]:
+    """Check that every guarded module still looks like what was attached.
+
+    This is the import monitor: the hook wraps a class object, so a module
+    replaced in ``sys.modules``, a method restored by hand, a dependency file
+    edited on disk, or a distribution upgraded underneath the running process
+    all leave a guard that is no longer the guard that was installed. Call it
+    on a schedule (or before a sensitive session); :func:`attach` runs it too
+    and repairs a replaced or unpatched class, but a changed file is reported,
+    not silently re-blessed - the running code did not change, so re-hashing it
+    would hide exactly the tamper this exists to find.
+    """
+    with _lock:
+        drifts: List[Drift] = []
+        for attachment in _attachments.values():
+            drifts.extend(_drifts_for(attachment))
+        return drifts
+
+
+def _inspect_module(module: str, seam: Optional[Seam]) -> Dict[str, Any]:
+    entry: Dict[str, Any] = {"module": module, "installed": _module_available(module)}
+    if not entry["installed"]:
+        return entry
+    entry["version"] = _distribution_version(module)
+    if seam is None:
+        return entry
+    try:
+        imported = importlib.import_module(module)
+    except Exception as exc:  # an import error here is itself a finding
+        entry["import_error"] = "{}: {}".format(type(exc).__name__, exc)
+        return entry
+    problems = check_seam(imported, seam)
+    entry["compatible"] = not problems
+    entry["problems"] = problems
+    return entry
+
+
+def inspect_surfaces() -> List[Dict[str, Any]]:
+    """What each known interception point looks like in this process.
+
+    Unlike :func:`uncovered` this does not need a running attachment: it
+    imports an attachable package (a compatibility check is about the installed
+    object) and reports its version, whether the seam is compatible, and why
+    not. ``python -m interlock attach --check`` prints it.
+    """
+    with _lock:
+        entries: List[Dict[str, Any]] = []
+        for surface in SURFACES:
+            entry = _inspect_module(surface.module, surface.seam if surface.attachable else None)
+            entry.update({"site": surface.site, "attachable": surface.attachable,
+                          "how": surface.how})
+            drifts = []
+            attachment = _attachments.get(surface.module)
+            if attachment is not None:
+                drifts = [drift.to_dict() for drift in _drifts_for(attachment)]
+            entry["guarded"] = bool(attachment is not None and attachment.guarded)
+            entry["drifts"] = drifts
+            entries.append(entry)
+        return entries
 
 
 def attach(attachments: Optional[Sequence[Attachment]] = None) -> AttachReport:
@@ -236,8 +512,14 @@ def attach(attachments: Optional[Sequence[Attachment]] = None) -> AttachReport:
     """
     global _finder
     with _lock:
-        for attachment in (list(attachments) if attachments is not None
-                           else [_mcp_attachment()]):
+        incoming = list(attachments) if attachments is not None else [_mcp_attachment()]
+        for attachment in incoming:
+            # Re-calling attach() with the defaults must keep the existing
+            # attachment: replacing it would lose the provenance the monitor
+            # compares against, and re-installing would re-hash a file that may
+            # just have been tampered with.
+            if attachments is None and attachment.module in _attachments:
+                continue
             _attachments[attachment.module] = attachment
             module = sys.modules.get(attachment.module)
             if module is not None:
@@ -251,11 +533,26 @@ def attach(attachments: Optional[Sequence[Attachment]] = None) -> AttachReport:
             _finder.targets = _attachments
         # A module imported between the check above and the finder going in
         # would otherwise be missed until its next import.
+        drifts: List[Drift] = []
         for attachment in _attachments.values():
             module = sys.modules.get(attachment.module)
-            if module is not None and not attachment.guarded:
+            if module is None:
+                continue
+            found = _drifts_for(attachment)
+            if not found and not attachment.guarded:
                 _run_install(attachment, module)
-        return _report()
+                continue
+            drifts.extend(found)
+            if any(drift.kind in ("replaced", "unpatched") for drift in found):
+                _run_install(attachment, module)
+        report = _report()
+        report.drifts = [
+            dict(drift.to_dict(),
+                 repaired=bool(drift.kind in ("replaced", "unpatched")
+                               and _attachments[drift.module].guarded))
+            for drift in drifts
+        ]
+        return report
 
 
 def detach() -> None:
@@ -272,6 +569,7 @@ def detach() -> None:
             if attachment.uninstall is not None:
                 attachment.uninstall()
             attachment.guarded = False
+            attachment.provenance = None
         _attachments.clear()
 
 

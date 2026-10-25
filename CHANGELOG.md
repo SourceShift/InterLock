@@ -22,6 +22,17 @@ breaking changes land.
   not guarded, with the explicit adapter that guards each; the model SDKs stay
   adapter-guarded because they return tool-call requests rather than executing
   tools.
+- A compatibility contract and import monitor for `attach()` (ROADMAP R11).
+  `MCP_SEAM`, `check_seam()`, `inspect_surfaces()` and
+  `interlock attach --check` test the installed `ClientSession`/`call_tool`
+  shape before anything is patched, so a client update that breaks the seam is
+  refused with a reason instead of silently left unguarded.
+  `attach_monitor()` (also `interlock.attach.monitor`) compares each guarded
+  module with the provenance recorded at attach time - class object, wrapper
+  identity, source SHA-256 and installed version - and reports `missing`,
+  `replaced`, `unpatched`, `modified`, `removed` or `version`; `attach()`
+  repairs a replaced or unpatched class and records the drift in
+  `AttachReport.drifts`.
 - The mesh, phase 0 (`interlock mesh`, `interlock.mesh`): subscribe to
   community policy packs with `"extends": "mesh:<pack>@<ring>"`. A node pins a
   root and syncs a commons through TUF-shaped metadata (root, targets,

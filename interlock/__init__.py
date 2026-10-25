@@ -22,7 +22,9 @@ from .approval import (
     approve_once,
     set_approver,
 )
-from .attach import attach, detach, uncovered
+from .attach import attach, check_seam, detach, inspect_surfaces
+from .attach import monitor as attach_monitor
+from .attach import uncovered
 from .brace import Sandbox, SandboxProfile, compile_profile
 from .context import (
     current_parent_principal,
@@ -54,7 +56,10 @@ __all__ = [
     "monitor",
     "guard_mcp_session",
     "attach",
+    "attach_monitor",
+    "check_seam",
     "detach",
+    "inspect_surfaces",
     "uncovered",
     "enforce_tool_call",
     "enforce_tool_result",
