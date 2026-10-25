@@ -34,6 +34,35 @@ pack the way you extend a built-in one:
 `mesh:<pack>` with an optional `@<ring>`; without one the node's configured
 ring applies.
 
+### The project's bootstrap mirror
+
+The project runs one public read mirror at **https://mesh.sourceshift.ai**. It
+serves two packs today: `coding-agent` (the example rules) and `skill-safety`
+(reviewed install advisories, both rules `experimental`). It is a **mirror**,
+not an authority. The bytes are signed by the root keys a node pins; the host
+only provides availability.
+
+This deployment is a bootstrap, and its limits are part of the offer:
+
+- the root is **1-of-1** and its key is online on the host;
+- the two DAP aggregators share one operator and one host;
+- the published rules have had one review pass, not an independent one.
+
+Treat it as a preview of the pipeline, not as a trust root for other people's
+agents. A commons that admits members runs a 2-of-3 root ceremony first. Until
+this one does, joining it is an explicit acceptance of the bootstrap risk.
+
+```bash
+curl -fsS https://mesh.sourceshift.ai/metadata/root.json -o root.json
+interlock mesh init --root root.json --mirror https://mesh.sourceshift.ai --ring canary
+interlock mesh sync
+```
+
+Fetch the root over TLS and, if you have a second channel to a maintainer,
+compare its hash there before pinning it. Start on the `canary` ring: it sees
+every change first, while `stable` sees a rule only after the maintainers
+promote it.
+
 ### What the node does with a pack
 
 A pack is a normal declarative policy whose rules each carry a **status**:
@@ -188,10 +217,11 @@ init` wrote and then move that file offline. A real commons generates each
 root key on its keyholder's own machine (or in a hardware token), lists the
 public keys in `keys/root-keys.json`, sets the root threshold in
 `keys/roles.json`, and signs even its first root in a
-[root ceremony](mesh-root-ceremony.md). The commons this project runs uses
-2-of-3, held by the people
+[root ceremony](mesh-root-ceremony.md). A production commons uses 2-of-3, held
+by the people
 [`GOVERNANCE.md`](https://github.com/SourceShift/InterLock/blob/main/GOVERNANCE.md)
-names.
+names. The project's public mirror is still a bootstrap (1-of-1, key online);
+see [the bootstrap mirror](#the-projects-bootstrap-mirror).
 
 A root lasts 197 days. Its last 46 are its signing period: `publish` warns, and
 `interlock doctor` on every subscribed node reports it, until the keyholders

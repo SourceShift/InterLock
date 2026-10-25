@@ -99,6 +99,11 @@ function ReceiptCall({ S, D, A }: { S: State; D: Data; A: Actions }) {
 
 // --- mesh (the shared policy commons) ---------------------------------------------------
 
+// The project's public read mirror. It is a convenience for a node that has no
+// commons yet, not the only mirror and not an authority: a node still pins the
+// root it trusts and verifies every byte.
+const PROJECT_MIRROR = "https://mesh.sourceshift.ai";
+
 function MeshPanel({ D, A }: { D: Data; A: Actions }) {
   const m = D.mesh;
   if (D.meshErr) {
@@ -135,7 +140,14 @@ function MeshPanel({ D, A }: { D: Data; A: Actions }) {
       {!m.configured ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           <span style={dim}>Reporting consent can be set without a commons; policy packs need one.</span>
-          <code style={code}>interlock mesh init --root root.json --mirror https://commons.example.org</code>
+          <span style={dim}>
+            The project's bootstrap mirror is{" "}
+            <a href={PROJECT_MIRROR} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>
+              {PROJECT_MIRROR}
+            </a>
+            {" "}— 1-of-1 root, preview only.
+          </span>
+          <code style={code}>interlock mesh init --root root.json --mirror {PROJECT_MIRROR}</code>
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "1px", background: "var(--il-rule)", border: "1px solid var(--il-rule)", borderRadius: "8px", overflow: "hidden" }}>
@@ -161,6 +173,11 @@ function MeshPanel({ D, A }: { D: Data; A: Actions }) {
       {m.configured ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           <span style={label}>Verified packs</span>
+          {m.mirrors?.length ? (
+            <span style={dim}>
+              mirror{m.mirrors.length > 1 ? "s" : ""}: {m.mirrors.join(", ")}
+            </span>
+          ) : null}
           {packs.length === 0 ? <span style={dim}>No packs in the verified cache yet. Run <code style={{ fontFamily: mono }}>interlock mesh sync</code>.</span> : null}
           {packs.map(([path, info]) => {
             const status = typeof info.status === "string" ? info.status : null;
@@ -197,7 +214,11 @@ function MeshPanel({ D, A }: { D: Data; A: Actions }) {
         )}
       </div>
 
-      <code style={code}>{m.configured ? "interlock mesh sync\ninterlock mesh status" : "interlock mesh init --root root.json --mirror URL"}</code>
+      <code style={code}>
+        {m.configured
+          ? "interlock mesh sync\ninterlock mesh status"
+          : "interlock mesh init --root root.json --mirror " + PROJECT_MIRROR}
+      </code>
     </section>
   );
 }
