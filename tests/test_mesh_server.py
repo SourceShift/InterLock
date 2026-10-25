@@ -464,7 +464,8 @@ def test_enable_needs_no_commons_and_status_and_doctor_show_it(tmp_path, monkeyp
     assert shown_consent == consent and shown["preview"]["digests"] == 1 and shown["kill_switch"] is False
 
     assert main(["mesh", "report", "enable", "--off"]) == 0
-    assert node.report_consent() == {"enabled_at": None, "layers": [], "alpha": 1.5, "sample_rules": []}
+    assert node.report_consent() == {"enabled_at": None, "layers": [], "alpha": 1.5, "sample_rules": [],
+                                     "attestation": None}
     assert {c.id: c for c in _mesh_checks()}["mesh.report"].summary == "mesh reporting: off"
     # A hand-edited or damaged record never reads as consent.
     for bad in ({"enabled_at": "yesterday", "layers": ["digests"]}, {"enabled_at": 1.0, "layers": "digests"},
