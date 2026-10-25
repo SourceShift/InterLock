@@ -10,14 +10,14 @@ the 141 ADRs under `docs/adr/`, and the source of `internal/shellparse`,
 `ee6e05d`.
 
 **Output:** section 6 has eleven feature specs in the same shape as
-[`ROADMAP.md`](../ROADMAP.md) (Problem / What changes / Acceptance / Risks), so
+[`ROADMAP.md`](../../ROADMAP.md) (Problem / What changes / Acceptance / Risks), so
 promoting one is a copy-paste. Two of them amend existing items (R2, R10)
 instead of adding new ones.
 
 > **Implementation status (2026-10-13).** Everything in section 6 shipped
 > except R22 (it needs network access to the package registries); see
-> [`ROADMAP.md`](../ROADMAP.md#r14r22--from-the-agentjail-review) for the evidence per item and
-> the guides under [`docs/guides/`](../docs/guides/) for usage. Where building
+> [`ROADMAP.md`](../../ROADMAP.md#r14r22--from-the-agentjail-review) for the evidence per item and
+> the guides under [`docs/guides/`](../../docs/guides/) for usage. Where building
 > it proved this document wrong, the spec below is corrected in place and
 > marked **Corrected**.
 

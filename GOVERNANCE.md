@@ -5,7 +5,7 @@ the rules for changing who holds them. It also says what data the commons
 takes in and how a sample is erased. How code gets into the repository is in
 [CONTRIBUTING.md](CONTRIBUTING.md). The reasoning behind these rules is
 decision R1 (keys) and decision R4 (data) in
-[`research/mesh-decisions.md`](research/mesh-decisions.md).
+[`internal-docs/research/mesh-decisions.md`](internal-docs/research/mesh-decisions.md).
 
 Every subscribed node trusts the commons through one pinned file, its **root**:
 the keys and thresholds of every role. Whoever can sign a new root can change

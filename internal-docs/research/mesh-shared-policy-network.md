@@ -18,7 +18,7 @@ crowdsource and distribute security decisions. Raw search data in
 [`data/mesh-libwit-search.json`](data/mesh-libwit-search.json).
 
 > **Implementation status (2026-10-25).** All four phases of §10 shipped as
-> `interlock.mesh` and `interlock mesh`; see [`docs/guides/mesh.md`](../docs/guides/mesh.md)
+> `interlock.mesh` and `interlock mesh`; see [`docs/guides/mesh.md`](../../docs/guides/mesh.md)
 > for usage and `CHANGELOG.md` for the per-phase summary. Where building it
 > changed a detail of this document: the lexical embedding is a *dense* SimHash
 > (a sparse feature hash made unrelated texts look alike, §3.1); the log's
@@ -84,7 +84,7 @@ The unit of contribution is a *receipt* interlock already writes. A receipt
 records the detector or rule that fired (`policy_id`), the verdict, the phase,
 a SHA-256 digest of the arguments, which entities a redactor masked and how
 many, whether the rule was in monitor mode, and the policy epoch
-([audit log guide](../docs/guides/audit-log.md)). It never stores arguments.
+([audit log guide](../../docs/guides/audit-log.md)). It never stores arguments.
 That is already most of a shareable report, and the choice of what to add is
 the central privacy decision of the whole design.
 
@@ -207,7 +207,7 @@ non-alerting mode for about a week without unexplained noise.
 interlock has the vocabulary for this already: `policy check` quarantines
 invalid rules at load, `learn` drafts only `escalate` rules and never
 auto-enforces, and overlays can only tighten
-([policies guide](../docs/guides/policies.md)). The mesh adds one field,
+([policies guide](../../docs/guides/policies.md)). The mesh adds one field,
 `status`, and one rule: **nothing experimental may carry a `block` verdict on
 a subscriber by default.**
 

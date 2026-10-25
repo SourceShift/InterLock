@@ -5,7 +5,7 @@ Every interlock deployment runs its own policy. The mesh lets a deployment
 applied in monitor mode first, and (later phases) **report** what its guard
 stopped in a form that never carries a prompt or an argument. The design and
 the research behind it are in
-[`research/mesh-shared-policy-network.md`](https://github.com/SourceShift/InterLock/blob/main/research/mesh-shared-policy-network.md).
+[`internal-docs/research/mesh-shared-policy-network.md`](https://github.com/SourceShift/InterLock/blob/main/internal-docs/research/mesh-shared-policy-network.md).
 
 This guide covers what ships today: subscribing to a commons, and running one.
 
@@ -613,7 +613,7 @@ gates. A human reviews the proposal and opens the pull request.
 ## Licences and the data warranty
 
 The commons holds two kinds of thing under two licences (decision R4 in
-`research/mesh-decisions.md`):
+`internal-docs/research/mesh-decisions.md`):
 
 | What | Licence | Where it says so |
 |---|---|---|

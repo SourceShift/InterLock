@@ -70,5 +70,5 @@ minutes), then read [how interlock works](concepts.md).
 - [Roadmap](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md): what's planned and why.
 - [Contributing](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md): development setup, adding a detector,
   keeping these docs accurate.
-- [How other projects document themselves](https://github.com/SourceShift/InterLock/blob/main/research/readme-docs-benchmark.md):
+- [How other projects document themselves](https://github.com/SourceShift/InterLock/blob/main/internal-docs/research/readme-docs-benchmark.md):
   the research behind this layout.

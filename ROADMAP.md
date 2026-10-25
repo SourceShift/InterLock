@@ -27,7 +27,7 @@ project stops after the next item, it stopped in the right place.
 | `shipped` | Done and tested. The reasoning below is kept for the record. |
 
 **"Upcoming" is anything not `shipped`** — the items derived from the 2026
-literature survey ([`research/agent-guardrails-2026.md`](research/agent-guardrails-2026.md)),
+literature survey ([`internal-docs/research/agent-guardrails-2026.md`](internal-docs/research/agent-guardrails-2026.md)),
 plus the open items carried over from earlier milestones. Receipts and
 flow-typed policies appear as single entries rather than two, because the
 literature item and the older TODO describe the same feature; the entry notes
@@ -165,7 +165,7 @@ inference later, behind its own item.
 `NotApproved`. Every enforcement site (Python and Node.js) now dispatches
 through one exhaustive `settle()`, so an unhandled verdict blocks instead of
 falling through. Approvals were built with the bindings the agentjail review
-(`research/agentjail-review.md`, R2+) showed hand-rolled approval gets wrong:
+(`internal-docs/research/agentjail-review.md`, R2+) showed hand-rolled approval gets wrong:
 one-use by default, bound to action, args digest, principal, policy epoch, rule
 and a frozen 512-byte reason; `session`/`ttl` scopes; a block always wins; no
 approver means block. The Rust crate holds only scopes, so the native-engine
@@ -1128,7 +1128,7 @@ R10's to make, not this one's.
 ## R14–R22 · From the agentjail review
 
 These items came from comparing interlock with agentjail
-([`research/agentjail-review.md`](research/agentjail-review.md), which holds the
+([`internal-docs/research/agentjail-review.md`](internal-docs/research/agentjail-review.md), which holds the
 full Problem / What changes / Acceptance / Risks for each). They are recorded
 here in short.
 
@@ -1152,7 +1152,7 @@ detector masking credentials in tool output before the agent reads it.
 ## H1–H7 · From the hoop review
 
 From comparing interlock with hoop's agent sidecar
-([`research/hoop-review.md`](research/hoop-review.md)). Network-dependent parts
+([`internal-docs/research/hoop-review.md`](internal-docs/research/hoop-review.md)). Network-dependent parts
 (its LLM analyzer, OPA, Slack delivery, control plane) were left out.
 
 | # | What shipped | Evidence |
@@ -1515,7 +1515,7 @@ Shipped in the `mo/roadmap-partials` campaign — all on `main` as of merge comm
 
 ## M0–M3 · The mesh: a shared, open policy network
 
-From [`research/mesh-shared-policy-network.md`](research/mesh-shared-policy-network.md).
+From [`internal-docs/research/mesh-shared-policy-network.md`](internal-docs/research/mesh-shared-policy-network.md).
 Each phase shipped on its own and is usable without the next; usage is in
 [`docs/guides/mesh.md`](docs/guides/mesh.md).
 
@@ -1529,7 +1529,7 @@ Each phase shipped on its own and is usable without the next; usage is in
 
 The five governance questions (root-key custody, aggregator operators, default
 reporting posture, data licence, `block` by default) were decided on 2026-10-25 in
-[`research/mesh-decisions.md`](research/mesh-decisions.md), and its implementation
+[`internal-docs/research/mesh-decisions.md`](internal-docs/research/mesh-decisions.md), and its implementation
 lists shipped as five epics on 2026-10-25, each through mini-ork's `framework-edit`
 recipe with an Opus review and a hand ship: counts leave a node only as secret
 shares with an aggregator batch floor (`83d5b5d`); a community `block` needs an

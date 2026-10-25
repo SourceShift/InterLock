@@ -18,7 +18,7 @@ report id does not count toward the batch. The floor stops a total from being
 one or two reports; it does not stop someone who may query ``/v1/totals``
 from differencing two overlapping batches (``{r1..r4}`` minus ``{r1..r3}`` is
 ``r4``). DAP's fixed, non-overlapping batches close that, and are the stated
-upgrade (decision R2 step 3 in ``research/mesh-decisions.md``).
+upgrade (decision R2 step 3 in ``internal-docs/research/mesh-decisions.md``).
 
 This is the arrangement Apple and Google's Exposure Notification Private
 Analytics ran at national scale and the IETF's Privacy Preserving Measurement
