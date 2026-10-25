@@ -95,6 +95,11 @@ def build_argv(profile: SandboxProfile, argv: List[str]) -> Tuple[List[str], Lis
     if profile.workdir is not None:
         out += ["--chdir", profile.workdir]
 
+    if profile.cpu_seconds is not None or profile.memory_mb is not None:
+        # set by rlimit_preexec on bwrap itself; rlimits are inherited across
+        # exec and namespace creation, so the sandboxed program runs under them.
+        enforced.append("rlimit")
+
     out += ["--"]
     out += list(argv)
     return out, enforced

@@ -38,8 +38,8 @@ from interlock.brace import (
 # over a battery of profiles to exactly these sets, in both directions.
 TOKENS_BY_BACKEND = {
     "soft": ("env", "rlimit"),
-    "bubblewrap": ("env", "fs-ro", "fs-rw", "pid", "net"),
-    "sandbox-exec": ("env", "fs-rw", "net"),
+    "bubblewrap": ("env", "fs-ro", "fs-rw", "pid", "net", "rlimit"),
+    "sandbox-exec": ("env", "fs-rw", "net", "rlimit"),
 }
 
 _AVAILABLE = set(available_backends())
@@ -282,11 +282,13 @@ def test_pid_control_shared_pid_namespace_can_signal(backend):
 # --- rlimit: a runaway CPU burn must die (soft backend, portable) -------------
 
 
-@pytest.mark.parametrize("backend", _backends("soft"))
+@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "sandbox-exec"))
 def test_rlimit_escape_runaway_cpu_is_killed(backend):
     """A runaway agent burns CPU forever. RLIMIT_CPU kills it with SIGXCPU —
     asserted by signal number, not just "nonzero", because that is the exact
-    death the token promises."""
+    death the token promises. The hook is set on the wrapper (bwrap or
+    sandbox-exec) and inherited across exec, so this must hold on every
+    backend, not only the soft one."""
     profile = SandboxProfile(cpu_seconds=1)
     result = _run(backend, profile, ["python3", "-c", "while True: pass"])
 
@@ -296,7 +298,7 @@ def test_rlimit_escape_runaway_cpu_is_killed(backend):
     )
 
 
-@pytest.mark.parametrize("backend", _backends("soft"))
+@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "sandbox-exec"))
 def test_rlimit_control_no_ceiling_means_no_kill(backend):
     """Control: the identical infinite loop under a profile with no ceiling.
     Nothing inside the sandbox kills it, so the harness timeout is the only

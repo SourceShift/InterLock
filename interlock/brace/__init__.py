@@ -49,9 +49,11 @@ bubblewrap    net      POST a credentials file to a loopback     the send dies a
                                                                 nothing arrives;
                                                                 granted egress
                                                                 delivers
+bubblewrap    rlimit   same CPU burn / control as soft          same as soft
 sandbox-exec  env      same sentinel attack / control as soft    same as soft
 sandbox-exec  fs-rw    same write attack / control as bubblewrap same as bubblewrap
 sandbox-exec  net      same exfil attack / control as bubblewrap same as bubblewrap
+sandbox-exec  rlimit   same CPU burn / control as soft          same as soft
 ============= ======== ========================================= =====================
 
 Tokens no backend may claim on these hosts: ``fs-ro`` and ``pid`` are never
@@ -61,13 +63,12 @@ security boundary and does not pretend to be one.
 
 Resource ceilings (``cpu_seconds``, ``memory_mb``) are applied on every
 backend: the rlimits are set on the wrapper before it execs and are inherited by
-the sandboxed program (``tests/test_brace_limits.py`` runs the CPU burn under
-each available backend). Only ``soft`` reports the ``rlimit`` token today,
-because the table above pins it there; the other backends enforce the ceiling
-without claiming it. A limit the host cannot enforce is refused when the
-``Sandbox`` is built (:class:`LimitUnsupported`): ``memory_mb`` on macOS, whose
-kernel rejects every address-space ceiling below ~1 TB, and any limit on
-Windows. The drift test in the matrix
+the sandboxed program, and every backend reports the ``rlimit`` token when a
+ceiling is set (the matrix above runs the CPU burn under each available
+backend). A limit the host cannot enforce is refused when the ``Sandbox`` is
+built (:class:`LimitUnsupported`): ``memory_mb`` on macOS, whose kernel rejects
+every address-space ceiling below ~1 TB, and any limit on Windows. The drift
+test in the matrix
 pins each backend's reported set to exactly the rows above, in both
 directions, so the table and the code cannot drift apart unnoticed.
 

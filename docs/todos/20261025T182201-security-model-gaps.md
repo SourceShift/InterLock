@@ -223,28 +223,34 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 
 ## T10 — Contain Windows sandbox descendants
 
-**Status:** not started
+**Status:** done (2026-10-25)
 
 - **Kill the tree, not the child**
-  - status: not started
-  - last worked on: —
-  - remaining: `interlock/brace/sandbox.py:274-291` uses `proc.kill()` on
-    win32; the comment at `:277-279` names the fix — a Job Object with
-    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, or `taskkill /T`.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `_kill_process_group` uses `taskkill /T /F /PID` (a
+    bounded, silent, failure-tolerant call) and then kills the direct child as
+    a backstop. A process that reparents itself before the walk can still
+    escape; that is stated in the security-model bullet.
+  - tests: `tests/test_brace_windows_kill.py` runs the real win32 branch on any
+    host with the platform and `subprocess.run` swapped: tree kill first,
+    missing taskkill, hung taskkill, vanished process.
 
 ## T11 — Report `rlimit` from the OS backends
 
-**Status:** not started
+**Status:** done (2026-10-25)
 
 - **Join the guarantee matrix**
-  - status: not started
-  - last worked on: —
-  - remaining: bwrap and Seatbelt apply CPU/memory limits but leave `rlimit`
-    out of `enforced` (`backends/bubblewrap.py:70,118-120`,
-    `backends/sandbox_exec.py:122,159-164`). Add the rows to
-    `tests/integration/test_brace_token_matrix.py:286-305`, then append the
-    token. Until then the doc is right and no change is needed — this task is
-    only worth doing if the matrix grows a Linux/macOS rlimit row.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — both backends append `rlimit` to `enforced` when
+    `cpu_seconds` or `memory_mb` is set (`backends/bubblewrap.py`,
+    `backends/sandbox_exec.py`), the token matrix's escape and control tests
+    now run on all three backends, `TOKENS_BY_BACKEND` and the guarantee table
+    in `interlock/brace/__init__.py` carry the rows, and
+    `tests/test_brace_limits.py` asserts the token appears only with a
+    ceiling. Verified on macOS: `sandbox-exec` dies with SIGXCPU; bubblewrap
+    rows run on Linux CI.
 
 ## T12 — Python import-time hooks (ROADMAP R11)
 

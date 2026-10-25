@@ -152,9 +152,11 @@ Each of these is sometimes the right choice. Make it on purpose.
   its descendants together, but a descendant that calls `setsid()` itself
   leaves that group. Under bubblewrap the child also gets its own PID namespace
   and `--die-with-parent`, so the kernel reaps the escapee when bwrap dies; the
-  escape is live under `sandbox-exec`, `soft`, and Windows (where only the
-  direct child is killed). Its confinement and per-process rlimits still apply,
-  and the caller's wait is bounded.
+  escape is live under `sandbox-exec` and `soft`. On Windows the timeout kill
+  runs `taskkill /T`, which walks the parent/process-id tree, then kills the
+  direct child - a process that has already reparented itself can still escape
+  it. Its confinement and per-process rlimits still apply, and the caller's
+  wait is bounded.
 - **Write confinement differs by backend.** On macOS the Seatbelt profile
   grants writes only to the profile's `write_paths` plus one private per-run
   scratch directory (set as `TMPDIR`/`TMP`/`TEMP` and removed after the run);
@@ -164,9 +166,12 @@ Each of these is sometimes the right choice. Make it on purpose.
   scratch bind stay inside the sandbox and never reach the host's shared temp
   roots; nothing outside the binds is visible. A scratch tree is left in place
   only when an escaped descendant still holds it open at timeout.
-- **CPU and memory limits are reported only by `soft`.** bubblewrap and Seatbelt
-  apply them too, but leave `rlimit` out of `enforced` until those rows join the
-  tested guarantee matrix.
+- **A resource ceiling is only as good as the host allows.** All three backends
+  apply CPU/memory rlimits and report the `rlimit` token, but macOS rejects any
+  address-space limit below ~1 TB (so `memory_mb` is refused there, not
+  approximated) and Windows has no POSIX rlimits at all (any ceiling is
+  refused). `check_limits` fails the launch rather than running without the
+  ceiling the policy asked for. **Accepted:** the platform cannot express it.
 - **Cutting the end off an audit log needs an outside record to catch.** The
   chain shows edits, deletions, and reordering inside the log, but a log with its
   last receipts removed is still a valid, shorter chain. Record `sink.head`

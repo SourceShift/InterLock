@@ -228,7 +228,9 @@ class Sandbox:
         still be using as ``TMPDIR``/cwd.
 
         On Windows ``start_new_session`` is unavailable and ``os.killpg`` does
-        not exist, so only the direct child is killed.
+        not exist; the tree is killed with ``taskkill /T``, which walks the
+        parent/process-id tree, and the direct child is killed afterwards in
+        case the tree walk could not reach it.
         """
         popen_kwargs = dict(plan.popen_kwargs)
         if sys.platform != "win32" and not plan.creates_session:
@@ -274,9 +276,24 @@ class Sandbox:
     @staticmethod
     def _kill_process_group(proc: subprocess.Popen) -> None:
         if sys.platform == "win32":
-            # Windows has no process-group kill here; the direct child only.
-            # A job object (or taskkill /T) would be needed for descendants.
-            proc.kill()
+            # Windows has no killpg. ``taskkill /T`` walks the tree by parent
+            # process id, so a child the sandboxed program spawned before the
+            # timeout dies with it; without it that descendant outlives the
+            # direct child and keeps running unconfined by this run's profile.
+            # It can race a child that reparents itself, so the direct kill
+            # still runs after it. No console window, no output, bounded wait.
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=10, check=False,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+            try:
+                proc.kill()
+            except OSError:
+                pass
             return
         try:
             os.killpg(proc.pid, signal.SIGKILL)

@@ -122,6 +122,10 @@ def build_argv(profile: SandboxProfile, argv: List[str]) -> Tuple[List[str], Lis
     enforced = ["fs-rw", "env"]  # reads are not confined on this backend
     if not profile.allow_network:
         enforced.append("net")
+    if profile.cpu_seconds is not None or profile.memory_mb is not None:
+        # set by rlimit_preexec on sandbox-exec itself; rlimits are inherited
+        # across exec, so the sandboxed program runs under them.
+        enforced.append("rlimit")
     return exec_argv, enforced
 
 

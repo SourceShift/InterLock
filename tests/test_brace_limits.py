@@ -70,12 +70,18 @@ def test_os_backends_add_no_hook_without_limits(backend):
 
 
 @pytest.mark.parametrize("backend", ["bubblewrap", "sandbox-exec"])
-def test_os_backends_do_not_claim_the_rlimit_token(backend):
-    """Enforced but not claimed: the guarantee table pins "rlimit" to soft until
-    the token matrix carries rows for these backends."""
+def test_os_backends_claim_the_rlimit_token_when_limits_are_set(backend):
+    """Enforced and claimed: the token matrix carries an escape row for each
+    backend, so ``enforced`` reports what the caller is actually getting."""
     plan = _BY_NAME[backend]().wrap(
         SandboxProfile(cpu_seconds=2), ["/bin/echo", "x"]
     )
+    assert "rlimit" in plan.enforced
+
+
+@pytest.mark.parametrize("backend", ["soft", "bubblewrap", "sandbox-exec"])
+def test_no_backend_claims_rlimit_without_a_ceiling(backend):
+    plan = _BY_NAME[backend]().wrap(SandboxProfile.locked(), ["/bin/echo", "x"])
     assert "rlimit" not in plan.enforced
 
 
