@@ -64,6 +64,18 @@ breaking changes land.
   per member per weekly epoch, unlinkable to verifiers and accountable to the
   issuer; collectors started with `--require-credential` refuse reports
   without one, and `report build --credential FILE` attaches it.
+- Mesh root ceremonies: `interlock mesh root draft|sign|assemble`
+  (`interlock.mesh.repository.draft_root`, `sign_root`, `assemble_root`) sign
+  a new commons root with keys on separate machines. `draft` writes the
+  unsigned next root from the online keys and the root public keys in
+  `keys/root-keys.json`; each keyholder's `sign` writes a detached
+  `FILE.sig.<keyid>`, from a key file or `--external-signer CMD` (stdin: the
+  bytes, stdout: the hex signature, for a hardware token); `assemble` checks
+  the previous root's threshold and the new root's own before it writes
+  `metadata/<N>.root.json` and logs it. `build_root` records each root key's
+  `x-interlock-keyowner` and `x-interlock-term-start`. New `GOVERNANCE.md`
+  (who holds the commons' keys) and
+  [root ceremony guide](docs/guides/mesh-root-ceremony.md).
 
 - The console (`python -m interlock.console`, `interlock-console`): a local
   web app on loopback for the person running the agent - activity, the review
@@ -154,6 +166,16 @@ breaking changes land.
   replaces a local one. A `config.json` whose `ceilings` are exactly what
   `init` used to write reads as the new defaults. Breaking: a stable
   subscription stops blocking until its operator grants it.
+- `interlock mesh publish` no longer needs a root key: `load_signers` requires
+  only the targets, snapshot and timestamp keys (and log when present), and
+  `publish` re-publishes the current root while the online keys match it and
+  it has not expired. It refuses, saying a root ceremony is needed, when a new
+  root is needed and the root keys are not there. Root metadata now expires
+  after 197 days instead of 365, with a 46-day signing period
+  (`metadata.ROOT_SIGNING_PERIOD`): `publish` warns inside it (the summary's
+  `warnings`), with root keys present it signs the next root itself, and
+  `interlock doctor` reports a subscription's root as due (`mesh.root` WARN) or
+  expired (FAIL).
 
 ### Fixed
 

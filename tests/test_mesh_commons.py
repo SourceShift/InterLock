@@ -11,7 +11,7 @@ import pytest
 from interlock import SensorEvent, Verdict
 from interlock.mesh import catalog, metadata
 from interlock.mesh.bundle import DEFAULT_CEILINGS, PackError, apply_ring, check_grants, normalize_pack, rule_digest
-from interlock.mesh.repository import PublishError, init_keys, publish, verify_site
+from interlock.mesh.repository import PublishError, init_keys, load_signers, publish, verify_site
 from interlock.mesh.subscriber import Subscriber, SubscriberError, parse_spec
 from interlock.policy.declarative import PolicyError, load_policy, load_policy_file
 
@@ -499,6 +499,89 @@ def test_root_rotation_is_followed_by_the_subscriber(commons, node):
     assert synced["root_version"] == 2
     assert node.status()["root_version"] == 2
     assert verify_site(str(commons["site"]))["root_version"] == 2
+
+
+# --- an offline root -------------------------------------------------------------------
+
+
+def take_root_offline(commons):
+    """Move the root key file out of keys/, the way a real commons keeps it."""
+    offline = commons["tmp"] / "offline"
+    offline.mkdir(exist_ok=True)
+    (commons["keys"] / "root.1.json").rename(offline / "root.1.json")
+    return offline / "root.1.json"
+
+
+def test_publish_needs_no_root_key_while_the_root_is_current(commons, node):
+    take_root_offline(commons)
+    signers, _ = load_signers(str(commons["keys"]))
+    assert signers["root"] == [] and signers["timestamp"]
+    again = publish(str(commons["source"]), str(commons["site"]), str(commons["keys"]))
+    assert again["root_version"] == 1 and not again["root_changed"] and again["warnings"] == []
+    assert again["targets_version"] == 2 and again["timestamp_version"] == 2
+    assert verify_site(str(commons["site"]))["timestamp_version"] == 2
+    assert node.sync()["timestamp_version"] == 2
+
+
+def test_publish_without_root_keys_refuses_when_a_new_root_is_needed(commons, tmp_path):
+    take_root_offline(commons)
+    keys = commons["keys"]
+    # The online timestamp key is replaced: the root has to say so, and nobody here can sign that.
+    fresh = tmp_path / "fresh"
+    init_keys(str(fresh))
+    (fresh / "timestamp.1.json").replace(keys / "timestamp.1.json")
+    before = (commons["site"] / "metadata" / "timestamp.json").read_bytes()
+    with pytest.raises(PublishError) as err:
+        publish(str(commons["source"]), str(commons["site"]), str(keys))
+    message = str(err.value)
+    assert "timestamp" in message and "0 of the 1 root key(s)" in message and "root ceremony" in message
+    assert (commons["site"] / "metadata" / "timestamp.json").read_bytes() == before  # nothing written
+
+
+def test_publish_without_root_keys_refuses_an_expired_root_and_a_first_root(commons, tmp_path):
+    take_root_offline(commons)
+    with pytest.raises(PublishError) as err:
+        publish(str(commons["source"]), str(commons["site"]), str(commons["keys"]),
+                now=time.time() + 198 * 86400)
+    assert "expired" in str(err.value) and "root ceremony" in str(err.value)
+    with pytest.raises(PublishError) as err:
+        publish(str(commons["source"]), str(tmp_path / "new-site"), str(commons["keys"]))
+    assert "no root yet" in str(err.value)
+
+
+def test_publish_warns_inside_the_root_signing_period(commons):
+    later = time.time() + metadata.DEFAULT_EXPIRY["root"] - 30 * 86400  # 30 days left, inside the 46
+    offline_key = take_root_offline(commons)
+    result = publish(str(commons["source"]), str(commons["site"]), str(commons["keys"]), now=later)
+    assert result["root_version"] == 1 and not result["root_changed"]
+    assert len(result["warnings"]) == 1 and "signing period" in result["warnings"][0]
+    # With the root key at hand, publish signs the next root itself instead.
+    offline_key.rename(commons["keys"] / "root.1.json")
+    result = publish(str(commons["source"]), str(commons["site"]), str(commons["keys"]), now=later)
+    assert result["root_version"] == 2 and result["root_changed"] and result["warnings"] == []
+
+
+def test_doctor_reports_a_root_in_its_signing_period_and_an_expired_root(tmp_path, monkeypatch):
+    from interlock.cli.doctor import _mesh_checks
+
+    source = tmp_path / "commons"
+    (source / "packs").mkdir(parents=True)
+    (source / "packs" / "coding-agent.json").write_text(json.dumps(PACK))
+    init_keys(str(tmp_path / "keys"))
+
+    def root_check(name, **publish_kw):
+        site = tmp_path / ("site-" + name)
+        publish(str(source), str(site), str(tmp_path / "keys"), **publish_kw)
+        mesh_dir = tmp_path / ("mesh-" + name)
+        Subscriber(str(mesh_dir)).init((site / "metadata" / "1.root.json").read_bytes(), ["file://" + str(site)])
+        monkeypatch.setenv("INTERLOCK_MESH_DIR", str(mesh_dir))
+        return {c.id: c for c in _mesh_checks()}["mesh.root"]
+
+    assert root_check("healthy").status == "ok"
+    due = root_check("due", expiry={"root": 30 * 86400})
+    assert due.status == "warn" and "signing period" in due.summary
+    expired = root_check("expired", now=time.time() - metadata.DEFAULT_EXPIRY["root"] - 86400)
+    assert expired.status == "fail" and "expired" in expired.summary and expired.fix
 
 
 def test_parse_spec():

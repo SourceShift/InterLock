@@ -59,6 +59,35 @@ def test_publish_logs_everything_and_subscriber_verifies_inclusion(commons):
     assert node.sync()["log"]["size"] == 8  # new targets, snapshot, timestamp (root and pack unchanged)
 
 
+def test_an_assembled_root_is_logged_and_the_log_keeps_verifying(commons):
+    from interlock.mesh.repository import assemble_root, draft_root, sign_root
+
+    node = node_for(commons["tmp"], "node-r", "file://" + str(commons["site"]))
+    node.sync()
+    keys, tmp = commons["keys"], commons["tmp"]
+    (tmp / "offline").mkdir()
+    old_key = tmp / "offline" / "root.json"
+    (keys / "root.1.json").rename(old_key)
+    init_keys(str(tmp / "new-holder"))
+    new_key = tmp / "new-holder" / "root.1.json"
+    (keys / "root-keys.json").write_text(json.dumps(
+        {"version": 1, "keys": [{"public": json.loads(new_key.read_text())["public"], "owner": "New"}]}))
+    draft = str(tmp / "root-2.json")
+    draft_root(str(commons["site"]), str(keys), draft)
+    sigs = [sign_root(draft, key_path=str(path))["path"] for path in (old_key, new_key)]
+    result = assemble_root(draft, sigs, str(commons["site"]))
+    assert result["root_version"] == 2 and result["logged"]
+    log = MerkleLog(str(commons["site"] / "log" / "entries.jsonl"))
+    assert log.size == 6 and (log.entries[-1].kind, log.entries[-1].name) == ("root", "2.root.json")
+    assert log.find(metadata.sha256_hex((commons["site"] / "metadata" / "2.root.json").read_bytes())) == 5
+    # Past the signed checkpoint until the next publish, and that is allowed.
+    assert verify_site(str(commons["site"]))["root_version"] == 2
+    again = publish(str(commons["source"]), str(commons["site"]), str(keys))
+    assert again["root_version"] == 2 and again["log"]["size"] == 9  # the root entry is not logged twice
+    synced = node.sync()
+    assert synced["root_version"] == 2 and synced["log"]["size"] == 9
+
+
 def test_unlogged_metadata_is_refused(commons):
     node = node_for(commons["tmp"], "node-b", "file://" + str(commons["site"]))
     node.sync()

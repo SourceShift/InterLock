@@ -15,8 +15,16 @@ Then in your policy file:  {"version": 1, "extends": "mesh:coding-agent@stable",
 For a maintainer (the people who run a commons):
 
   interlock mesh keys init --out keys/      # one Ed25519 key per role; raise counts/thresholds for a real root
-  interlock mesh publish --source commons/ --out site/ --keys keys/
+  interlock mesh publish --source commons/ --out site/ --keys keys/   # needs no root key while the root is current
   interlock mesh verify site/               # walk the site exactly as a subscriber would
+
+A new root is signed in a ceremony, each root keyholder on their own machine
+(docs/guides/mesh-root-ceremony.md):
+
+  interlock mesh root draft --site site/ --keys keys/ --out root-2.json   # root keys from keys/root-keys.json
+  interlock mesh root sign root-2.json --key root.json                    # writes root-2.json.sig.<keyid>
+  interlock mesh root sign root-2.json --external-signer ./token-sign     # stdin: the bytes, stdout: hex signature
+  interlock mesh root assemble root-2.json --sig root-2.json.sig.* --site site/
 
 A node never auto-enforces a new community rule: every rule it has not seen
 before spends a monitor window in shadow mode, and a rule's status and the
@@ -85,6 +93,27 @@ def add_arguments(parser) -> None:
     keys_init.add_argument("--out", required=True, metavar="DIR")
     keys_init.add_argument("--root-keys", type=int, default=1, metavar="N")
     keys_init.add_argument("--root-threshold", type=int, default=1, metavar="N")
+
+    root = sub.add_parser("root", help="draft, sign and assemble a new root with offline keys (a ceremony)")
+    root_sub = root.add_subparsers(dest="root_command", metavar="ACTION")
+    root_draft = root_sub.add_parser("draft", help="write the unsigned next root for the keyholders to review and sign")
+    root_draft.add_argument("--site", required=True, metavar="DIR", help="the published site; its root is the one replaced")
+    root_draft.add_argument("--keys", required=True, metavar="DIR",
+                            help="the online keys, roles.json and root-keys.json (no root key needed)")
+    root_draft.add_argument("--expires-days", type=float, default=None, metavar="N",
+                            help="how long the new root stays valid (default 197)")
+    root_draft.add_argument("--out", required=True, metavar="FILE", help="the draft to write; never overwritten")
+    root_sign = root_sub.add_parser("sign", help="add one keyholder's detached signature, on their own machine")
+    root_sign.add_argument("file", metavar="FILE", help="the draft")
+    root_signer = root_sign.add_mutually_exclusive_group(required=True)
+    root_signer.add_argument("--key", metavar="KEYFILE", help="a root key file")
+    root_signer.add_argument("--external-signer", metavar="CMD",
+                             help="a program that reads the bytes to sign on stdin and prints the hex signature")
+    root_assemble = root_sub.add_parser("assemble", help="check both thresholds and write the new root into the site")
+    root_assemble.add_argument("file", metavar="FILE", help="the draft")
+    root_assemble.add_argument("--sig", required=True, nargs="+", action="extend", metavar="FILE",
+                               help="the signature files `root sign` wrote")
+    root_assemble.add_argument("--site", required=True, metavar="DIR")
 
     publish = sub.add_parser("publish", help="build and sign a static site from a commons")
     publish.add_argument("--source", required=True, metavar="DIR", help="the commons checkout (has packs/)")
@@ -219,6 +248,8 @@ def run(args) -> int:
         return _grant(args)
     if command == "keys":
         return _keys(args)
+    if command == "root":
+        return _root(args)
     if command == "publish":
         return _publish(args)
     if command == "verify":
@@ -239,7 +270,7 @@ def run(args) -> int:
         return _gossip(args)
     if command == "credential":
         return _credential(args)
-    sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, grant, keys, publish, "
+    sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, grant, keys, root, publish, "
                      "verify, report, serve, consensus, harness, forge, log, gossip, credential\n")
     return 64
 
@@ -889,7 +920,64 @@ def _keys(args) -> int:
     for role, role_keys in keys.items():
         for key in role_keys:
             print("{:<10} {}".format(role, key.keyid))
-    print("keys written to {} (mode 0600). Keep root keys offline; keep retired root keys under retired/.".format(args.out))
+    print("keys written to {} (mode 0600). After the first publish, move the root key files offline: publish "
+          "needs them only for a new root, and `interlock mesh root draft|sign|assemble` signs one without "
+          "them.".format(args.out))
+    return 0
+
+
+def _root(args) -> int:
+    from ..mesh.metadata import MetadataError
+    from ..mesh.repository import PublishError, assemble_root, draft_root, sign_root
+
+    command = args.root_command
+    if command not in ("draft", "sign", "assemble"):
+        sys.stderr.write("interlock mesh root: choose an action: draft, sign, assemble\n")
+        return 64
+    try:
+        if command == "draft":
+            return _root_draft(args, draft_root)
+        if command == "sign":
+            result = sign_root(args.file, key_path=args.key, external_signer=args.external_signer)
+            print("signed root v{} (sha256 {}) with key {}, a key of the {} root -> {}".format(
+                result["version"], result["sha256"], result["keyid"], " and the ".join(result["counts_toward"]),
+                result["path"]))
+            print("send that file to whoever assembles the root; it holds nothing secret")
+            return 0
+        result = assemble_root(args.file, args.sig, args.site)
+    except (PublishError, MetadataError, ValueError) as exc:
+        sys.stderr.write("interlock mesh root {}: {}\n".format(command, exc))
+        return 2
+    except OSError as exc:
+        sys.stderr.write("interlock mesh root {}: {}\n".format(command, exc))
+        return 3
+    print("assembled root v{} (sha256 {}, expires {}) from {} signature(s) -> {}{}".format(
+        result["root_version"], result["sha256"], result["expires"], len(result["signatures"]), result["path"],
+        "; added to the transparency log" if result["logged"] else ""))
+    print("next: interlock mesh publish, so the timestamp, snapshot and targets are signed under it")
+    return 0
+
+
+def _root_draft(args, draft_root) -> int:
+    from ..mesh import metadata
+
+    doc = draft_root(args.site, args.keys, args.out, expires_days=args.expires_days)
+    signed = doc["signed"]
+    print("drafted root v{} (expires {}) -> {}".format(signed["version"], signed["expires"], args.out))
+    for role, spec in sorted(signed["roles"].items()):
+        print("  {:<10} {} of {}".format(role, spec["threshold"], len(spec["keyids"])))
+        for keyid in spec["keyids"]:
+            meta = signed["keys"][keyid]
+            since = meta.get(metadata.TERM_START_FIELD)
+            print("    {}  {} {}".format(keyid, meta.get(metadata.KEYOWNER_FIELD, ""),
+                                         "(since {})".format(since) if since else "").rstrip())
+    previous = doc.get("previous_root")
+    if previous:
+        print("  root v{} must approve it too: {} of {}".format(previous["version"], previous["threshold"],
+                                                              ", ".join(k[:16] for k in sorted(previous["keys"]))))
+    print("sha256 of the bytes each keyholder signs: {}".format(
+        metadata.sha256_hex(metadata.signed_bytes(signed))))
+    print("next, on each keyholder's machine: interlock mesh root sign {} --key KEYFILE".format(args.out))
     return 0
 
 
@@ -903,6 +991,8 @@ def _publish(args) -> int:
     except (PublishError, OSError, ValueError) as exc:
         sys.stderr.write("interlock mesh publish: {}\n".format(exc))
         return 2
+    for warning in result["warnings"]:
+        sys.stderr.write("interlock mesh publish: warning: {}\n".format(warning))
     if args.json:
         sys.stdout.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
         return 0

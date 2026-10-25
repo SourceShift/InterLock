@@ -8,7 +8,8 @@ replayed view can change what a subscriber installs:
 ``root``       the keys and thresholds of every role; offline keys, long expiry.
                A new root is accepted only when signed by a threshold of the
                *old* root's keys and of its own, and its version is exactly one
-               more than the trusted one.
+               more than the trusted one. Its last ``ROOT_SIGNING_PERIOD`` is
+               the window in which the keyholders sign its successor.
 ``targets``    what is published: each pack's path, byte length and SHA-256,
                plus free-form ``custom`` facts (its status counts, channel).
 ``snapshot``   the current version, length and hash of ``targets``, so a
@@ -48,7 +49,8 @@ from . import ed25519
 from ._util import canonical, from_iso, sha256_hex
 
 __all__ = [
-    "SPEC_VERSION", "ROLES", "DEFAULT_EXPIRY", "MAX_LENGTH", "MetadataError", "Key", "Signer",
+    "SPEC_VERSION", "ROLES", "DEFAULT_EXPIRY", "ROOT_SIGNING_PERIOD", "MAX_LENGTH", "MetadataError", "Key",
+    "Signer", "KEYOWNER_FIELD", "TERM_START_FIELD",
     "envelope", "dumps", "loads", "signed_bytes", "verify_signatures", "RootInfo",
     "build_root", "build_targets", "build_snapshot", "build_timestamp", "TargetInfo",
     "TrustedMetadata", "consistent_target_name",
@@ -59,11 +61,23 @@ ROLES = ("root", "targets", "snapshot", "timestamp")
 
 #: How long each role's metadata stays valid after signing, in seconds.
 DEFAULT_EXPIRY: Dict[str, int] = {
-    "root": 365 * 86400,
+    "root": 197 * 86400,
     "targets": 90 * 86400,
     "snapshot": 7 * 86400,
     "timestamp": 86400,
 }
+
+#: The last stretch of a root's life, in seconds, in which its keyholders sign
+#: the next one. A 197-day root with a 46-day signing period puts a signing
+#: event about every five months, so every offline key is used, and so tested,
+#: about twice a year. ``publish`` warns inside it; ``interlock doctor`` reports it.
+ROOT_SIGNING_PERIOD = 46 * 86400
+
+#: Who holds a root key and since when, recorded in that key's entry of the
+#: root's ``keys``. Signed with the rest of the root, never checked by a
+#: subscriber: they are a public record of custody, not a trust input.
+KEYOWNER_FIELD = "x-interlock-keyowner"
+TERM_START_FIELD = "x-interlock-term-start"
 
 #: The most bytes a subscriber will read for each document. Known before the
 #: download starts, so an endless or oversized response is cut off.
@@ -259,7 +273,11 @@ class RootInfo:
 
 def build_root(role_keys: Mapping[str, Sequence[Key]], thresholds: Mapping[str, int],
                *, version: int, expires: str,
-               extra_roles: Optional[Mapping[str, Sequence[Key]]] = None) -> Dict[str, Any]:
+               extra_roles: Optional[Mapping[str, Sequence[Key]]] = None,
+               key_owners: Optional[Mapping[str, Mapping[str, str]]] = None) -> Dict[str, Any]:
+    """The ``signed`` part of a root. ``key_owners`` maps a root key id to
+    ``{"owner": ..., "term_start": ...}`` (either optional, both strings),
+    recorded on that key as ``x-interlock-keyowner`` / ``x-interlock-term-start``."""
     keys: Dict[str, Any] = {}
     roles: Dict[str, Any] = {}
     wanted = [(role, list(role_keys.get(role, ())), True) for role in ROLES]
@@ -276,6 +294,16 @@ def build_root(role_keys: Mapping[str, Sequence[Key]], thresholds: Mapping[str, 
             raise ValueError("role {} threshold {} is impossible with {} key(s)".format(
                 role, threshold, len(role_list)))
         roles[role] = {"keyids": sorted(k.keyid for k in role_list), "threshold": threshold}
+    fields = {"owner": KEYOWNER_FIELD, "term_start": TERM_START_FIELD}
+    for keyid, owner in (key_owners or {}).items():
+        if keyid not in roles["root"]["keyids"]:
+            raise ValueError("key {} has an owner but is not a root key".format(keyid))
+        if not isinstance(owner, Mapping) or not set(owner) <= set(fields):
+            raise ValueError("the owner of root key {} takes only {}".format(keyid, ", ".join(sorted(fields))))
+        for name, value in owner.items():
+            if not isinstance(value, str) or not value:
+                raise ValueError("the {} of root key {} must be a non-empty string".format(name, keyid))
+            keys[keyid][fields[name]] = value
     return {"_type": "root", "spec_version": SPEC_VERSION, "version": version,
             "expires": expires, "consistent_snapshot": True, "keys": keys, "roles": roles}
 

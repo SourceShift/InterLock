@@ -69,6 +69,7 @@ nav = [
     { "Console" = "guides/console.md" },
     { "Sandbox" = "guides/sandbox.md" },
     { "Mesh" = "guides/mesh.md" },
+    { "Mesh root ceremony" = "guides/mesh-root-ceremony.md" },
     { "Production checklist" = "guides/production.md" },
   ] },
   { "Reference" = [

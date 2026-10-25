@@ -349,8 +349,18 @@ For a maintainer (the people who run a commons):
 
 ```bash
 interlock mesh keys init --out keys/      # one Ed25519 key per role; raise counts/thresholds for a real root
-interlock mesh publish --source commons/ --out site/ --keys keys/
+interlock mesh publish --source commons/ --out site/ --keys keys/   # needs no root key while the root is current
 interlock mesh verify site/               # walk the site exactly as a subscriber would
+```
+
+A new root is signed in a ceremony, each root keyholder on their own machine
+(docs/guides/mesh-root-ceremony.md):
+
+```bash
+interlock mesh root draft --site site/ --keys keys/ --out root-2.json   # root keys from keys/root-keys.json
+interlock mesh root sign root-2.json --key root.json                    # writes root-2.json.sig.<keyid>
+interlock mesh root sign root-2.json --external-signer ./token-sign     # stdin: the bytes, stdout: hex signature
+interlock mesh root assemble root-2.json --sig root-2.json.sig.* --site site/
 ```
 
 A node never auto-enforces a new community rule: every rule it has not seen
@@ -373,6 +383,7 @@ usage: interlock mesh status [-h] [--dir DIR] [--json]
 usage: interlock mesh resolve [-h] [--dir DIR] spec
 usage: interlock mesh grant [-h] [--list] [--dir DIR] ACTION ...
 usage: interlock mesh keys [-h] ACTION ...
+usage: interlock mesh root [-h] ACTION ...
 usage: interlock mesh publish [-h] --source DIR --out DIR --keys DIR [--timestamp-days DAYS]
                               [--no-validate] [--json]
 usage: interlock mesh verify [-h] [--root FILE] [--json] DIR

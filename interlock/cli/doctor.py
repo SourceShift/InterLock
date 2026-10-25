@@ -124,7 +124,8 @@ def _mesh_checks() -> List[Check]:
     """Is the node's mesh subscription fresh? Only reported when one exists."""
     try:
         from ..mesh.subscriber import Subscriber
-        status = Subscriber().status()
+        node = Subscriber()
+        status = node.status()
     except Exception as exc:  # the mesh is optional; a broken state dir is a warning, not a crash
         return [Check("mesh.state", WARN, "mesh state unreadable: {}".format(type(exc).__name__))]
     if not status.get("configured"):
@@ -141,6 +142,7 @@ def _mesh_checks() -> List[Check]:
     elif status.get("timestamp_expires"):
         checks.append(Check("mesh.fresh", OK, "mesh verified, timestamp valid until {}".format(
             status["timestamp_expires"])))
+    checks.append(_mesh_root_check(node))
     if status.get("last_error"):
         checks.append(Check("mesh.sync", WARN, "last mesh sync failed: {}".format(status["last_error"]),
                             fix="interlock mesh sync"))
@@ -160,6 +162,37 @@ def _mesh_checks() -> List[Check]:
         checks.append(Check("mesh.shadow", INFO, "{} shadow finding(s) from rules in their monitor window "
                             "or capped with no approver".format(shadow["total"]), fix="interlock mesh status"))
     return checks
+
+
+def _mesh_root_check(node) -> Check:
+    """When the subscribed root expires: the pinned root plus the rotations the
+    node has verified. It does not depend on the rest of the cache, because an
+    expired root is exactly when every sync starts failing."""
+    from ..mesh import metadata
+    from ..mesh._util import iso, read_bounded
+
+    try:
+        trusted = metadata.TrustedMetadata(read_bounded(node.root_path, metadata.MAX_LENGTH["root"]))
+        for _ in range(metadata.MAX_ROOT_ROTATIONS):
+            path = os.path.join(node.dir, "metadata", "{}.root.json".format(trusted.root.version + 1))
+            if not os.path.exists(path):
+                break
+            trusted.update_root(read_bounded(path, metadata.MAX_LENGTH["root"]))
+    except Exception as exc:  # a broken root is reported, never a crash
+        return Check("mesh.root", WARN, "mesh root unreadable: {}".format(exc), fix="interlock mesh sync")
+    root = trusted.root
+    left = root.expires - time.time()
+    if left < 0:
+        return Check("mesh.root", FAIL, "mesh root v{} expired {}: this node accepts nothing more from the commons "
+                     "until it has a newer root".format(root.version, iso(root.expires)),
+                     fix="interlock mesh sync, if the commons has published one; otherwise obtain its current "
+                         "root out of band and run: interlock mesh init --root ROOT --mirror URL")
+    if left <= metadata.ROOT_SIGNING_PERIOD:
+        return Check("mesh.root", WARN, "mesh root v{} expires {}, in {}: inside its {}-day signing period, so "
+                     "the commons' keyholders are due to sign a new one".format(
+                         root.version, iso(root.expires), _ago(left), metadata.ROOT_SIGNING_PERIOD // 86400),
+                     fix="interlock mesh sync picks up a new root once it is published; ask the commons if none is")
+    return Check("mesh.root", OK, "mesh root v{} valid until {}".format(root.version, iso(root.expires)))
 
 
 def _receipt_checks(args) -> List[Check]:

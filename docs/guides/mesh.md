@@ -65,7 +65,7 @@ logic changes, not when its status is promoted.
 ```bash
 interlock mesh status          # subscriptions, freshness, grants, capped rules, what shadow rules would have done
 interlock mesh resolve mesh:coding-agent@early   # the exact document this node would install
-interlock doctor               # warns when the timestamp has expired or a sync failed
+interlock doctor               # warns when the timestamp has expired, a sync failed, or the root is due
 ```
 
 ### Grant a block
@@ -152,7 +152,7 @@ commons/
 Create keys, publish, verify:
 
 ```bash
-interlock mesh keys init --out keys/                   # one key per role; see below for a real root
+interlock mesh keys init --out keys/                   # one key per role; see "Keys" for a real root
 interlock mesh publish --source commons/ --out site/ --keys keys/
 interlock mesh verify site/                            # walk it exactly as a subscriber would
 ```
@@ -171,13 +171,36 @@ subscriber sees each one as an update and never as a rollback. Re-run it at
 least as often as the timestamp expiry (`--timestamp-days`, default 1): that
 is the heartbeat subscribers watch.
 
-**Keys.** `keys init` writes one Ed25519 key per role, mode 0600. A real
-commons generates its root keys on offline machines and raises the threshold
-(`--root-keys 5 --root-threshold 3`); the targets, snapshot and timestamp keys
-are online and cheap to rotate. To rotate the root, move the old root key
-files under `keys/retired/`, put the new ones in place, and publish: the new
-root is signed by both sets, and subscribers follow the rotation on their next
-sync.
+**Keys.** `keys init` writes one Ed25519 key per role, mode 0600. The
+targets, snapshot, timestamp and log keys are online: `publish` signs with them
+every time, and they are cheap to rotate. The root keys are neither. `publish`
+reads a root key only to sign a *new* root; while the online keys still match
+the current root and it has not expired, it re-publishes that root with no
+root key present. A first deployment can publish once with the root key `keys
+init` wrote and then move that file offline. A real commons generates each
+root key on its keyholder's own machine (or in a hardware token), lists the
+public keys in `keys/root-keys.json`, sets the root threshold in
+`keys/roles.json`, and signs even its first root in a
+[root ceremony](mesh-root-ceremony.md). The commons this project runs uses
+2-of-3, held by the people
+[`GOVERNANCE.md`](https://github.com/SourceShift/InterLock/blob/main/GOVERNANCE.md)
+names.
+
+A root lasts 197 days. Its last 46 are its signing period: `publish` warns, and
+`interlock doctor` on every subscribed node reports it, until the keyholders
+sign the next one. They do that in a ceremony:
+`interlock mesh root draft` writes the unsigned next root, each keyholder runs
+`interlock mesh root sign` on their own machine (with a key file or a hardware
+token's signing program), and `interlock mesh root assemble` checks that the
+old root's threshold and the new root's own both signed before it writes the
+new root into the site. Changing an online key works the same way: `publish`
+refuses until a ceremony has signed a root that names the new key. Subscribers
+follow the rotation on their next sync.
+
+A commons that keeps its root keys beside the others (a first deployment, a
+test) still rotates the old way: move the old root key files under
+`keys/retired/`, put the new ones in place, and publish. The new root is signed
+by both sets.
 
 ## Report what your guard stopped
 
