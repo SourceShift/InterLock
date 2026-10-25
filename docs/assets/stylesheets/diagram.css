@@ -1,0 +1,166 @@
+/* Zoom and fullscreen for the Mermaid diagrams.
+ *
+ * Companion to assets/javascripts/diagram.js, which builds the structure
+ * styled here around every rendered diagram:
+ *
+ *   div.il-diagram                 the group; focusable, owns the keys
+ *     div.il-diagram__bar          the toolbar: out, level/reset, in, fullscreen
+ *     div.il-diagram__viewport     clips the zoomed drawing
+ *       div.mermaid                Zensical's host; the transform lives here
+ *     div.il-diagram__hint         fullscreen only
+ *
+ * This sheet is linked from overrides/main.html on every page. Loading it
+ * globally is safe where the two token sheets are not: it defines no --il-*
+ * tokens and reads only the theme's own --md-* variables, so it can collide
+ * with nothing. See the note on extra_css in zensical.toml.
+ *
+ * Every selector carries .md-typeset because the theme's own rules do, and a
+ * bare class loses to them on specificity.
+ */
+
+.md-typeset .il-diagram {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: 1em 0;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.2rem;
+  background: var(--md-default-bg-color);
+}
+
+.md-typeset .il-diagram:focus {
+  outline: none;
+}
+
+.md-typeset .il-diagram:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 2px;
+}
+
+/* -- toolbar --------------------------------------------------------------- */
+
+.md-typeset .il-diagram__bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.15rem;
+  padding: 0.25rem;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.md-typeset .il-diagram__btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  margin: 0;
+  padding: 0 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 0.2rem;
+  background: transparent;
+  color: var(--md-default-fg-color--light);
+  font: inherit;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.md-typeset .il-diagram__btn:hover,
+.md-typeset .il-diagram__btn:focus-visible {
+  border-color: var(--md-default-fg-color--lightest);
+  background: var(--md-code-bg-color);
+  color: var(--md-accent-fg-color);
+  outline: none;
+}
+
+.md-typeset .il-diagram__btn svg {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.md-typeset .il-diagram__level {
+  min-width: 2.6rem;
+}
+
+/* -- viewport -------------------------------------------------------------- */
+
+.md-typeset .il-diagram__viewport {
+  position: relative;
+  overflow: hidden;
+}
+
+/* Zoomed, panned or fullscreen: the diagram owns touch and the pointer. At
+   rest it stays passive, so a finger on it scrolls the page. */
+.md-typeset .il-diagram[data-active] .il-diagram__viewport {
+  touch-action: none;
+  cursor: grab;
+}
+
+.md-typeset .il-diagram[data-dragging] .il-diagram__viewport {
+  cursor: grabbing;
+}
+
+/* The host. Flex, so its one shadow child (the SVG) centres with no inline
+   baseline gap below it and nothing inherits into the diagram's labels. The
+   transform is the zoom; the script sets it. */
+.md-typeset .il-diagram .mermaid {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0;
+  transform-origin: 0 0;
+}
+
+.md-typeset .il-diagram__hint {
+  display: none;
+}
+
+/* -- fullscreen ------------------------------------------------------------ */
+
+/* One class whether the Fullscreen API granted it or the script fell back to
+   a fixed overlay; the fixed box is harmless under the real thing. */
+.md-typeset .il-diagram--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.md-typeset .il-diagram--fullscreen .il-diagram__viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* In flow, not overlaid: it takes its own row at the bottom, so the fitted
+   drawing never sits under it. */
+.md-typeset .il-diagram--fullscreen .il-diagram__hint {
+  display: block;
+  flex: 0 0 auto;
+  padding: 0.4rem 0 0.6rem;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.6rem;
+  text-align: center;
+}
+
+/* The overlay fallback sits over a page that must not scroll under it. */
+html.il-diagram-lock,
+html.il-diagram-lock body {
+  overflow: hidden;
+}
+
+@media print {
+  .md-typeset .il-diagram {
+    border: 0;
+  }
+  .md-typeset .il-diagram__bar {
+    display: none;
+  }
+}
