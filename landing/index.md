@@ -32,7 +32,7 @@ hide:
   Two numbers here are load-bearing and are worth re-checking when the code
   moves:
 
-    * 121 detectors. That is the row count of docs/reference/detectors.md,
+    * 122 detectors. That is the row count of docs/reference/detectors.md,
       which scripts/gen_detector_catalog.py generates and whose check mode CI
       runs. Grep for 119 in this file if the catalog ever changes.
 
@@ -87,9 +87,9 @@ hide:
 </div>
 
 <div class="il-card il-card--wide il-card__row" data-il-spot data-il-reveal>
-<span class="il-card__num">121</span>
+<span class="il-card__num">122</span>
 <div class="il-card__numwrap">
-<h3 class="il-card__h">121 detectors, ready-made</h3>
+<h3 class="il-card__h">122 detectors, ready-made</h3>
 <p class="il-card__p">Prompt injection, SQL and shell injection, secret and PII redaction, SSRF, egress allowlists, MCP server trust, budgets, and runaway loops.</p>
 </div>
 </div>
@@ -278,7 +278,7 @@ hide:
 
 <div class="il-doc il-doc--plain" data-il-spot data-il-reveal>
 <h3 class="il-doc__h"><span></span>Pick your defence</h3>
-<p><a href="docs/guides/detectors/">Using detectors</a> &mdash; choose from 121 built-in rules, and make sure they see your tools.</p>
+<p><a href="docs/guides/detectors/">Using detectors</a> &mdash; choose from 122 built-in rules, and make sure they see your tools.</p>
 <p><a href="docs/guides/writing-rules/">Writing rules</a> &mdash; from one-liners to result-phase rules and tests.</p>
 </div>
 
@@ -297,7 +297,7 @@ hide:
 <div class="il-doc il-doc--plain" data-il-spot data-il-reveal>
 <h3 class="il-doc__h"><span></span>Look it up</h3>
 <p><a href="docs/reference/python-api/">Python API</a> &mdash; every public class and function, with signatures.</p>
-<p><a href="docs/reference/detectors/">Detector catalog</a> &mdash; all 121 detectors: what each catches, and which calls it sees.</p>
+<p><a href="docs/reference/detectors/">Detector catalog</a> &mdash; all 122 detectors: what each catches, and which calls it sees.</p>
 </div>
 
 </div>

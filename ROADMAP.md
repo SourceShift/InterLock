@@ -58,7 +58,7 @@ worse at both jobs.
 | R4 | Signed execution receipts + append-only audit sink | `shipped` | M | T3 · M4 TODO resolved |
 | R5 | Guardrail robustness harness (FP rate, DoS) | `shipped` | M | T5 · corpus + per-rule/per-detector FP, induced blocking, stress |
 | R6 | MCP capability leases + server attestation | `shipped` | L | T4 · 57 papers |
-| R7 | Tool-result and observation sanitization | `partial` | M | T8 · result phase ships, injection sanitizer blocks |
+| R7 | Tool-result and observation sanitization | `shipped` | M | T8 · result phase, rewritten results; `tool_result_injection_sanitizer` rewrites, the guard blocks |
 | R8 | BRACE escape-resistance suite + unprivileged egress | `shipped` | M | T7 |
 | R9 | Flow-typed policy dimension | `shipped` | L | T6 · a constraint on R10 |
 | R10 | Declarative YAML/JSON policies | `shipped` | L | carried from M0 → M2 · agentjail review |
@@ -551,18 +551,20 @@ anyone who wants a *provable* MCP posture — which is most of the 57 papers.
 
 ## R7 · Tool-result and observation sanitization
 
-**Status:** `partial` — `SensorEvent` gained a `phase` field (`"call"` by
+**Status:** `shipped` — `SensorEvent` has a `phase` field (`"call"` by
 default, `"result"` on the observation path), so a result-level rule cannot fire
 on a call event and vice versa. `enforce_tool_result(action, result)` mirrors
 `enforce_tool_call` and returns the checked result (or raises `Blocked`), and
 `Decision.modified_result` is a field of its own rather than an overload of
-`modified_args`. Result-phase rewriting also ships for sensitive data:
-`tool_output_secret_redactor` and `data_masking_guard` return
-`Decision.modify_result` and redact secrets and PII in a result. What is not
-delivered is injection sanitization: the shipped `tool_result_injection_guard`
-**blocks** a poisoned result instead of rewriting it, and no built-in detector
-strips an injected instruction or override from a result. The rewrite mechanism
-exists; the sanitizing detector named below does not.
+`modified_args`. Result-phase rewriting ships for sensitive data
+(`tool_output_secret_redactor`, `data_masking_guard`) and for injection:
+`tool_result_injection_sanitizer` replaces every line carrying an
+instruction-override signature with a marker and delivers the rest, unwrapping a
+non-dict result back to the shape the tool returned. The blocking guard stays the
+stronger option for a policy that would rather lose the result than risk a
+paraphrase the signature set misses; the two are documented as alternatives, not
+a pair, because the block fires first. Acceptance (a poisoned result is
+rewritten, not merely flagged) is `tests/test_tool_result_injection_sanitizer.py`.
 **Size:** M
 **Literature:** T8 — the injection channel that matters is the tool *result* and
 the tool *description*, not the user prompt.

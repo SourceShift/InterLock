@@ -36,6 +36,14 @@ breaking changes land.
   registered. `esm.named-import` moves from `uncovered` to `covered` when the
   loader is installed; the synchronous and handle-returning shapes remain
   reported.
+- `tool_result_injection_sanitizer`, the rewriting twin of
+  `tool_result_injection_guard`: instead of withholding a poisoned tool result,
+  it replaces each line carrying an instruction-override signature with a marker
+  and delivers the rest of the payload (a non-dict result comes back as its
+  original type). `extra_patterns=` extends the signature set and `marker=`
+  changes the replacement. Its docstring is explicit that this is a signature
+  scanner, not a learned classifier: pair it with the blocking guard where a
+  paraphrase must not get through. ROADMAP R7 is now `shipped`.
 - Receipt tail anchoring: `interlock anchor LOG --key-file KEY` verifies a
   receipt chain and records its head and receipt count in a small signed file
   outside the log (`<log>.anchor`, `--out` to place it on storage the log's
