@@ -1,0 +1,21 @@
+[Unit]
+Description=Interlock mesh DAP leader (test pair only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=interlock-mesh
+Group=interlock-mesh
+WorkingDirectory=/srv/interlock-mesh
+ExecStart=/srv/interlock-mesh/venv/bin/interlock mesh serve --role dap-leader --task /srv/interlock-mesh/dap/task.json --keys /srv/interlock-mesh/dap/leader.json --bind 127.0.0.1:7960 --state /srv/interlock-mesh/state/dap-leader.json
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/interlock-mesh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=Interlock mesh commons publish heartbeat
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=interlock-mesh
+Group=interlock-mesh
+WorkingDirectory=/srv/interlock-mesh
+ExecStart=/srv/interlock-mesh/bin/publish.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/interlock-mesh

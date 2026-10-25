@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "name": "coding-agent",
+  "channel": "coding-agent",
+  "description": "Bootstrap rules for a coding agent's shell surface. Toy-scale examples; review before promoting beyond the canary ring.",
+  "license": "Apache-2.0",
+  "rules": [
+    {
+      "id": "no-curl-pipe-sh",
+      "verdict": "block",
+      "status": "stable",
+      "reason": "piping a download into a shell",
+      "when": {"arg": "command", "matches": "curl[^|]*\\|\\s*(ba)?sh"}
+    },
+    {
+      "id": "no-secret-in-command",
+      "verdict": "block",
+      "status": "test",
+      "reason": "a command line carries a live-looking secret",
+      "when": {"arg": "command", "matches": "(sk|pk|ghp|xox[baprs])_[A-Za-z0-9]{16,}"}
+    },
+    {
+      "id": "large-payment",
+      "verdict": "block",
+      "status": "experimental",
+      "reason": "a payment above the starter threshold",
+      "when": {"arg": "amount", "gt": 1000}
+    },
+    {
+      "id": "retired-rule",
+      "verdict": "block",
+      "status": "deprecated",
+      "reason": "kept only to show that deprecated rules are dropped",
+      "when": {"arg": "x", "eq": "old"}
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "pack": "skill-safety",
+  "channel": "skill-safety",
+  "description": "Reviewed skill-install advisories derived from static SkillSpector scans of four public agent-skill corpora. No specific skill was found to warrant an install block. The published rules guard the install surface itself: they ask before an agent installs a skill from the network or rewrites a skill manifest in a local skills directory.",
+  "rules": [
+    {
+      "id": "skill-install-requires-review",
+      "generic": true,
+      "verdict": "escalate",
+      "status": "experimental",
+      "reason": "installing a skill runs third-party instructions in the agent; the install should be a deliberate, reviewed act",
+      "description": "Skill install command. Static scanning of 68 public skills produced 16 review candidates and 0 confirmed malicious skills, so a scanner score alone is not grounds to install or refuse. This rule asks the operator to review the install before it proceeds.",
+      "matches": "(?i)(?:^|[\\s;&|])(?:npx\\s+skills\\s+(?:add|use|update)|skills\\s+(?:add|use|update)|claude\\s+(?:plugin|skill)\\s+(?:add|install|update)|plugin\\s+(?:install|update)|git\\s+clone[^\\n]*skills)\\b"
+    },
+    {
+      "id": "skill-manifest-write-requires-review",
+      "generic": true,
+      "verdict": "escalate",
+      "status": "experimental",
+      "reason": "writing SKILL.md into a skills directory is the same operation as installing a skill, without the install command to observe",
+      "description": "Write to a SKILL.md under .claude/skills, .agents/skills, .codex/skills, .cursor/skills or .gemini/skills. An agent can install a skill by writing the file directly, which bypasses any install-command rule. This rule covers that path.",
+      "when": {
+        "all": [
+          {"action": ["Write", "Edit", "MultiEdit"]},
+          {"arg": "file_path", "matches": "(?i)(?:^|[/\\\\])\\.(?:claude|codex|cursor|gemini|agents)[/\\\\]skills[/\\\\](?:.*[/\\\\])?SKILL\\.md$"}
+        ]
+      }
+    }
+  ],
+  "provenance": {
+    "reviewed_at": "2026-10-25",
+    "reviewer": "automated review pass; no independent human review yet, so every rule is experimental",
+    "policy_note": "These rules are not an allowlist. An unknown skill is not cleared by this pack; it is simply not named by it. SkillSpector decides whether a skill may be installed; interlock decides what an agent may do once it is installed.",
+    "reviewed_candidates": [
+      {
+        "skill": "addyosmani--agent-skills--api-and-interface-design",
+        "tier": "review_block",
+        "findings": ["TM1 SKILL.md:226"],
+        "disposition": "false-positive",
+        "note": "Line 226 is a REST endpoint table (PATCH /api/tasks/:id). No tool parameters are crafted."
+      },
+      {
+        "skill": "addyosmani--agent-skills--browser-testing-with-devtools",
+        "tier": "review_block",
+        "findings": ["P1 SKILL.md:77", "YR4 SKILL.md:77"],
+        "disposition": "false-positive",
+        "note": "Line 77 quotes 'ignore previous instructions' inside security advice about untrusted page content."
+      },
+      {
+        "skill": "addyosmani--agent-skills--doubt-driven-development",
+        "tier": "review_block",
+        "findings": ["EA5 SKILL.md:144"],
+        "disposition": "false-positive",
+        "note": "Line 144 invokes codex/gemini in documented read-only sandbox modes, not a hidden provider or billing path."
+      },
+      {
+        "skill": "addyosmani--agent-skills--security-and-hardening",
+        "tier": "review_block",
+        "findings": ["YR4 SKILL.md:21", "MP3 SKILL.md:129"],
+        "disposition": "false-positive",
+        "note": "Threat-model prose (STRIDE, trust boundaries) and secrets-management guidance; no exploit tooling and no agent-memory write."
+      },
+      {
+        "skill": "addyosmani--agent-skills--shipping-and-launch",
+        "tier": "review_block",
+        "findings": ["AR2 SKILL.md:25"],
+        "disposition": "false-positive",
+        "note": "Line 25 is a code-quality checklist item about console.log in production. Nothing suppresses warnings to a user."
+      },
+      {
+        "skill": "addyosmani--agent-skills--source-driven-development",
+        "tier": "review_block",
+        "findings": ["YR4 SKILL.md:101", "P1 SKILL.md:110"],
+        "disposition": "false-positive",
+        "note": "The section teaches the agent to ignore directives found in fetched documentation. The quoted attack phrase is the thing being defended against."
+      },
+      {
+        "skill": "anthropics--skills--docx",
+        "tier": "review_block",
+        "findings": ["TM1 SKILL.md:56"],
+        "disposition": "reviewed-intentional",
+        "note": "Cleanup of temporary conversion output (rm -f ../out.*) inside a document-conversion workflow, scoped to its own output directory."
+      },
+      {
+        "skill": "anthropics--skills--pptx",
+        "tier": "review_block",
+        "findings": ["TM1 SKILL.md:62"],
+        "disposition": "reviewed-intentional",
+        "note": "Same temporary-output cleanup pattern as docx."
+      },
+      {
+        "skill": "anthropics--skills--skill-creator",
+        "tier": "review_block",
+        "findings": ["AS1 scripts/run_eval.py:23"],
+        "disposition": "reviewed-intentional",
+        "note": "Walks up from cwd testing whether a .claude directory exists, to find the project root. It does not read configuration contents or credentials."
+      },
+      {
+        "skill": "anthropics--skills--webapp-testing",
+        "tier": "review_block",
+        "findings": ["TM1 scripts/with_server.py:69"],
+        "disposition": "reviewed-intentional",
+        "note": "shell=True launching a user-supplied server command is the documented purpose of the helper; the command is the caller's."
+      },
+      {
+        "skill": "obra--superpowers--brainstorming",
+        "tier": "review_block",
+        "findings": ["TM1 scripts/stop-server.sh:22"],
+        "disposition": "false-positive",
+        "note": "Session cleanup script removing a state file under a caller-supplied session directory, after validating a server id read from that directory."
+      },
+      {
+        "skill": "obra--superpowers--writing-skills",
+        "tier": "review_block",
+        "findings": ["RA1 SKILL.md:41", "RA1 SKILL.md:171", "RA1 SKILL.md:172", "RA1 SKILL.md:287"],
+        "disposition": "false-positive",
+        "note": "The whole skill is about authoring and editing SKILL.md files, gated by a human request and a RED-GREEN-REFACTOR test loop. Self-modification of a running agent is not what the text describes."
+      },
+      {
+        "skill": "vercel-labs--agent-skills--deploy-to-vercel",
+        "tier": "review_block",
+        "findings": ["SC9 Archive.zip!/__MACOSX/resources/._deploy.sh:1", "SC9 Archive.zip!/__MACOSX/resources/._deploy-codex.sh:1", "AE2 same"],
+        "disposition": "false-positive",
+        "note": "AppleDouble metadata files inside a zip, created by macOS archiving; they are not executable artifacts the skill runs."
+      },
+      {
+        "skill": "vercel-labs--agent-skills--vercel-optimize",
+        "tier": "review_block",
+        "findings": ["P6 lib/support-topics.mjs:326"],
+        "disposition": "false-positive",
+        "note": "The matcher keys on the literal substring 'system prompt' inside ordinary support-topic data; line 326 returns a topic rule."
+      },
+      {
+        "skill": "addyosmani--agent-skills--spec-driven-development",
+        "tier": "review_escalate",
+        "findings": ["AS3 SKILL.md:214"],
+        "disposition": "false-positive",
+        "note": "Line 214 names another skill's SKILL.md path in prose as a prerequisite. It does not enumerate the skills directory."
+      },
+      {
+        "skill": "addyosmani--agent-skills--using-agent-skills",
+        "tier": "review_escalate",
+        "findings": ["EA2 SKILL.md:135"],
+        "disposition": "false-positive",
+        "note": "Line 135 says to start with a spec when a task is non-trivial. It does not delegate critical operations without the human."
+      }
+    ]
+  }
+}

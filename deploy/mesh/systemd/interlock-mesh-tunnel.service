@@ -1,0 +1,19 @@
+[Unit]
+Description=Cloudflare Tunnel for interlock mesh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=interlock-mesh
+Group=interlock-mesh
+ExecStart=/usr/local/bin/cloudflared --no-autoupdate --config /etc/cloudflared/interlock-mesh.yml tunnel run
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

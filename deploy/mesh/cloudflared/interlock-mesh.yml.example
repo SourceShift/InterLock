@@ -1,0 +1,24 @@
+# Cloudflare Tunnel ingress for a single-host bootstrap deployment.
+#
+# All origin services bind loopback. Cloudflare terminates TLS; do not expose
+# 7949/7950/7960/7961 on a public interface.
+#
+# Universal SSL covers only the apex and its first-level wildcard
+# (*.example.com). Use flat names such as mesh-consensus.example.com; a
+# second-level wildcard (*.mesh.example.com) needs Advanced Certificate Manager.
+tunnel: <TUNNEL_ID>
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+no-autoupdate: true
+
+ingress:
+  - hostname: mesh.example.com
+    service: http://127.0.0.1:7949
+  - hostname: mesh-mirror.example.com
+    service: http://127.0.0.1:7949
+  - hostname: mesh-consensus.example.com
+    service: http://127.0.0.1:7950
+  - hostname: mesh-leader.example.com
+    service: http://127.0.0.1:7960
+  - hostname: mesh-helper.example.com
+    service: http://127.0.0.1:7961
+  - service: http_status:404
