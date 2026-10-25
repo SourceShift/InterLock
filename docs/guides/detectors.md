@@ -386,8 +386,9 @@ resolved, a bare `cd` going home). The limits:
   `cd` that may run ahead of it. Both err toward a match, not a miss.
 
 Parsing is best-effort and **not a boundary**: ANSI-C quoting (`$'\x72\x6d'`)
-is decoded, but a base64 payload piped into a shell and a script fetched in one
-command and run by a later one get past it. Contain untrusted
+and a base64 payload piped into a shell are decoded, and a script fetched to a
+literal path and run later is followed; a payload encoded another way does get
+past it. Contain untrusted
 commands with the [sandbox](sandbox.md).
 
 ## Least privilege: runbooks and HTTP rules

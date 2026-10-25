@@ -32,13 +32,15 @@ The parser never raises. Input it cannot fully read (an unclosed quote, a
 nesting deeper than :data:`MAX_DEPTH`, more than :data:`MAX_INVOCATIONS`
 commands) yields what it could read with ``partial=True``: a lower bound on
 what the string runs, never a claim that it runs nothing else. A parser is not
-a boundary: ANSI-C quoting such as ``$'\\x72\\x6d'`` is decoded, but a base64
-payload piped into a shell, or a script fetched in one command and run by a
-later one, passes it - code that must be contained belongs in the BRACE
-sandbox.
+a boundary: ANSI-C quoting such as ``$'\\x72\\x6d'`` and a base64 payload piped
+into a shell are decoded, and a script fetched to a literal path and run later
+is followed, but a payload encoded another way passes it - code that must be
+contained belongs in the BRACE sandbox.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import shlex
 from dataclasses import dataclass
@@ -47,6 +49,9 @@ from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
 #: How deep nested scripts (``bash -c 'bash -c "..."'``), substitutions and
 #: inline code are followed. Deeper input is reported ``partial``.
 MAX_DEPTH = 6
+
+#: Most nested base64 layers decoded from one command string.
+MAX_BASE64_LAYERS = 4
 
 #: Longest input read. The rest is ignored and the result marked ``partial``.
 MAX_INPUT = 64 * 1024
@@ -115,11 +120,110 @@ def parse(cmd: str) -> ParsedCommand:
         parser.partial = True
     try:
         parser.text(text, depth=0, via=())
+        _decode_base64(parser)
     except RecursionError:
         parser.partial = True
     return ParsedCommand(
         source=cmd, invocations=tuple(parser.found), partial=parser.partial,
     )
+
+
+def _decode_base64(parser: "_Parser") -> None:
+    """Parse base64 payloads piped into a program that runs stdin as code.
+
+    ``echo cm0gLXJmIC8= | base64 -d | sh`` runs a command no token in the
+    source names. Each layer is decoded and parsed, up to
+    :data:`MAX_BASE64_LAYERS`. A payload that is not valid base64, or whose
+    output does not reach a stdin-reading shell or interpreter, is ignored:
+    a decoder that prints to the terminal executes nothing.
+    """
+    seen: set = set()
+    for _ in range(MAX_BASE64_LAYERS):
+        pending = [
+            inv for inv in list(parser.found)
+            if id(inv) not in seen
+            and _is_base64_decode(inv)
+            and _piped_into_code(parser.found, inv)
+        ]
+        if not pending:
+            return
+        for inv in pending:
+            seen.add(id(inv))
+            literal = _piped_literal(parser.found, inv)
+            decoded = _b64decode(literal) if literal is not None else None
+            if decoded:
+                parser.text(decoded, depth=1, via=inv.via + ("base64",))
+
+
+def _is_base64_decode(inv: "Invocation") -> bool:
+    """Whether ``inv`` decodes base64 from its stdin."""
+    if inv.name == "base64":
+        return any(arg in ("-d", "--decode", "-D") for arg in inv.args)
+    if inv.name == "openssl":
+        return bool(inv.args) and inv.args[0] == "base64" and "-d" in inv.args
+    return False
+
+
+def _piped_literal(found: Sequence["Invocation"],
+                   decoder: "Invocation") -> Optional[str]:
+    """The literal text the stage before ``decoder`` writes into its stdin.
+
+    Only a literal ``echo`` or ``printf`` is followed: a file, a variable or a
+    command substitution is not read.
+    """
+    prev = None
+    for inv in found:
+        if inv.pipeline == decoder.pipeline and inv.stage == decoder.stage - 1:
+            prev = inv
+    if prev is None:
+        return None
+    words = [arg for arg in prev.args if not arg.startswith("-")]
+    if prev.name == "echo":
+        return " ".join(words) or None
+    if prev.name == "printf" and words:
+        if "%s" in words[0]:
+            return "".join(words[1:]) or None
+        return "".join(words) if "%" not in "".join(words) else None
+    return None
+
+
+def _piped_into_code(found: Sequence["Invocation"], decoder: "Invocation") -> bool:
+    """Whether ``decoder``'s output reaches a later stage that runs it as code."""
+    return any(
+        inv.pipeline == decoder.pipeline
+        and inv.stage > decoder.stage
+        and _invocation_reads_stdin_code(inv)
+        for inv in found
+    )
+
+
+def _invocation_reads_stdin_code(inv: "Invocation") -> bool:
+    """Whether ``inv`` executes its stdin as a script."""
+    if not _STDIN_CODE.match(inv.name):
+        return False
+    operands = [arg for arg in inv.args if not arg.startswith("-")]
+    return not operands or operands[0] == "-" or "-s" in inv.args
+
+
+def _b64decode(text: str) -> Optional[str]:
+    """Decode one base64 literal, or return ``None`` if it is not usable text."""
+    compact = "".join(text.split())
+    if not compact:
+        return None
+    compact += "=" * (-len(compact) % 4)
+    try:
+        raw = base64.b64decode(compact, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not raw or len(raw) > MAX_INPUT:
+        return None
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if any(ord(ch) < 32 and ch not in "\n\r\t" for ch in decoded):
+        return None
+    return decoded
 
 
 # --- tables ------------------------------------------------------------------

@@ -46,7 +46,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
 
-from .parser import _SCRIPT_INTERPRETER, _WRAPPERS, Invocation, ParsedCommand, _literals, parse
+from .parser import (_SCRIPT_INTERPRETER, _WRAPPERS, Invocation,
+                     ParsedCommand, _literals, parse)
 
 
 @dataclass(frozen=True)
@@ -529,7 +530,7 @@ def _is_shell_init(target: str) -> bool:
 
 
 def _fetch_exec(invocations: Sequence[Invocation]) -> List[Intent]:
-    """A fetcher piped into a shell or stdin-reading interpreter, same pipeline."""
+    """Fetched content that is executed, piped or written to a file and run."""
     out: List[Intent] = []
     for fetch in invocations:
         if fetch.name not in _FETCHERS:
@@ -547,6 +548,75 @@ def _fetch_exec(invocations: Sequence[Invocation]) -> List[Intent]:
             if _reads_stdin_as_code(sink):
                 out.append(Intent("net.fetch_exec", sink.name, (fetch.name,),
                                   detail="pipe", critical=True))
+    out.extend(_fetch_write_exec(invocations))
+    unique: Dict[Intent, None] = {}
+    for intent in out:
+        unique.setdefault(intent, None)
+    return list(unique)
+
+
+#: Options that name the file a fetcher writes to.
+_FETCH_OUTPUT: Dict[str, Tuple[str, ...]] = {
+    "curl": ("-o", "--output"),
+    "wget": ("-O", "--output-document"),
+    "aria2c": ("-o", "--out"),
+    "xh": ("-o", "--output"),
+}
+
+
+def _fetched_paths(inv: Invocation) -> List[str]:
+    """Files ``inv`` writes what it downloaded to."""
+    flags = _FETCH_OUTPUT.get(inv.name, ())
+    out: List[str] = []
+    args = list(inv.args)
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in flags and i + 1 < len(args):
+            out.append(args[i + 1])
+            i += 2
+            continue
+        for flag in flags:
+            if flag.startswith("--") and arg.startswith(flag + "="):
+                out.append(arg.split("=", 1)[1])
+        i += 1
+    out.extend(inv.redirects)
+    return [path for path in out if path and path != "-"]
+
+
+def _same_file(word: str, path: str) -> bool:
+    return posixpath.normpath(word) == posixpath.normpath(path)
+
+
+def _runs_script(inv: Invocation, path: str) -> bool:
+    """Whether ``inv`` executes the file at ``path``."""
+    if inv.name in _SHELLS or _STDIN_INTERPRETER.match(inv.name) or \
+            inv.name in ("source", "."):
+        return any(_same_file(arg, path) for arg in inv.args)
+    # A direct ``./x.sh`` loses its ``./`` to the basename, so match the name
+    # when the fetched path lies in a directory.
+    return ("/" in path or path.startswith(".")) and \
+        inv.binary == posixpath.basename(path)
+
+
+def _fetch_write_exec(invocations: Sequence[Invocation]) -> List[Intent]:
+    """A fetcher writing a file that a later invocation in the string runs.
+
+    ``curl -o /tmp/x.sh …; bash /tmp/x.sh`` never pipes, so the same-pipeline
+    check misses it. Matching is by literal path; a path built at run time is
+    not followed.
+    """
+    out: List[Intent] = []
+    ordered = list(invocations)
+    for index, fetch in enumerate(ordered):
+        if fetch.name not in _FETCHERS:
+            continue
+        for path in _fetched_paths(fetch):
+            for later in ordered[index + 1:]:
+                if _runs_script(later, path):
+                    out.append(Intent("net.fetch_exec", later.name,
+                                      (fetch.name,), detail="staged",
+                                      critical=True))
     return out
 
 

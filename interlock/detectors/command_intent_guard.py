@@ -31,9 +31,10 @@ argument. ``"partial"`` is a selector of its own for that case -
 ``block=["partial"]`` refuses an unreadable command outright, and
 ``escalate=["partial"]`` builds a rule that only asks about one.
 
-Parsing is best-effort and is not a boundary: ANSI-C quoting is decoded, but a
-base64 payload piped into a shell passes it, as does a script fetched in one
-command and run by a later one. Contain untrusted code with the BRACE sandbox.
+Parsing is best-effort and is not a boundary: ANSI-C quoting and a base64
+payload piped into a shell are decoded, and a script fetched to a literal path
+and run later is followed, but a payload encoded another way passes it. Contain
+untrusted code with the BRACE sandbox.
 """
 from __future__ import annotations
 

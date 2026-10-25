@@ -95,13 +95,15 @@ Each of these is sometimes the right choice. Make it on purpose.
   another process. Use one of those when the agent must not reach the decision
   ([approvals](guides/approvals.md), [reviews](guides/reviews.md)).
 - **Shell commands are parsed best-effort.** The parser decodes ANSI-C quoting
-  (`$'\x72\x6d'`) and sees through respelling, wrappers (`sudo`, `env`, `xargs`),
-  `sh -c`, substitutions and inline interpreter code. A base64 payload piped
-  into a shell, and a script fetched in one command and run by a later one,
-  still get past it. Parsed intent normally adds to the raw-text checks, but the
-  destructive-command guard lets a complete parse clear a raw match when the
-  command is a pure print (`echo rm -rf /`), so the union is not strictly
-  add-only. Contain untrusted commands with BRACE.
+  (`$'\x72\x6d'`) and a base64 payload piped into a shell, follows a script
+  fetched in one command and run by a later one when both name the same literal
+  path, and sees through respelling, wrappers (`sudo`, `env`, `xargs`),
+  `sh -c`, substitutions and inline interpreter code. A payload encoded some
+  other way (gzip, a rotated alphabet, an encryptor), and a path assembled at
+  run time, still get past it. Parsed intent normally adds to the raw-text
+  checks, but the destructive-command guard lets a complete parse clear a raw
+  match when the command is a pure print (`echo rm -rf /`), so the union is not
+  strictly add-only. Contain untrusted commands with BRACE.
 - **SQL analysis and masking are best-effort.** The SQL analyzer is a lexer:
   a function called from a `SELECT` list is invisible to it. Masking detects
   formats and checksums, not meaning: names and places aren't detected, and a
