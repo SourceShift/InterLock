@@ -687,7 +687,7 @@ in `modified_result`.
 
 ## Flow provenance
 
-Guide: [declarative policies](../guides/policies.md#provenance-source--sink).
+Guide: [declarative policies](../guides/policies.md#provenance-source-to-sink).
 
 The flow layer answers "where did this value come from?" at the interception
 boundary. A result that a guarded tool returns is remembered by

@@ -14,7 +14,7 @@ doing harm with the tools you gave it. Typical cases:
 | The agent runs a destructive command (`rm -rf`, `DROP TABLE`) | Call rules and detectors block it before it runs |
 | Injected instructions in a web page, email, or document steer the agent | Result rules keep the poisoned output from the agent; call rules limit what a steered agent can do |
 | The agent sends data to a host it shouldn't | Egress allowlists block the call |
-| Data a tool fetched is copied into an outbound field, even to an allowlisted host | [Flow provenance](guides/policies.md#provenance-source--sink) labels the value with its origin and a source→sink rule refuses the sink |
+| Data a tool fetched is copied into an outbound field, even to an allowlisted host | [Flow provenance](guides/policies.md#provenance-source-to-sink) labels the value with its origin and a source→sink rule refuses the sink |
 | Secrets or personal data end up in an outbound message | Redaction detectors mask them and let the message through |
 | An MCP server changes its tools after you reviewed them | Pinning, surface baselines, attestation, and leases refuse the changed server |
 | A loop or a hijacked agent burns money or calls | Rate, budget, and loop detectors cut it off |

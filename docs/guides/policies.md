@@ -133,7 +133,7 @@ Shell-intent selectors are listed in [parsed shell commands](detectors.md#parsed
 and so on. A prefix matches its family (`"git"` covers every `git.*` intent),
 and `:detail` or `:critical` narrows it.
 
-## Provenance (source → sink)
+## Provenance: source to sink
 
 A flat `arg` condition judges the text; it cannot tell a URL the user typed
 from a URL copied out of a fetched page. A `flow` condition does:
