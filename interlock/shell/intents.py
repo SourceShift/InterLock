@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 from .parser import (_SCRIPT_INTERPRETER, _WRAPPERS, Invocation,
-                     ParsedCommand, _literals, parse)
+                     ParsedCommand, _literals, memoized_parse, parse)
 
 
 @dataclass(frozen=True)
@@ -132,11 +132,12 @@ def memoized_analysis() -> Iterator[None]:
     if _ANALYSIS_MEMO.get() is not None:
         yield
         return
-    token = _ANALYSIS_MEMO.set({})
-    try:
-        yield
-    finally:
-        _ANALYSIS_MEMO.reset(token)
+    with memoized_parse():
+        token = _ANALYSIS_MEMO.set({})
+        try:
+            yield
+        finally:
+            _ANALYSIS_MEMO.reset(token)
 
 
 def memoized_analyze(command: str, cwd: Optional[str] = None) -> Tuple[Intent, ...]:
@@ -444,6 +445,34 @@ _GLOB = re.compile(r"[*?[]")
 _PATH_MAX = 4096  # longer words cannot be opened as one path
 
 
+def _base_inside_own(base: Optional[str]) -> bool:
+    """Whether a bare relative word in ``base`` can land inside ``~/.interlock``.
+
+    True when the base itself is inside it (a session running there) or when
+    the base is unknown - in both cases every word still gets the exact check.
+    Symlinks are not followed here, matching :func:`_in_interlock_home`, which
+    also resolves lexically.
+    """
+    if not base:
+        return True
+    parts = _components(base)
+    own = _own_components()
+    return len(parts) >= len(own) and parts[:len(own)] == own
+
+
+def _could_name_own(word: str) -> bool:
+    """Cheap reject: can this word spell ``~/.interlock`` at all?
+
+    ``interlock`` must appear literally unless a brace or glob can build the
+    name (``~/.{interlock,x}``, ``~/.inter*``, ``~/.i?terlock``). A command with
+    thousands of ordinary operands should not pay a full path normalisation
+    per word; a word that passes still gets the exact check.
+    """
+    if any(ch in word for ch in "{*?["):
+        return True
+    return "interlock" in word.casefold()
+
+
 def _in_interlock_home(target: str, cwd: Optional[str] = None) -> bool:
     """Whether ``target`` names ``~/.interlock`` or anything under it.
 
@@ -455,7 +484,7 @@ def _in_interlock_home(target: str, cwd: Optional[str] = None) -> bool:
     """
     if len(target) > _PATH_MAX:
         return False
-    own = _components(os.path.join(os.path.expanduser("~"), ".interlock"))
+    own = _own_components()
     for word in _brace_variants(target.strip()):
         t = os.path.expanduser(_FILE_URL.sub("", _HOME_VAR.sub("~", word)))
         if not t:
@@ -469,6 +498,23 @@ def _in_interlock_home(target: str, cwd: Optional[str] = None) -> bool:
         if len(parts) >= len(own) and all(_component_is(p, o) for p, o in zip(parts, own)):
             return True
     return False
+
+
+#: ``~/.interlock`` components, keyed by home so a test that patches HOME sees
+#: its own value. Recomputing this inside a per-argument loop made one command
+#: with thousands of words spend most of its decision in the guard's own path
+#: normalisation.
+_OWN_COMPONENTS: Dict[str, List[str]] = {}
+
+
+def _own_components() -> List[str]:
+    home = os.path.expanduser("~")
+    found = _OWN_COMPONENTS.get(home)
+    if found is None:
+        if len(_OWN_COMPONENTS) >= 8:  # a long-lived test process, not a real one
+            _OWN_COMPONENTS.clear()
+        found = _OWN_COMPONENTS[home] = _components(os.path.join(home, ".interlock"))
+    return found
 
 
 def _components(path: str) -> List[str]:
@@ -550,11 +596,17 @@ def _tamper(inv: Invocation, cwd: Optional[str] = None) -> List[Intent]:
         targets.extend(_flags(inv.args)[1])
     if name == "dd":
         targets.extend(a[3:] for a in inv.args if a.startswith("of="))
-    hit = tuple(t for t in targets if _in_interlock_home(t, cwd))
+    # Resolve the process directory once, not once per word: os.getcwd() is a
+    # syscall, and a command can carry thousands of words.
+    base_cwd = cwd or _getcwd()
+    bare_could = _base_inside_own(base_cwd)
+    hit = tuple(t for t in targets if _in_interlock_home(t, base_cwd))
     if hit:
         out.append(Intent("interlock.tamper", name, hit, detail="write", critical=True))
-    named = tuple(dict.fromkeys(w for w in _path_words(inv)
-                                if w not in hit and _in_interlock_home(w, cwd)))
+    named = tuple(dict.fromkeys(
+        w for w in _path_words(inv)
+        if w not in hit and (bare_could or _could_name_own(w))
+        and _in_interlock_home(w, base_cwd)))
     if named:
         out.append(Intent("interlock.tamper", name, named, detail="path", critical=True))
     if name in _FETCHERS or re.match(r"^python[0-9.]*$", name) or name in ("node", "deno", "bun"):

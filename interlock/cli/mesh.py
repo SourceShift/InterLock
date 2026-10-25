@@ -326,8 +326,14 @@ def add_arguments(parser) -> None:
     harness.add_argument("--policy", required=True, metavar="FILE", help="a policy or pack document")
     harness.add_argument("--benign", required=True, metavar="FILE", help="JSONL of benign events: {action, args}")
     harness.add_argument("--samples", default=None, metavar="FILE", help="JSONL of attack events, for recall")
+    harness.add_argument("--poisons", default=None, metavar="FILE",
+                         help="JSONL bait strings, to measure induced blocking")
+    harness.add_argument("--stress", action="store_true",
+                         help="time pathological but legal calls")
     harness.add_argument("--max-fp-rate", type=float, default=0.001, metavar="RATE")
     harness.add_argument("--max-p95-us", type=int, default=5000, metavar="US")
+    harness.add_argument("--max-induced-rate", type=float, default=0.0, metavar="RATE")
+    harness.add_argument("--max-stress-p95-us", type=int, default=50000, metavar="US")
     harness.add_argument("--min-recall", type=float, default=0.8, metavar="RATE")
     harness.add_argument("--json", action="store_true")
 
@@ -509,23 +515,37 @@ def _credential(args) -> int:
 
 
 def _harness(args) -> int:
-    from ..mesh.harness import gate, load_corpus, measure, recall
+    from ..mesh.harness import (gate, gate_induced, gate_stress, induced_blocking,
+                                load_corpus, load_poisons, measure, recall, stress)
 
     try:
         with open(args.policy, "r", encoding="utf-8") as fh:
             policy = json.load(fh)
         benign = load_corpus(args.benign)
         samples = load_corpus(args.samples) if args.samples else []
+        poisons = load_poisons(args.poisons) if args.poisons else []
     except (OSError, ValueError) as exc:
         sys.stderr.write("interlock mesh harness: {}\n".format(exc))
         return 3
     measured = measure(policy, benign, source=args.policy)
     recalled = recall(policy, samples, source=args.policy) if samples else None
+    induced = (induced_blocking(policy, benign, poisons, source=args.policy)
+               if poisons else None)
+    stressed = stress(policy, source=args.policy) if args.stress else None
     ok, reasons = gate(measured, max_fp_rate=args.max_fp_rate, max_p95_us=args.max_p95_us,
                        recalled=recalled, min_recall=args.min_recall if recalled else 0.0)
+    if induced is not None:
+        reasons.extend(gate_induced(induced, max_rate=args.max_induced_rate))
+    if stressed is not None:
+        reasons.extend(gate_stress(stressed, max_p95_us=args.max_stress_p95_us))
+    ok = not reasons
     if args.json:
-        sys.stdout.write(json.dumps({"passed": ok, "reasons": reasons, "measured": measured, "recall": recalled},
-                                    indent=2, sort_keys=True) + "\n")
+        payload = {"passed": ok, "reasons": reasons, "measured": measured, "recall": recalled}
+        if induced is not None:
+            payload["induced"] = induced
+        if stressed is not None:
+            payload["stress"] = stressed
+        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     else:
         print("{}: {} benign event(s), {} false positive(s) ({:.4%}), p50 {} us, p95 {} us".format(
             args.policy, measured["evaluated"], measured["false_positives"], measured["fp_rate"],
@@ -535,6 +555,13 @@ def _harness(args) -> int:
         if recalled:
             print("  recall: {} of {} sample(s) caught ({:.1%})".format(recalled["caught"], recalled["samples"],
                                                                         recalled["recall"]))
+        if induced is not None:
+            print("  induced blocking: {} of {} poisoned call(s) refused ({:.4%})".format(
+                induced["induced"], induced["variants"], induced["induced_rate"]))
+        if stressed is not None:
+            for row in stressed:
+                print("  stress case {} ({}): p50 {} us, p95 {} us".format(
+                    row["case"], row["action"], row["latency_us"]["p50"], row["latency_us"]["p95"]))
         print("gate: {}".format("PASS" if ok else "FAIL: " + "; ".join(reasons)))
     return 0 if ok else 1
 

@@ -288,13 +288,16 @@ Start with [getting started](docs/getting-started.md), then
 
 ## Status
 
-**Alpha (v0.0.1).** The core API is stable and covered by over 4,700 tests. Not
-yet on PyPI or npm. The default coding-agent pack is measured against a
-committed benign corpus (0 false positives over 70 events, gated in CI). Next
-on the [roadmap](ROADMAP.md): per-detector false-positive numbers for other
-policies, rules over data flow between tools, an import monitor that notices a
-guarded client changing underneath (MCP client sessions already attach with
-`interlock.attach()`), and signed PyPI/npm releases.
+**Alpha (v0.0.1).** The core API is stable and covered by about 4,900 tests. Not
+yet on PyPI or npm. The default coding-agent pack is measured against two
+committed benign corpora: **0 false positives over 70 events plus a 20-event
+held-out split**, per-rule and per-detector numbers, **0 of 560 poisoned calls
+induced to block**, and **28 ms worst case** on pathological-but-legal input —
+all gated in CI. In-process overhead is **243 µs p50 / 392 µs p95** over an
+empty-engine baseline ([methodology](benchmarks/overhead/README.md)). Next on
+the [roadmap](ROADMAP.md): rules over data flow between tools, an import
+monitor that notices a guarded client changing underneath (MCP client sessions
+already attach with `interlock.attach()`), and signed PyPI/npm releases.
 
 ## Contributing
 

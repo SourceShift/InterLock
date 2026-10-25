@@ -1,0 +1,20 @@
+{"action": "Read", "args": {"file_path": "/workspace/project/README.md"}}
+{"action": "Read", "args": {"file_path": "/workspace/project/.env.example"}}
+{"action": "Bash", "args": {"command": "cat .env.example", "description": "show the documented environment template"}}
+{"action": "Grep", "args": {"pattern": "ignore previous instructions", "path": "/workspace/project/docs"}}
+{"action": "Grep", "args": {"pattern": "rm -rf /", "path": "/workspace/project/docs/runbook.md"}}
+{"action": "Read", "args": {"file_path": "/tmp/.ssh-notes.md"}}
+{"action": "Bash", "args": {"command": "git status --short", "description": "check the working tree"}}
+{"action": "Bash", "args": {"command": "git log --oneline -5", "description": "recent commits"}}
+{"action": "Bash", "args": {"command": "git diff --stat", "description": "changed files"}}
+{"action": "Bash", "args": {"command": "python3 -m pytest -q tests/test_parser.py", "description": "run the parser tests"}}
+{"action": "Bash", "args": {"command": "ruff check --select E9,F interlock/", "description": "lint"}}
+{"action": "Edit", "args": {"file_path": "/workspace/project/docs/security-model.md", "old_string": "old", "new_string": "new"}}
+{"action": "Write", "args": {"file_path": "/workspace/project/changelog.d/notes.md", "content": "Release notes: no breaking changes."}}
+{"action": "MultiEdit", "args": {"file_path": "/workspace/project/src/app.py", "edits": [{"old_string": "a", "new_string": "b"}]}}
+{"action": "Glob", "args": {"pattern": "**/*.py", "path": "/workspace/project"}}
+{"action": "WebSearch", "args": {"query": "prompt injection documentation owasp"}}
+{"action": "WebFetch", "args": {"url": "https://example.com/security/advisories", "prompt": "summarize the advisories"}}
+{"action": "mcp__github__search_issues", "args": {"query": "is:open label:bug repo:example/project"}}
+{"action": "mcp__jina__read_url", "args": {"url": "https://example.com/guide"}}
+{"action": "Bash", "args": {"command": "npm test -- --watch=false", "description": "run the unit tests once"}}

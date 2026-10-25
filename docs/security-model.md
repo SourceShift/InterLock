@@ -148,7 +148,10 @@ What the DAP path does and does not assume:
   run time, still get past it. Parsed intent normally adds to the raw-text
   checks, but the destructive-command guard lets a complete parse clear a raw
   match when the command is a pure print (`echo rm -rf /`), so the union is not
-  strictly add-only. Contain untrusted commands with BRACE.
+  strictly add-only. The parse is bounded: `MAX_INPUT` is 16 KB and
+  `MAX_ARGS` is 4,096, and past either the command is marked partial and
+  escalated rather than half-read (the cost of this bound is measured in
+  `benchmarks/fp/README.md`). Contain untrusted commands with BRACE.
 - **SQL analysis and masking are best-effort.** The SQL analyzer is a lexer:
   a function called from a `SELECT` list is invisible to it. Masking detects
   formats and checksums, not meaning: names and places aren't detected, and a
@@ -172,16 +175,30 @@ What the DAP path does and does not assume:
   ([coding agents](guides/coding-agents.md)). **Accepted:** a hook adapter is
   cooperative by construction; only an OS boundary confines an agent.
 - **The published false-positive rate covers one pack, on one machine.**
-  `benchmarks/fp/benign.jsonl` holds 70 ordinary coding-agent calls, and
+  `benchmarks/fp/benign.jsonl` holds 70 ordinary coding-agent calls, plus a
+  20-event held-out split (`benign-heldout.jsonl`) written after the rules, and
   `scripts/fp_baseline.py` measures `builtin:coding-agent` against them:
-  **0 false positives, p95 ≈ 1 ms** on 2026-10-25 (`benchmarks/fp/README.md`).
-  `tests/test_fp_baseline.py` re-runs it in CI, so a rule that starts firing on
-  a routine `git status` breaks the build. That is a regression gate, not a
-  guarantee: zero events out of 70 leaves a 95% upper bound near 4%, the corpus
-  is one developer's traffic, and no per-detector number ships for other
-  policies. `interlock mesh harness` measures yours against your own corpus.
-  An attacker who can *trigger* blocks can use a fail-closed guard to stop your
-  agent working.
+  **0 false positives on both, p95 ≈ 0.4 ms** on 2026-10-25
+  (`benchmarks/fp/README.md`). Every one of the 20 rules is also measured
+  alone (`--per-rule`), so a quiet rule still gets a number, and every one of
+  the six mounted detectors is measured with all of its rules (`--per-detector`)
+  rather than split across rows. `tests/test_fp_baseline.py` re-runs all of it
+  in CI, so a rule that starts firing on a routine `git status` breaks the
+  build. That is a regression gate, not a guarantee: zero events out of 70
+  leaves a 95% upper bound near 4%, the corpus is one developer's traffic, and
+  other policies have no published number. `interlock mesh harness` measures
+  yours against your own corpus.
+- **A fail-closed guard is itself an attack surface.** Two halves are measured
+  and gated. *Induced blocking:* a verdict must not change when bait is placed
+  in a field that never executes (`description`, `content`, `new_string`,
+  `prompt`, `query`, `new_source`); the default pack changes 0 of 560 poisoned
+  calls. *Denial of service:* pathological but legal calls are timed, with a
+  50 ms p95 ceiling; the worst case is a 100 KB `Bash` command at 28 ms. Past
+  `MAX_INPUT` (16 KB) or `MAX_ARGS` (4,096 arguments) the parser marks the
+  command partial and `unreadable-commands` escalates it instead of silently
+  reading half of it, so the cost bound fails closed. An attacker who can
+  trigger escalations can still make the agent ask more often; the stress
+  bound caps the cost per call, not the interruption rate.
 - **OS-level per-host egress needs root.** Between bubblewrap's "all network or
   none" and nftables (per-host, root only, not selectable from `Sandbox`) there's
   no unprivileged middle ground. macOS's Seatbelt can't express a host allowlist

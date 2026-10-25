@@ -19,7 +19,7 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 | 5 | Shell parsing best-effort | **closed for the two named evasions** | ANSI-C quoting, a base64 payload piped to a shell, and a staged fetched script are decoded/followed (T06, `192b6a8`); other encodings remain; "not add-only" is now documented |
 | 6 | SQL analysis + masking best-effort | **open (accepted)** | `interlock/sql/lexer.py`, no AST dep; `interlock/masking.py:35`; T14 marks it accepted |
 | 7 | Coding-agent hooks cooperative | **open (accepted)** | `interlock/adapters/base.py:25-27` capability matrix; inherent to an in-agent adapter (T14) |
-| 8 | No measured false-positive rate | **partial** | closed for the default pack by T07 (committed corpus, 0/70, CI gate); other policies still unmeasured |
+| 8 | No measured false-positive rate | **closed for the default pack** | T07 + T17: two corpora (0/70 and 0/20 held-out), per-rule and per-detector tables, induced blocking 0/560, stress gate — all in CI; other policies are measured on demand |
 | 9 | Per-host egress needs root | **open (accepted)** | no backend exists between bwrap all-or-none and root nftables (T14) |
 | 10 | macOS can't confine reads / visibility / memory | **open (accepted)** | `sandbox_exec.py:109,122`; `limits.py:59-67`; Seatbelt cannot express these (T14) |
 | 11 | `setsid()` descendant survives timeout kill | **partial** | bwrap `--unshare-pid` + `--die-with-parent`; Windows `taskkill /T /F` walks the tree (T10); a reparented process can still escape |
@@ -143,20 +143,29 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
   - remaining: none — `benchmarks/fp/benign.jsonl`, 70 events across file,
     git, build/test, search, fetch and MCP tools, call and result phases.
 - **Publish per-detector FP + latency**
-  - status: done (pack-level, not per-detector)
+  - status: done (2026-10-25, T17) — per rule and per detector
   - last worked on: 2026-10-25
-  - remaining: none for the default pack — `scripts/fp_baseline.py` measures
-    `builtin:coding-agent` at 0 false positives / 70 events, p95 ~2 ms; the
-    table and its limits are in `benchmarks/fp/README.md` and the
-    false-positive bullet of `docs/security-model.md`. Per-detector numbers for
-    *other* policies are still not published; the harness measures them on
-    demand.
+  - remaining: none for the default pack — `scripts/fp_baseline.py --per-rule`
+    measures all 20 rules alone (0 FP each) and `--per-detector` measures all
+    six mounted detectors with their rules together (0 FP each);
+    `measure_each_rule` / `measure_each_detector` are exported from
+    `interlock.mesh.harness`. Tables are in `benchmarks/fp/README.md`.
+    *Other* policies still have no published number; the harness measures them
+    on demand.
 - **Add a CI regression gate**
-  - status: done
+  - status: done (2026-10-25, widened in T17)
   - last worked on: 2026-10-25
   - remaining: none — `tests/test_fp_baseline.py` asserts zero false positives
-    and runs the harness gate, so the existing pytest CI job enforces it. The
-    latency bound is widened 5x there to keep a slow runner from flaking.
+    on the main and held-out corpora, zero induced blocks, and no stress case
+    over 150 ms, so the existing pytest CI job enforces all four. The latency
+    bounds are widened there to keep a slow runner from flaking.
+- **Held-out split and the DoS half**
+  - status: done (2026-10-25, T17)
+  - last worked on: 2026-10-25
+  - remaining: none — `benign-heldout.jsonl` (20 events, written after the
+    rules) checks generalisation; `poisons.jsonl` + `induced_blocking()` and
+    `stress_events()` + `stress()` cover induced blocking and pathological
+    cost. The stress run found a real 100x amplification, fixed in T17.
 
 ## T08 — Bundle a public-key receipt signer
 
@@ -312,3 +321,81 @@ have no class seam
   - measured: `Bash` p50 1.26 ms → 0.67 ms, corpus p50 1.0 → 0.6 ms, p95
     2.0 → 1.0 ms (`benchmarks/fp/README.md`). Not an order of magnitude: the
     remaining cost is the rules matching their selectors, not the parse.
+
+## T16 — Overhead benchmark suite (ROADMAP R12)
+
+**Status:** done (2026-10-25)
+
+- **Measure the added cost, not a standalone throughput number**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `scripts/bench_overhead.py` runs the same benign corpus
+    through an empty `PolicyEngine` (floor) and `builtin:coding-agent`
+    (guarded), with one untimed warm-up then `--repeats` timed passes.
+    Reports both percentiles, the difference, and a per-action breakdown;
+    `--json` for tooling.
+- **Write the methodology down**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `benchmarks/overhead/README.md` states input, procedure,
+    sample count, timing call, percentile rule, hardware, and exclusions.
+- **Add a regression gate**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — exit non-zero when guarded p95 or added p95 exceeds
+    5 ms, or guarded/floor p50 exceeds 500x. The ratio is suppressed when the
+    floor is under 5 µs, because that is timer resolution. Measured: guarded
+    p50 243 µs / p95 392 µs / p99 445 µs vs a 2 µs floor; `Bash` 285 µs.
+- **Fix what it found**
+  - status: done (2026-10-25)
+  - last worked on: 2026-10-25
+  - remaining: none — the corpus median was 0.61 ms; sharing one parse per
+    event (parser memo) and one cwd, plus cheap prefilters before path
+    resolution, brought it to 0.24 ms. Tests: `tests/test_bench_overhead.py`
+    (ordering, gate reasons, empty measurement, CLI JSON on the committed
+    corpus).
+
+## T17 — Complete R5: per-rule/per-detector FP, induced blocking, stress
+
+**Status:** done (2026-10-25)
+
+- **Per-rule and per-detector numbers**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `measure_each_rule` (all 20 rules alone) and
+    `measure_each_detector` (all six mounted detectors with all their rules)
+    in `interlock/mesh/harness.py`; `--per-rule` / `--per-detector` on
+    `scripts/fp_baseline.py`; tables published in `benchmarks/fp/README.md`.
+    Tests: `tests/test_harness_per_rule.py`.
+- **Held-out benign corpus**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `benchmarks/fp/benign-heldout.jsonl` (20 events, written
+    after the rules) measured at 0 false positives and asserted in
+    `tests/test_fp_baseline.py` so a tuned-only result cannot pass.
+- **Induced blocking (bait in non-execution fields)**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `induced_blocking()` appends each of 10 poison strings
+    to `description`, `content`, `new_string`, `prompt`, `query`, `new_source`
+    on every baseline-ALLOW call-phase event. Default pack: 0 of 560 changed.
+    Result-phase events are excluded because result detectors read content by
+    design. Tests: `tests/test_harness_robustness.py`.
+- **Pathological-cost stress and the DoS half**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — six legal-but-hostile calls timed with a 50 ms p95 gate;
+    found a real amplification (100 KB `Bash` 0.66 s) caused by ~7 parses and
+    ~12k `os.getcwd()` calls per event. Fixes: parser memo (`memoized_parse`),
+    event-scoped cwd, cached home components, a cheap `_could_name_own`
+    prefilter, `lexists` skip for nonexistent bare names, `MAX_INPUT` 64 KB →
+    16 KB, new `MAX_ARGS` 4,096. Worst case now 27.9 ms. A reverted candidate
+    is recorded: skipping all bare relative words would miss symlinks into
+    `~/.ssh`, so the skip is `lexists`-based only.
+- **Keep the parser bound fail-closed**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — past either cap `.partial` is set and
+    `unreadable-commands` escalates; `tests/test_regex_linearity.py` now
+    permits ESCALATE (never BLOCK) for a destructive command past the cap, and
+    `tests/test_parse_memo.py` pins the caps and memo lifetime.

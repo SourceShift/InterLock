@@ -172,6 +172,19 @@ breaking changes land.
   Code, Codex and Cursor hooks, and every catalog detector against actions that
   must end in each of its verdicts and look-alikes that must not
   (`tests/conformance/`, `python3 tests/conformance/runner.py`).
+- A guardrail robustness harness (ROADMAP R5): committed benign corpora
+  (`benchmarks/fp/benign.jsonl`, plus the held-out `benign-heldout.jsonl`),
+  per-rule and per-detector false-positive measurement
+  (`measure_each_rule`, `measure_each_detector`, `--per-rule`,
+  `--per-detector`), induced-blocking measurement over bait in non-execution
+  fields (`--poisons`), and pathological-but-legal stress cases (`--stress`),
+  each with a gate the test suite enforces. The default pack reports 0 false
+  positives on both corpora, 0 induced blocks out of 560 poisoned calls, and a
+  28 ms worst case under a 50 ms ceiling.
+- An overhead benchmark (ROADMAP R12): `scripts/bench_overhead.py` measures the
+  same benign corpus through an empty engine and through the default pack and
+  reports the added p50/p95/p99 with a per-action breakdown and a regression
+  gate (`benchmarks/overhead/README.md`).
 
 - The review queue signs every row with an HMAC-SHA256 key kept beside the
   database (`reviews.key`, mode 0600) and outside it: editing the SQLite file
@@ -189,6 +202,14 @@ breaking changes land.
   parse instead of paying for one each. `Bash` evaluation on the committed
   benign corpus dropped from 1.26 ms to 0.67 ms p50; decisions are unchanged
   (`tests/test_intent_memo.py`).
+- Shell parsing is bounded and shared. `parse()` now returns a memoised
+  `ParsedCommand` inside `memoized_parse()` (nested in the engine's analysis
+  memo), and `MAX_INPUT` dropped from 64 KB to 16 KB with a new `MAX_ARGS`
+  cap of 4,096. A command past either cap is marked `.partial` and escalated
+  by `unreadable-commands` instead of being half-read. Together these cut the
+  worst pathological `Bash` case from 0.66 s to 28 ms and the benign-corpus
+  p50 from 0.61 ms to 0.24 ms. Commands longer than 16 KB that previously got
+  a full decision now escalate; that is the intended fail-closed bound.
 - Every enforcement site dispatches through one exhaustive function, so a
   verdict it doesn't know is blocked rather than allowed (Python and Node.js).
 - `destructive_command_guard` and `git_credential_guard` also parse commands;

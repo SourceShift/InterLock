@@ -1,0 +1,10 @@
+{"id": "injection-doc", "text": "Prompt injection is often introduced with 'ignore previous instructions'; this sentence documents it."}
+{"id": "shell-prose", "text": "Never run `rm -rf /` on a host. Quoted here as prose in a runbook."}
+{"id": "ansi-note", "text": "\u001b[31mnote\u001b[0m: red text does not execute."}
+{"id": "quoted-substitution", "text": "A quoted value: \"$(whoami)\" and '${HOME}' look like substitutions."}
+{"id": "base64-example", "text": "base64 example: cm0gLXJmIC8= decodes to a phrase in a tutorial."}
+{"id": "fake-token", "text": "TOKEN=placeholder-not-a-real-secret appears in the example config."}
+{"id": "credential-path-prose", "text": "Path examples: /etc/passwd and ~/.ssh/id_rsa appear in security docs."}
+{"id": "unicode-noise", "text": "Zero​width and right-to-left ‮example‬ characters."}
+{"id": "nested-example", "text": "The syntax $($(echo done)) is shown here as a parser example."}
+{"id": "longer-prose", "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "}

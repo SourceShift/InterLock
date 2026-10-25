@@ -1300,7 +1300,29 @@ Guide: [parsed shell commands](../guides/detectors.md#parsed-shell-commands).
 | `analyze(cmd_or_parsed) -> tuple[Intent, ...]` | Semantic intents: `kind`, `binary`, `targets`, `detail`, `critical`, and `matches(selector)`. |
 | `intents_in(strings)`, `first_match(intents, selectors)` | Helpers for rules. |
 | `is_critical_path(path)` | Whether a recursive delete of `path` is host-fatal (`/`, `~`, `$HOME`, system directories). |
-| `MAX_DEPTH`, `MAX_INPUT`, `MAX_INVOCATIONS` | The parser's bounds. |
+| `memoized_parse()` | Context manager: `parse()` returns the same `ParsedCommand` for the same string inside the block, so a decision parses once. Nested blocks share the outer table. |
+| `MAX_DEPTH`, `MAX_INPUT`, `MAX_INVOCATIONS`, `MAX_ARGS` | The parser's bounds: 6 nested substitutions, 16 KB of input, 256 invocations, 4,096 arguments. Past any of them `.partial` is true and policy rules escalate rather than reading half the command. |
+
+### Policy measurement (`interlock.mesh.harness`)
+
+Guide: [known gaps](../security-model.md#known-gaps).
+`interlock mesh harness` wraps this module for a corpus file.
+
+| Name | What it is |
+|---|---|
+| `load_corpus(path, *, limit=None)`, `load_poisons(path)` | Read JSONL events (`{"action", "args", "phase"}`) and bait strings (`{"id", "text"}`). |
+| `measure(policy, corpus, *, source, repeats=1)` | False positives, `per_rule` hits, quarantine list, and p50/p95/p99 latency. |
+| `measure_each_rule(policy, corpus, *, source, repeats=1)` | Each rule alone, so a rule that never fires still gets a number. |
+| `measure_each_detector(policy, corpus, *, source, repeats=1)` | Each detector with all of its rules together; declarative rules are excluded. |
+| `induced_blocking(policy, corpus, poisons, *, targets=..., source)` | Append bait to non-execution arguments and count changed verdicts. |
+| `stress(policy, cases=None, *, source, repeats=1)`, `stress_events()` | Time pathological but legal calls; six built-in cases. |
+| `recall(policy, samples, *, source)` | How many attack samples are refused. |
+| `gate(...)`, `gate_induced(...)`, `gate_stress(...)` | Turn each report into reasons; empty list means pass. Defaults: 0.1% FP, 5 ms p95, 0 induced, 50 ms stress p95. |
+
+`scripts/bench_overhead.py` measures the other half: the same benign corpus
+through an empty engine and through `builtin:coding-agent`, reporting the
+difference. See [`benchmarks/overhead/README.md`](https://github.com/SourceShift/InterLock/blob/main/benchmarks/overhead/README.md)
+for the methodology and current numbers.
 
 ### Declarative policies (`interlock.policy.declarative`, `interlock.policy.trust`)
 

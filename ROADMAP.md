@@ -56,14 +56,14 @@ worse at both jobs.
 | R2 | `Verdict.ESCALATE` | `shipped` | S→M | T9 · 15 papers · agentjail review |
 | R3 | Verdict provenance (`reason`, `attributed_to`) | `shipped` | S | T2, T3 |
 | R4 | Signed execution receipts + append-only audit sink | `shipped` | M | T3 · M4 TODO resolved |
-| R5 | Guardrail robustness harness (FP rate, DoS) | `partial` | M | T5 · conformance corpus only |
+| R5 | Guardrail robustness harness (FP rate, DoS) | `shipped` | M | T5 · corpus + per-rule/per-detector FP, induced blocking, stress |
 | R6 | MCP capability leases + server attestation | `shipped` | L | T4 · 57 papers |
 | R7 | Tool-result and observation sanitization | `partial` | M | T8 · result phase ships, injection sanitizer blocks |
 | R8 | BRACE escape-resistance suite + unprivileged egress | `shipped` | M | T7 |
 | R9 | Flow-typed policy dimension | `not started` | L | T6 · a constraint on R10 |
 | R10 | Declarative YAML/JSON policies | `shipped` | L | carried from M0 → M2 · agentjail review |
 | R11 | Automatic interception (import hooks) | `partial` | L | carried from M0 → M1/M3 · MCP attached at import |
-| R12 | Overhead benchmark suite, with methodology | `not started` | S | carried from M0 |
+| R12 | Overhead benchmark suite, with methodology | `shipped` | S | `scripts/bench_overhead.py` · floor vs guarded p50/p95/p99 |
 | R13 | Node.js sensor | `shipped` | L | carried from M0 |
 | R14 | Parsed shell commands and intents | `shipped` | M | agentjail review |
 | R15 | Protection attestation (`attest`, `require`, `doctor`) | `shipped` | S | agentjail review |
@@ -372,15 +372,18 @@ still useful but much less so.
 
 ## R5 · Guardrail robustness harness (false positives, induced blocking)
 
-**Status:** `partial` — a fixed detector conformance corpus ships
-(`tests/conformance/detectors/*.json`, 774 cases across seven categories, driven
-by `tests/conformance/runner.py`), alongside a wire-protocol corpus
-(`tests/conformance/events.json`, 13 cases and 9 malformed frames, consumed by
-`tests/test_sidecar_conformance.py`). The runner shipped in `68fbb69`:
-`interlock mesh harness` measures a policy's per-rule false-positive rate,
-latency and recall and gates them against budgets. What is missing is the
-input: no benign agent-traffic corpus is committed, no per-detector number is
-published, and CI runs no false-positive gate.
+**Status:** `shipped` (2026-10-25) — the conformance corpora
+(`tests/conformance/detectors/*.json`, 774 cases; `tests/conformance/events.json`)
+remain, and the robustness half is now measured on committed traffic:
+`benchmarks/fp/benign.jsonl` (70 events) and `benign-heldout.jsonl` (20 events),
+driven by `scripts/fp_baseline.py` and gated in CI by
+`tests/test_fp_baseline.py`. The default pack reports **0 false positives on
+both corpora** (p95 0.40 ms), **per-rule** numbers for all 20 rules and
+**per-detector** numbers for all six mounted detectors, **0 induced blocks out
+of 560 poisoned calls** (`benchmarks/fp/poisons.jsonl`), and stays under
+**28 ms** on six pathological-by-legal stress cases (50 ms gate). The stress
+harness found and fixed a real 100x amplification: one parse per event and an
+event-scoped cwd replaced ~7 parses and ~12k `os.getcwd()` calls per decision.
 **Size:** M
 **Literature:** T5 — a cluster that barely existed a year ago, and the area
 where interlock has the largest gap relative to its importance.
@@ -398,29 +401,54 @@ block" is a denial-of-service primitive — an attacker who cannot exfiltrate ca
 often still stall the agent by making it refuse, and the literature now treats
 that as a first-class attack.
 
-### Why now
+### What shipped
 
-The harness ships, and the first corpus and number now do too: the default
-`builtin:coding-agent` pack measures 0 false positives over 70 committed benign
-events and is gated in CI (`benchmarks/fp/`, `tests/test_fp_baseline.py`). What
-remains is coverage — other policies and per-detector numbers — and the induced-
-blocking (DoS) half of the harness. It is also the item that de-risks every
-other item: adding detectors (R6, R7) without a benign corpus to run them
-against is how a detector suite accumulates its own DoS surface.
+- **Two corpora under `benchmarks/fp/`** — 70 events of ordinary traffic that
+  policy tuning may look at, and a 20-event held-out split written after the
+  rules, so a clean result is not only overfitting. `poisons.jsonl` holds the
+  bait strings.
+- **Per-detector numbers**, not only an aggregate:
+  `measure_each_detector()` groups a detector's rules and runs only those, so
+  one detector firing on everything cannot hide inside a clean pack total. All
+  six default detectors report 0 FP; all 20 rules also report 0 FP measured
+  alone (`--per-rule`).
+- **Induced blocking:** bait appended to six non-execution argument fields on
+  every baseline-ALLOW call. 0 of 560 verdicts changed; the ceiling is zero,
+  not a tolerance. Result-phase content is excluded because result detectors
+  are meant to read it.
+- **Stress:** six pathological-but-legal calls (100 KB `Bash`, 300 nested
+  substitutions, 1,000 pipes, 2,000 args, 240 KB write, 100 KB query) with a
+  50 ms p95 gate. Input past `MAX_INPUT` (16 KB) or `MAX_ARGS` (4,096
+  arguments) is marked partial and escalated, so the cost bound fails closed.
+- **The regression gate runs in CI** inside `tests/test_fp_baseline.py` — both
+  corpora, induced blocking, and stress — so a rule that starts firing on a
+  routine `git status` breaks the build.
 
-### What changes
+### Delivered
 
-- A benign corpus under `benchmarks/` or a new `evals/` — realistic agent
-  traffic that *should* pass: normal tool calls, normal file paths, normal URLs,
-  normal documents that merely mention the words a detector looks for.
-- A runner that executes every detector over the corpus and reports FP rate per
-  detector, not just an aggregate. An aggregate hides the one detector that fires
-  on everything.
-- A load/abuse fixture: many calls, large arguments, deeply nested structures,
-  long strings — measured for latency and for whether the detector can be driven
-  to block.
-- A regression gate: the FP rate is a number in the repo that a change is not
-  allowed to worsen silently.
+| | |
+|---|---|
+| Default pack FP | 0 / 210 evaluated (0.0000%); held-out 0 / 20 |
+| Per rule (20) | all 0 FP; table in `benchmarks/fp/README.md` |
+| Per detector (6) | all 0 FP; table in `benchmarks/fp/README.md` |
+| Induced blocking | 0 / 560 poisoned calls |
+| Stress p95 | worst 27.9 ms (1,000 chained `true`), all ≤ 28 ms |
+| Gate | `DEFAULT_MAX_FP_RATE=0.001`, `DEFAULT_MAX_P95_US=5000`, `DEFAULT_MAX_INDUCED_RATE=0.0`, `DEFAULT_MAX_STRESS_P95_US=50000` |
+
+### Residual risks
+
+- Zero out of 70 leaves a 95% upper bound near 4%; the held-out split is 20
+  events and catches gross, not subtle, overfitting. Grow both from real
+  traffic, never from cases written while tuning.
+- Only the default pack has published numbers. `interlock mesh harness
+  --per-rule --per-detector` measures another policy, but its result is only as
+  good as the corpus supplied.
+- The stress ceiling is wall-clock on one machine; the CI assertion is widened
+  for shared runners, so it catches order-of-magnitude regressions rather than
+  slow CPUs.
+- The guard can still be induced to *escalate* through legitimate-looking
+  traffic that is genuinely suspicious; the measure only proves that inert
+  fields cannot move a verdict.
 
 ### Impact
 
@@ -882,7 +910,14 @@ shapes, not only fakes, or the fragility is discovered by users.
 
 ## R12 · Overhead benchmark suite, with methodology
 
-**Status:** `not started` — only `benchmarks/scope_memory.py` exists.
+**Status:** `shipped` (2026-10-25) — `scripts/bench_overhead.py` measures the
+same benign corpus through an empty engine (floor) and `builtin:coding-agent`,
+reports the difference at p50/p95/p99 per action, and gates it. Current result:
+**guarded p50 243 µs / p95 392 µs / p99 445 µs against a 2 µs floor**;
+`Bash` p50 285 µs, every other action 29-56 µs
+(`benchmarks/overhead/README.md`). The harness's own run found and fixed a
+6x median regression (0.61 ms -> 0.24 ms) by sharing one parse and one cwd per
+event.
 **Size:** S
 **Pull:** internal, carried from M0.
 
@@ -901,27 +936,25 @@ items making honest claims: R4's per-receipt cost and R5's robustness results
 both need somewhere to report numbers, and that somewhere should be one harness
 with one methodology rather than several ad-hoc scripts.
 
-### What changes
+### What shipped
 
-- A benchmark harness with a **stated methodology**: what is measured (per-decision
-  latency at p50/p99, throughput, memory per subject), against what baseline (no
-  guard installed), on what hardware, with what event mix (allow-heavy is the
-  common case; block-heavy is the rare one and must be measured separately).
-- Scenarios per interception path (`enforce_tool_call`, `@guard`, BRACE spawn)
-  and per backend, so the numbers are comparable across items rather than
-  per-feature folklore.
-- **The sidecar scenario (added with R13 stage 1):** the same event mix through a
-  `RemoteEngine` over a unix socket, against the in-process engine as baseline.
-  This is the round trip plus two JSON encodes that R13's viability turns on, and
-  it must be measured before the JS interceptors are built rather than after.
-  R13 stage 2 added a JS-side smoke figure for it
-  (`node js/bench/roundtrip.mjs`: the guarded round trip against a no-guard
-  baseline, one reused connection — ~47 µs/call vs ~0.4 µs/call on the dev
-  machine, ~26 µs on a less loaded run). It is a smoke number, not a methodology:
-  it exists so the sidecar's viability has a JS figure while this item owns the
-  real harness, the p50/p99 split, and the regression gate.
-- Machine-readable output, so R5's regression gate and CI can consume the same
-  numbers a human reads.
+- **`scripts/bench_overhead.py`** — one untimed warm-up, then `--repeats`
+  timed passes (default 20). Reports guarded p50/p95/p99, the floor (empty
+  engine) on the same events, the difference in µs, and a per-action breakdown.
+  `--json` for tooling. The methodology, hardware line and caveats are in
+  `benchmarks/overhead/README.md`; `tests/test_bench_overhead.py` pins ordering
+  and the gate.
+- **A gate:** non-zero exit when guarded p95 or added p95 exceeds 5 ms, or the
+  guarded/floor p50 ratio exceeds 500x. The ratio is suppressed when the floor
+  is under 5 µs, because at that point it is timer resolution, not work.
+- **Result:** guarded p50 243 µs / p95 392 µs vs a 2 µs floor; `Bash` 285 µs,
+  edits 46-56 µs, reads 42 µs, web/MCP 29-37 µs. In a hook, interpreter startup
+  dominates; this number matters to the sidecar and `@guard`.
+- **What it deliberately does not cover:** throughput under concurrency,
+  memory, hook process startup, and a block-heavy mix. The sidecar round trip
+  keeps its own JS smoke figure (`node js/bench/roundtrip.mjs`, ~47 µs/call vs
+  ~0.4 µs unguarded on one reused connection) rather than being folded into
+  this in-process number. R4's receipt cost remains its own measurement.
 
 ### Impact
 
@@ -932,10 +965,12 @@ methodology section is what makes it a measurement instead of marketing.
 
 ### Acceptance
 
-`python -m benchmarks` (or the documented entry point) produces a table
-including a no-guard baseline, and the README cites those numbers with the
-hardware they were taken on. Re-running on the same hardware reproduces within a
-stated tolerance.
+The documented entry point (`python3 scripts/bench_overhead.py`, plus
+`interlock mesh harness` for policies) produces a table including a no-guard
+baseline, and `benchmarks/overhead/README.md` cites those numbers with the
+hardware they were taken on. Re-running on the same hardware reproduces within
+a stated tolerance; the CI gate's bounds are deliberately wider than the
+published figure for that reason.
 
 ### Risks & dependencies
 

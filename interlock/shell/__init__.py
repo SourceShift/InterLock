@@ -17,7 +17,8 @@ from .intents import (
     is_critical_path,
     read_command,
 )
-from .parser import MAX_DEPTH, MAX_INPUT, MAX_INVOCATIONS, Invocation, ParsedCommand, parse
+from .parser import (MAX_ARGS, MAX_DEPTH, MAX_INPUT, MAX_INVOCATIONS,
+                     Invocation, ParsedCommand, parse)
 
 __all__ = [
     "parse",
@@ -32,6 +33,7 @@ __all__ = [
     "Intent",
     "SYSTEM_DIRS",
     "MAX_DEPTH",
+    "MAX_ARGS",
     "MAX_INPUT",
     "MAX_INVOCATIONS",
 ]

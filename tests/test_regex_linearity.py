@@ -20,6 +20,7 @@ import time
 import pytest
 
 from interlock import SensorEvent
+from interlock.enforce import Verdict
 from interlock.detectors.data_egress import (
     DEFAULT_PII_PATTERNS,
     _redact_text,
@@ -149,7 +150,13 @@ def test_guard_rules_stay_linear_on_adversarial_text(name, rule, unit):
     for size, cap in SIZES:
         text = _repeat(unit, size)
         decision, elapsed = _elapsed(lambda: rule(_event(text)))
-        assert decision is None, (name, size)
+        if decision is not None:
+            # The shell parser reads a bounded prefix (MAX_INPUT) and marks the
+            # rest partial; a rule that could not read the whole value asks
+            # rather than guesses. It must never be a BLOCK on this input.
+            assert name == "destructive_command", (name, size)
+            assert decision.verdict is Verdict.ESCALATE, (name, size)
+            assert "could not be fully read" in decision.reason, (name, size)
         assert elapsed < cap, "{} at {} bytes took {:.3f}s".format(name, size, elapsed)
 
 

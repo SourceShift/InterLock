@@ -43,8 +43,10 @@ import base64
 import binascii
 import re
 import shlex
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
 
 #: How deep nested scripts (``bash -c 'bash -c "..."'``), substitutions and
 #: inline code are followed. Deeper input is reported ``partial``.
@@ -54,10 +56,19 @@ MAX_DEPTH = 6
 MAX_BASE64_LAYERS = 4
 
 #: Longest input read. The rest is ignored and the result marked ``partial``.
-MAX_INPUT = 64 * 1024
+#: Parsing is linear in bytes but CPython's ``shlex`` is slow per character, so
+#: this bound is also the guard's worst-case parse cost (~15 ms here). A longer
+#: command is escalated, not silently half-read.
+MAX_INPUT = 16 * 1024
 
 #: Most invocations recorded for one string.
 MAX_INVOCATIONS = 256
+
+#: Most words read from one segment. Beyond this the rest are dropped and the
+#: result marked ``partial`` - a lower bound, so a rule may refuse it. The
+#: bound exists because every detector that scans operands would otherwise pay
+#: for an unbounded argument list inside one 16 KB command.
+MAX_ARGS = 4096
 
 
 @dataclass(frozen=True)
@@ -109,10 +120,48 @@ class ParsedCommand:
         return tuple(seen)
 
 
+#: One event's parse table. Detectors, intents and the unreadable-command rule
+#: all ask about the same command string, and parsing it is the one
+#: super-linear cost in a decision; sharing the result keeps one hostile
+#: maximum-size command from being parsed once per rule.
+_PARSE_MEMO: ContextVar[Optional[Dict[str, ParsedCommand]]] = ContextVar(
+    "interlock_shell_parse_memo", default=None)
+
+
+@contextmanager
+def memoized_parse() -> Iterator[None]:
+    """Share :func:`parse` results for the duration of one event's evaluation.
+
+    Nested blocks reuse the outer table. The memo is per thread/task and is
+    dropped before the caller returns, so no cross-event state survives.
+    """
+    if _PARSE_MEMO.get() is not None:
+        yield
+        return
+    token = _PARSE_MEMO.set({})
+    try:
+        yield
+    finally:
+        _PARSE_MEMO.reset(token)
+
+
 def parse(cmd: str) -> ParsedCommand:
-    """Recover the invocations a shell command string would run. Never raises."""
+    """Recover the invocations a shell command string would run. Never raises.
+
+    Inside :func:`memoized_parse` a repeated string returns the first result.
+    """
     if not isinstance(cmd, str):
         return ParsedCommand(source="", partial=True)
+    memo = _PARSE_MEMO.get()
+    if memo is None:
+        return _parse(cmd)
+    found = memo.get(cmd)
+    if found is None:
+        found = memo[cmd] = _parse(cmd)
+    return found
+
+
+def _parse(cmd: str) -> ParsedCommand:
     parser = _Parser()
     text = cmd
     if len(text) > MAX_INPUT:
@@ -395,6 +444,9 @@ class _Parser:
             self.text(inner, depth + 1, via)
             return
         tokens = self.tokens(body)
+        if len(tokens) > MAX_ARGS:
+            tokens = tokens[:MAX_ARGS]
+            self.partial = True
         tokens, redirects = _take_redirects(tokens)
         self.command(tokens, depth, via, redirects, pipeline, stage)
 

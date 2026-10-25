@@ -114,10 +114,22 @@ def secret_path_command_guard(
         args = getattr(event, "args", None)
         if not isinstance(args, dict):
             return None
+        event_cwd = getattr(event, "cwd", None)
+        if not event_cwd:
+            try:
+                event_cwd = os.getcwd()
+            except OSError:
+                event_cwd = None
         for name, value in command_values(args, key_set):
             parsed = parse(value)
-            bases = invocation_bases(parsed, getattr(event, "cwd", None))
+            bases = invocation_bases(parsed, event_cwd)
             for word, base in _words(parsed, bases):
+                # A bare, non-existent name cannot be a symlink into a secret
+                # directory; skipping it keeps a command with thousands of
+                # ordinary operands from paying a realpath per word.
+                if base and "/" not in word and not word.startswith(("~", "$")):
+                    if not os.path.lexists(posixpath.join(base, word)):
+                        continue
                 # The shell expands braces before it opens a path, so
                 # ``~/.{ssh,aws}/id_rsa`` is the same read as ``~/.ssh/id_rsa``.
                 for variant in _brace_variants(word):
