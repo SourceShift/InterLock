@@ -12,6 +12,17 @@ For a node (the deployment running an agent):
 
 Then in your policy file:  {"version": 1, "extends": "mesh:coding-agent@stable", "rules": [...]}
 
+Reporting is off until the operator enables it, one layer at a time, and an
+enable never reaches back before its own date:
+
+  interlock mesh report init                # this node's reporting key
+  interlock mesh report build --receipts ~/.interlock/receipts.jsonl --out report.json   # local only
+  interlock mesh report enable [--digests] [--fingerprints] [--sample RULE]   # the one consent point
+  interlock mesh report status              # what may leave, since when, and a preview
+  interlock mesh report submit report.json --consensus URL --aggregator URL --aggregator URL
+
+INTERLOCK_MESH_NO_REPORT=1 refuses every upload, whatever is enabled.
+
 For a maintainer (the people who run a commons):
 
   interlock mesh keys init --out keys/      # one Ed25519 key per role; raise counts/thresholds for a real root
@@ -34,8 +45,9 @@ on a node with no approver installed that escalation is only recorded as a
 shadow finding. See docs/guides/mesh.md.
 
 Exit codes: 0 ok, 1 the mesh is stale or a shadow summary shows findings
-(status), 2 verification or publishing failed or a grant could not be
-changed, 3 a file could not be read, 64 the command line was wrong.
+(status), 2 verification or publishing failed, a grant could not be changed,
+or a report was not sent, 3 a file could not be read, 64 the command line was
+wrong.
 """
 from __future__ import annotations
 
@@ -134,7 +146,7 @@ def add_arguments(parser) -> None:
     report_sub = report.add_subparsers(dest="report_command", metavar="ACTION")
     report_init = report_sub.add_parser("init", help="create this node's reporting key")
     report_init.add_argument("--dir", default=None, metavar="DIR")
-    report_build = report_sub.add_parser("build", help="project a receipt log into a signed report")
+    report_build = report_sub.add_parser("build", help="project a receipt log into a signed report (local only)")
     report_build.add_argument("--receipts", required=True, metavar="FILE", help="a receipt log written by FileSink")
     report_build.add_argument("--since", default="24h", metavar="DURATION", help="window: 30m, 24h, 7d (default 24h)")
     report_build.add_argument("--out", default=None, metavar="FILE",
@@ -146,19 +158,32 @@ def add_arguments(parser) -> None:
                               help="a membership certificate for this node's reporting key")
     report_build.add_argument("--dir", default=None, metavar="DIR")
     report_build.add_argument("--json", action="store_true", help="print the envelope instead of a summary")
-    report_enable = report_sub.add_parser("enable", help="record fingerprints (and opt-in samples) of what the guard stops")
-    report_enable.add_argument("--alpha", type=float, default=1.5, metavar="A",
-                               help="privacy budget per fingerprint; smaller is more private (default 1.5)")
+    report_enable = report_sub.add_parser(
+        "enable", help="choose what this node may upload: counts and sightings, plus each flag's layer")
+    report_enable.add_argument("--digests", action="store_true",
+                               help="also upload the argument digests of what the guard blocked or escalated")
+    report_enable.add_argument("--fingerprints", action="store_true",
+                               help="also record, and upload, noised fingerprints of what the guard stopped")
+    report_enable.add_argument("--alpha", type=float, default=None, metavar="A",
+                               help="with --fingerprints: privacy budget per fingerprint; smaller is more private "
+                                    "(default 1.5)")
     report_enable.add_argument("--sample", action="append", default=[], metavar="RULE_ID",
-                               help="also keep redacted samples for this rule, for the forge; repeatable")
-    report_enable.add_argument("--off", action="store_true", help="stop recording")
+                               help="also record, and upload, redacted samples for this rule, for the forge; "
+                                    "repeatable")
+    report_enable.add_argument("--off", action="store_true", help="turn every layer off, recording included")
     report_enable.add_argument("--dir", default=None, metavar="DIR")
+    report_status = report_sub.add_parser("status", help="what this node may upload, since when, and a preview")
+    report_status.add_argument("--receipts", default=None, metavar="FILE",
+                               help="preview from this log (default ~/.interlock/receipts.jsonl)")
+    report_status.add_argument("--dir", default=None, metavar="DIR")
+    report_status.add_argument("--json", action="store_true")
     report_submit = report_sub.add_parser("submit", help="send a built report to the collectors")
     report_submit.add_argument("file", metavar="FILE", help="an envelope written by `report build --out`")
     report_submit.add_argument("--consensus", required=True, metavar="URL", help="the consensus service")
     report_submit.add_argument("--aggregator", action="append", default=[], metavar="URL",
                                help="an aggregator; give at least two or counts are not shared")
     report_submit.add_argument("--token", default=None, metavar="TOKEN", help="bearer token the collectors require")
+    report_submit.add_argument("--dir", default=None, metavar="DIR", help="the mesh state whose consent applies")
 
     serve = sub.add_parser("serve", help="run a collector role, or mirror this node's verified cache to peers")
     serve.add_argument("--role", required=True, choices=["consensus", "aggregator", "mirror"])
@@ -441,7 +466,7 @@ def _report(args) -> int:
     from ..mesh.report import ReportError, ReporterKey
 
     import os
-    mesh_dir = getattr(args, "dir", None) or default_mesh_dir()  # `submit` has no --dir
+    mesh_dir = getattr(args, "dir", None) or default_mesh_dir()
     key_path = os.path.join(mesh_dir, "reporter.key")
     if args.report_command == "init":
         os.makedirs(mesh_dir, exist_ok=True)
@@ -455,35 +480,174 @@ def _report(args) -> int:
     if args.report_command == "build":
         return _report_build(args, key_path)
     if args.report_command == "submit":
-        return _report_submit(args)
+        return _report_submit(args, mesh_dir)
     if args.report_command == "enable":
-        return _report_enable(args)
-    sys.stderr.write("interlock mesh report: choose an action: init, enable, build, submit\n")
+        return _report_enable(args, mesh_dir)
+    if args.report_command == "status":
+        return _report_status(args, mesh_dir)
+    sys.stderr.write("interlock mesh report: choose an action: init, build, enable, status, submit\n")
     return 64
 
 
-def _report_enable(args) -> int:
-    from ..mesh.subscriber import Subscriber, SubscriberError, install_recorder
+def _report_enable(args, mesh_dir: str) -> int:
+    from ..mesh.fingerprint import DEFAULT_ALPHA
+    from ..mesh.report import BASE_LAYERS
+    from ..mesh.subscriber import Subscriber, SubscriberError
 
-    node = Subscriber(args.dir)
-    try:
-        config = node.config()
-    except SubscriberError as exc:
-        sys.stderr.write("interlock mesh report: {}\n".format(exc))
-        return 2
-    if args.alpha <= 0:
+    if args.off and (args.digests or args.fingerprints or args.sample or args.alpha is not None):
+        sys.stderr.write("interlock mesh report: --off turns every layer off and takes no other flag\n")
+        return 64
+    if args.alpha is not None and not args.fingerprints:
+        sys.stderr.write("interlock mesh report: --alpha is the fingerprint budget; give it with --fingerprints\n")
+        return 64
+    alpha = DEFAULT_ALPHA if args.alpha is None else args.alpha
+    if alpha <= 0:
         sys.stderr.write("interlock mesh report: --alpha must be positive\n")
         return 64
-    config.recorder = {"enabled": not args.off, "alpha": float(args.alpha), "sample_rules": sorted(set(args.sample))}
-    config.save(node.config_path)
-    install_recorder(node.dir)
-    if args.off:
-        print("recording off")
+    layers = [] if args.off else list(BASE_LAYERS) + [
+        layer for layer, on in (("digests", args.digests), ("fingerprints", args.fingerprints),
+                                ("samples", bool(args.sample))) if on]
+    # The consent lives in state.json and needs no commons: a node may report
+    # without subscribing. A watched policy reloads on it, which is how the
+    # recorder in the agent's process starts or stops.
+    try:
+        consent = Subscriber(mesh_dir).set_report_consent(layers, alpha=alpha, sample_rules=args.sample)
+    except (SubscriberError, OSError) as exc:
+        sys.stderr.write("interlock mesh report: {}\n".format(exc))
+        return 2
+    print(report_summary(consent))
+    if consent["enabled_at"] is None:
+        print("nothing leaves this node, and the recorder records nothing for it")
     else:
-        print("recording fingerprints of blocked and escalated calls (alpha {:g}){}".format(
-            args.alpha, "; redacted samples for: " + ", ".join(config.recorder["sample_rules"])
-            if config.recorder["sample_rules"] else ""))
-        print("they are included by the next `interlock mesh report build`; nothing leaves until `submit`")
+        from ..mesh._util import iso
+        print("nothing observed before {} is ever uploaded; `report build` shows a report, `report submit` "
+              "sends it".format(iso(consent["enabled_at"])))
+        if "fingerprints" in consent["layers"] or "samples" in consent["layers"]:
+            print("a watched policy starts the recorder at its next check; otherwise at the next policy load")
+    return 0
+
+
+def report_summary(consent) -> str:
+    """The line ``mesh status``, ``mesh report status`` and ``doctor`` print
+    for the node's reporting consent."""
+    from ..mesh._util import iso
+
+    if not consent or consent.get("enabled_at") is None:
+        return "mesh reporting: off"
+    parts = []
+    for layer in consent["layers"]:
+        if layer == "fingerprints":
+            parts.append("fingerprints (alpha {:g})".format(consent["alpha"]))
+        elif layer == "samples":
+            parts.append("samples ({})".format(", ".join(consent["sample_rules"])))
+        else:
+            parts.append(layer)
+    return "mesh reporting: on since {}: layers {}".format(iso(consent["enabled_at"]), ", ".join(parts))
+
+
+def _enable_command(consent, layer=None, rule=None) -> str:
+    """The ``report enable`` that keeps what ``consent`` enables and adds
+    ``layer`` (or the sample ``rule``): each enable replaces the last."""
+    from ..mesh.fingerprint import DEFAULT_ALPHA
+
+    layers = set(consent.get("layers") or ()) | ({layer} if layer else set())
+    rules = sorted(set(consent.get("sample_rules") or ()) | ({rule} if rule else set()))
+    words = ["interlock mesh report enable"]
+    if "digests" in layers:
+        words.append("--digests")
+    if "fingerprints" in layers:
+        words.append("--fingerprints")
+        if consent.get("alpha", DEFAULT_ALPHA) != DEFAULT_ALPHA:
+            words.append("--alpha {:g}".format(consent["alpha"]))
+    if "samples" in layers:
+        words.extend("--sample " + r for r in rules or ["RULE"])
+    return " ".join(words)
+
+
+def _projection(receipts, mesh_dir: str, since: float, now: float, consent, *, include_digests: bool = True,
+                sightings=(), catalog: str = "", reporter: str = ""):
+    """The report body and count vector ``build`` makes from ``receipts``.
+
+    While reporting is off this is the full local preview, so the operator sees
+    what enabling would let leave. Once on, the window opens no earlier than the
+    enable, and only the enabled layers (and sample rules) are in it."""
+    import os
+
+    from ..mesh.fingerprint import read_records
+    from ..mesh.report import build_counts, build_report
+
+    enabled_at = consent["enabled_at"]
+    layers = None if enabled_at is None else consent["layers"]
+    if enabled_at is not None:
+        since = max(since, enabled_at)
+    fingerprints = read_records(os.path.join(mesh_dir, "fingerprints.jsonl"), since, now, 500)
+    samples = read_records(os.path.join(mesh_dir, "samples.jsonl"), since, now, 20)
+    if enabled_at is not None:
+        samples = [s for s in samples if s.get("policy_id") in consent["sample_rules"]]
+    body = build_report(receipts, since=since, until=now, catalog_id=catalog, reporter_id=reporter,
+                        include_digests=include_digests, sightings=sightings, fingerprints=fingerprints,
+                        samples=samples, enabled_since=enabled_at, enabled_layers=layers)
+    counts = build_counts(receipts, since, now, enabled_since=enabled_at, enabled_layers=layers)
+    return body, counts
+
+
+#: The preview reads at most this much of a receipt log.
+PREVIEW_MAX_BYTES = 32 * 1024 * 1024
+
+
+def _report_preview(mesh_dir: str, consent, receipts_path=None, hours: float = 24.0) -> dict:
+    """What a ``report build --since 24h`` would hold now, as numbers. Never raises."""
+    import os
+
+    from ..report import read_receipts
+
+    if receipts_path is None:
+        from ..adapters.config import receipts_paths
+        receipts_path = receipts_paths()[0]
+    out = {"receipts": receipts_path, "hours": hours}
+    try:
+        if not os.path.exists(receipts_path):
+            return dict(out, error="no receipt log at {}".format(receipts_path))
+        if os.path.getsize(receipts_path) > PREVIEW_MAX_BYTES:
+            return dict(out, error="{} is too large to preview; run: interlock mesh report build".format(
+                receipts_path))
+        receipts, _bad = read_receipts(receipts_path)
+        now = time.time()
+        body, counts = _projection(receipts, mesh_dir, now - hours * 3600, now, consent)
+    except Exception as exc:  # a preview must never break `status` or `doctor`
+        return dict(out, error="{}: {}".format(type(exc).__name__, exc))
+    return dict(out, decisions=sum(counts.values()), count_rows=len(counts), digests=len(body["digests"]),
+                fingerprints=len(body["fingerprints"]), samples=len(body["samples"]),
+                sightings=len(body["sightings"]))
+
+
+def preview_line(consent, preview) -> str:
+    """One line: the report this node would send now, or why there is none."""
+    if preview.get("error"):
+        return "report preview: {}".format(preview["error"])
+    what = "{} count row(s), {} digest(s), {} fingerprint(s), {} sample(s)".format(
+        preview["count_rows"], preview["digests"], preview["fingerprints"], preview["samples"])
+    if consent.get("enabled_at") is None:
+        return "report preview, last {:g}h: {}; reporting is off, so none of it is sent".format(preview["hours"], what)
+    return "report preview, last {:g}h since the enable: {}".format(preview["hours"], what)
+
+
+def _report_status(args, mesh_dir: str) -> int:
+    from ..mesh import reporting_killed
+    from ..mesh.subscriber import Subscriber
+
+    consent = Subscriber(mesh_dir).report_consent()
+    preview = _report_preview(mesh_dir, consent, args.receipts)
+    if args.json:
+        sys.stdout.write(json.dumps({"report": consent, "preview": preview, "kill_switch": reporting_killed()},
+                                    indent=2, sort_keys=True) + "\n")
+        return 0
+    print(report_summary(consent))
+    print("  {}".format(preview_line(consent, preview)))
+    if reporting_killed():
+        print("  INTERLOCK_MESH_NO_REPORT is set: every upload is refused")
+    if consent["enabled_at"] is None:
+        print("  to enable: interlock mesh report enable [--digests] [--fingerprints] [--sample RULE]")
     return 0
 
 
@@ -492,7 +656,8 @@ def _report_build(args, key_path: str) -> int:
 
     from ..mesh._util import atomic_write
     from ..mesh.catalog import catalog_id
-    from ..mesh.report import ReportError, ReporterKey, build_counts, build_report, sign_report
+    from ..mesh.report import ReportError, ReporterKey, sign_report
+    from ..mesh.subscriber import Subscriber
     from ..report import parse_since, read_receipts
 
     if not os.path.exists(key_path):
@@ -510,10 +675,8 @@ def _report_build(args, key_path: str) -> int:
         return 3
     now = time.time()
     since = now - (since_seconds or 0) if since_seconds else 0.0
-    from ..mesh.fingerprint import read_records
     mesh_dir = os.path.dirname(key_path)
-    fingerprints = read_records(os.path.join(mesh_dir, "fingerprints.jsonl"), since, now, 500)
-    samples = read_records(os.path.join(mesh_dir, "samples.jsonl"), since, now, 20)
+    consent = Subscriber(mesh_dir).report_consent()
     credential = None
     if args.credential:
         try:
@@ -524,17 +687,16 @@ def _report_build(args, key_path: str) -> int:
             return 3
     try:
         key = ReporterKey.load_or_create(key_path)
-        body = build_report(receipts, since=since, until=now, catalog_id=catalog_id(), reporter_id=key.keyid,
-                            include_digests=not args.no_digests,
-                            sightings=[{"policy_id": r, "kind": "false_positive"} for r in args.false_positive],
-                            fingerprints=fingerprints, samples=samples)
+        body, counts = _projection(
+            receipts, mesh_dir, since, now, consent, include_digests=not args.no_digests,
+            sightings=[{"policy_id": r, "kind": "false_positive"} for r in args.false_positive],
+            catalog=catalog_id(), reporter=key.keyid)
         envelope = sign_report(body, key, credential=credential)
     except ReportError as exc:
         sys.stderr.write("interlock mesh report: {}\n".format(exc))
         return 2
     # The count vector never goes into the envelope. It stays beside it, readable
     # by this user only, until `submit` sends it as secret shares.
-    counts = build_counts(receipts, since, now)
     text = json.dumps(envelope, sort_keys=True, indent=1)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
@@ -553,6 +715,11 @@ def _report_build(args, key_path: str) -> int:
             print("  {} unreadable line(s) in the log were skipped".format(len(bad)))
         print("  carries: rule ids, tool classes, hour buckets, argument digests, sightings. Never counts, "
               "arguments, principals or sessions.")
+        if consent["enabled_at"] is None:
+            print("  reporting is off, so this is a local preview: `submit` refuses it until you run "
+                  "`interlock mesh report enable`")
+        else:
+            print("  {}; nothing from before the enable is in it".format(report_summary(consent)))
         if args.out:
             print("  written to {}; the counts stay in {} and leave only as secret shares to two or more "
                   "aggregators".format(args.out, args.out + COUNTS_SUFFIX))
@@ -573,10 +740,40 @@ def _read_counts(path: str, body) -> dict:
     return counts
 
 
-def _report_submit(args) -> int:
+def _consent_refusal(body, consent, *, share_counts: bool):
+    """Why ``submit`` must not send this report under the node's consent, or None."""
+    from ..mesh._util import iso
+
+    enabled_at = consent["enabled_at"]
+    if enabled_at is None:
+        return ("reporting is off on this node, and nothing leaves it until you run `interlock mesh report "
+                "enable` (`interlock mesh report status` previews what would be sent)")
+    since = body["period"].get("since")
+    if not isinstance(since, (int, float)) or isinstance(since, bool) or since < enabled_at:
+        return ("this report covers time before reporting was enabled ({}); rebuild it with "
+                "`interlock mesh report build`".format(iso(enabled_at)))
+    for layer in ("digests", "sightings", "fingerprints", "samples"):
+        if body.get(layer) and layer not in consent["layers"]:
+            return "{} are not enabled: run `{}`".format(layer, _enable_command(consent, layer))
+    for sample in body.get("samples") or []:
+        if sample["policy_id"] not in consent["sample_rules"]:
+            return "samples for {} are not enabled: run `{}`".format(
+                sample["policy_id"], _enable_command(consent, "samples", sample["policy_id"]))
+    if share_counts and "counts" not in consent["layers"]:
+        return "counts are not enabled: run `{}`".format(_enable_command(consent, "counts"))
+    return None
+
+
+def _report_submit(args, mesh_dir: str) -> int:
+    from ..mesh import NO_REPORT_ENV, reporting_killed
     from ..mesh.aggregate import encode_counts
     from ..mesh.report import ReportError, submit, verify_report
+    from ..mesh.subscriber import Subscriber
 
+    if reporting_killed():
+        sys.stderr.write("interlock mesh report: not sent: {} is set, which refuses every upload from this "
+                         "node whatever is enabled; unset it to submit\n".format(NO_REPORT_ENV))
+        return 2
     try:
         with open(args.file, "r", encoding="utf-8") as fh:
             envelope = json.load(fh)
@@ -584,6 +781,12 @@ def _report_submit(args) -> int:
     except (OSError, ValueError, ReportError) as exc:
         sys.stderr.write("interlock mesh report: {} is not a valid report: {}\n".format(args.file, exc))
         return 3
+    # Consent is checked here, before any connection, for every layer the
+    # envelope carries and for the counts it would share.
+    refusal = _consent_refusal(body, Subscriber(mesh_dir).report_consent(), share_counts=len(args.aggregator) >= 2)
+    if refusal:
+        sys.stderr.write("interlock mesh report: not sent: {}\n".format(refusal))
+        return 2
     shares = None
     counts_path = args.file + COUNTS_SUFFIX
     if len(args.aggregator) >= 2:
@@ -596,7 +799,7 @@ def _report_submit(args) -> int:
     outgoing = {k: envelope[k] for k in ("report", "public", "signature", "credential") if k in envelope}
     try:
         reply = submit(args.consensus.rstrip("/") + "/v1/reports", outgoing, token=args.token)
-    except OSError as exc:
+    except (OSError, ReportError) as exc:
         sys.stderr.write("interlock mesh report: consensus {}: {}\n".format(args.consensus, exc))
         return 2
     print("consensus: {}".format("accepted" if reply.get("accepted") else "refused: {}".format(reply.get("reason"))))
@@ -608,7 +811,7 @@ def _report_submit(args) -> int:
     for url, share in zip(args.aggregator, shares):
         try:
             answer = submit(url.rstrip("/") + "/v1/shares", {"report_id": report_id, "shares": share}, token=args.token)
-        except OSError as exc:
+        except (OSError, ReportError) as exc:
             sys.stderr.write("interlock mesh report: aggregator {}: {}\n".format(url, exc))
             return 2
         print("aggregator {}: {}".format(url, "accepted" if answer.get("accepted") else answer))
@@ -778,16 +981,23 @@ def _sync(args) -> int:
 
 
 def _status(args) -> int:
+    from ..mesh import reporting_killed
     from ..mesh.subscriber import Subscriber
 
     node = Subscriber(args.dir)
     status = node.status()
+    status["report_preview"] = _report_preview(node.dir, status["report"])
+    reporting = [report_summary(status["report"]), preview_line(status["report"], status["report_preview"])]
+    if reporting_killed():
+        reporting.append("INTERLOCK_MESH_NO_REPORT is set: every upload is refused")
     if args.json:
         sys.stdout.write(json.dumps(status, indent=2, sort_keys=True, default=str) + "\n")
     else:
         if not status["configured"]:
             print("mesh: not configured ({})".format(status["dir"]))
             print("run: interlock mesh init --root ROOT --mirror URL")
+            for line in reporting:  # reporting needs no commons
+                print("  {}".format(line))
             return 1
         print("mesh: {} (ring {}, monitor window {:g} day(s))".format(
             status["dir"], status["ring"], status["monitor_days"]))
@@ -812,6 +1022,8 @@ def _status(args) -> int:
             print("  grant: {}".format(line))
         if status.get("capped"):
             print("  {}".format(capped_summary(status["capped"])))
+        for line in reporting:
+            print("  {}".format(line))
         shadow = status.get("shadow", {})
         if shadow.get("total"):
             print("  shadow findings: {} (what monitor-window rules, and capped rules with no approver, "

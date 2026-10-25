@@ -624,6 +624,9 @@ a `falsepositives` note.
    and 3 separately enabled. The alternative (on by default, Layer 0 only) is
    what makes the network useful fastest and what the free-rider literature
    recommends, and it is a decision the project should make out loud.
+   *(Decided in R3: off by default; `interlock mesh report enable` is the one
+   consent, digests, fingerprints and samples each need their own flag, and
+   nothing observed before the enable is uploaded.)*
 4. **Data licence for the commons.** Code is Apache-2.0; samples and indicators
    need an open data licence and a rights-warranty from contributors.
 5. **Whether `block` ever ships through the mesh by default.** This document

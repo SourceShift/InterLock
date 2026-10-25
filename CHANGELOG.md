@@ -176,6 +176,30 @@ breaking changes land.
   `warnings`), with root keys present it signs the next root itself, and
   `interlock doctor` reports a subscription's root as due (`mesh.root` WARN) or
   expired (FAIL).
+- Mesh reporting is off by default, local by default and never retroactive
+  (decision R3). `interlock mesh report enable` is the one consent point: it
+  records the enable time and the enabled layers in the node's `state.json`
+  (`Subscriber.report_consent()`, `set_report_consent()`) and needs no commons.
+  A bare `enable` turns on counts and sightings, `--digests`, `--fingerprints`
+  (with `--alpha`) and `--sample RULE` each add their own layer, and `--off`
+  turns them all off, the recorder included. Adding a layer moves the enable
+  time to now. `build_report` and `build_counts` take keyword-only
+  `enabled_since` and `enabled_layers`, which clamp `since` to the enable and
+  keep only the enabled layers; `report build` applies them, and with nothing
+  enabled it still builds the full report as a local preview. `report submit`
+  refuses, before any connection, a report while reporting is off, a report
+  built over time before the enable, and any layer (or counts to share) that
+  is not enabled, naming the flag; it takes `--dir`. `INTERLOCK_MESH_NO_REPORT=1`
+  makes `interlock.mesh.report.submit` refuse every upload (reports, shares,
+  totals queries, gossip) with a `ReportError`. The new `interlock mesh report
+  status`, `mesh status` and `doctor` (check `mesh.report`) show the consent and
+  a preview of what a report would hold now; `Subscriber.status()` carries
+  `report` instead of `recorder`. `GOVERNANCE.md` states that early-ring
+  credentials go to organisations that report. Breaking: `submit` refuses until
+  the operator runs `report enable`; `report enable --alpha` needs
+  `--fingerprints`; and the recorder follows the consent, not `config.json`'s
+  `recorder`, so a node that recorded before this change records again only
+  after `report enable --fingerprints` or `--sample RULE`.
 
 ### Fixed
 

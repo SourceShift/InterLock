@@ -14,8 +14,8 @@ decisions, or from anything without a published rule id.
 **Sightings**: an operator's statement that a rule is wrong here (a false
 positive), so the consensus engine can demote it.
 
-**Fingerprints** and **samples**, only when the operator enabled the mesh
-recorder (:mod:`.fingerprint`).
+**Fingerprints** and **samples**, recorded by the mesh recorder
+(:mod:`.fingerprint`) once the operator enabled them.
 
 **Counts** (Layer 0) are not part of a report. How many times each published
 rule fired, per verdict, tool class, phase and hour, is a separate projection
@@ -28,6 +28,13 @@ counts.
 Never in a report: arguments, prompts, principals, session ids, hostnames,
 file paths, or the node's own policy. The reporter signs the report with an
 Ed25519 key that identifies the organisation and nothing more.
+
+Each kind of fact is a **layer** (:data:`LAYERS`) that leaves the node only
+once the operator enabled it, and never with anything observed before the
+enable (decision R3): ``enabled_since`` and ``enabled_layers`` clamp and gate
+both projections, and ``interlock mesh report submit`` refuses any layer the
+node's consent does not cover. ``INTERLOCK_MESH_NO_REPORT=1`` makes
+:func:`submit` refuse every upload.
 """
 from __future__ import annotations
 
@@ -39,19 +46,24 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from .. import __version__
 from ..receipt import Receipt
-from . import ed25519
+from . import ed25519, reporting_killed
 from ._util import atomic_write, canonical, read_bounded
 from .aggregate import count_key
 
 __all__ = [
-    "REPORT_VERSION", "BUCKET_SECONDS", "MAX_DIGESTS", "ReportError", "ReporterKey", "tool_class",
-    "build_report", "build_counts", "sign_report", "verify_report", "submit",
+    "REPORT_VERSION", "BUCKET_SECONDS", "MAX_DIGESTS", "LAYERS", "BASE_LAYERS", "ReportError", "ReporterKey",
+    "tool_class", "build_report", "build_counts", "sign_report", "verify_report", "submit",
 ]
 
 REPORT_VERSION = 1
 BUCKET_SECONDS = 3600
 MAX_DIGESTS = 500
 MAX_ENVELOPE = 2 * 1024 * 1024
+
+#: What a node can report, each enabled on its own (decision R3).
+LAYERS = ("counts", "sightings", "digests", "fingerprints", "samples")
+#: The layers a bare ``interlock mesh report enable`` turns on.
+BASE_LAYERS = ("counts", "sightings")
 
 #: A rule whose id contains one of these redacts or masks; the digest of what
 #: it saw is the secret itself, so such receipts never contribute digests.
@@ -142,12 +154,34 @@ def _bucket(ts: float) -> int:
     return int(ts // BUCKET_SECONDS) * BUCKET_SECONDS
 
 
-def build_counts(receipts: Iterable[Receipt], since: float, until: float) -> Dict[str, int]:
+def _clamp(since: float, enabled_since: Optional[float]) -> float:
+    """Never retroactive: a window never opens before the enable."""
+    return since if enabled_since is None else max(float(since), float(enabled_since))
+
+
+def _enabled(layer: str, enabled_layers: Optional[Sequence[str]]) -> bool:
+    return enabled_layers is None or layer in enabled_layers
+
+
+def _after(record: Mapping[str, Any], since: float) -> bool:
+    ts = record.get("ts")
+    return isinstance(ts, (int, float)) and not isinstance(ts, bool) and ts >= since
+
+
+def build_counts(receipts: Iterable[Receipt], since: float, until: float, *,
+                 enabled_since: Optional[float] = None,
+                 enabled_layers: Optional[Sequence[str]] = None) -> Dict[str, int]:
     """Project receipts in ``[since, until)`` into ``{count_key: n}``: how often
     each rule fired, per verdict, tool class, phase and hour.
 
     The vector is not part of the report. It stays on the node and is sent
-    only as secret shares (:func:`interlock.mesh.aggregate.encode_counts`)."""
+    only as secret shares (:func:`interlock.mesh.aggregate.encode_counts`).
+    ``enabled_since`` clamps ``since`` to the operator's enable, and
+    ``enabled_layers`` without ``"counts"`` projects nothing; left out, both
+    project everything (the local preview)."""
+    since = _clamp(since, enabled_since)
+    if not _enabled("counts", enabled_layers):
+        return {}
     counts: Dict[str, int] = {}
     for r in receipts:
         if not _counted(r, since, until):
@@ -161,14 +195,33 @@ def build_report(receipts: Iterable[Receipt], *, since: float, until: float, cat
                  reporter_id: str, include_digests: bool = True, max_digests: int = MAX_DIGESTS,
                  sightings: Sequence[Mapping[str, Any]] = (),
                  fingerprints: Sequence[Mapping[str, Any]] = (),
-                 samples: Sequence[Mapping[str, Any]] = ()) -> Dict[str, Any]:
+                 samples: Sequence[Mapping[str, Any]] = (),
+                 enabled_since: Optional[float] = None,
+                 enabled_layers: Optional[Sequence[str]] = None) -> Dict[str, Any]:
     """Project receipts in ``[since, until)`` into an unsigned report body.
 
     The body carries no counts; :func:`build_counts` projects those separately.
     ``fingerprints`` and ``samples`` come from the mesh recorder
     (:class:`interlock.mesh.fingerprint.Recorder`), which saw the arguments at
     decision time; they are passed through with caps and shape checks.
+
+    ``enabled_since`` (the operator's enable timestamp) clamps ``since``, and
+    then fingerprints and samples without a ``ts`` at or after it are left out
+    too. ``enabled_layers`` keeps only the digests, sightings, fingerprints and
+    samples whose layer it names. Left out, both project everything: the local
+    preview ``interlock mesh report build`` shows before any enable.
     """
+    since = _clamp(since, enabled_since)
+    include_digests = include_digests and _enabled("digests", enabled_layers)
+    if not _enabled("sightings", enabled_layers):
+        sightings = ()
+    if not _enabled("fingerprints", enabled_layers):
+        fingerprints = ()
+    if not _enabled("samples", enabled_layers):
+        samples = ()
+    if enabled_since is not None:
+        fingerprints = [f for f in fingerprints if _after(f, since)]
+        samples = [s for s in samples if _after(s, since)]
     digests: List[Dict[str, Any]] = []
     seen_digests = set()
     for r in receipts:
@@ -302,7 +355,13 @@ def verify_report(envelope: Any, *, max_bytes: int = MAX_ENVELOPE) -> Dict[str, 
 
 def submit(url: str, payload: Mapping[str, Any], *, token: Optional[str] = None,
            timeout: float = 10.0) -> Dict[str, Any]:
-    """POST a JSON payload and return the JSON reply (or raise ``OSError``)."""
+    """POST a JSON payload and return the JSON reply (or raise ``OSError``).
+
+    Every upload the mesh client makes goes through here, so this is where the
+    kill switch sits: with ``INTERLOCK_MESH_NO_REPORT=1`` it raises
+    :class:`ReportError` before opening a connection."""
+    if reporting_killed():
+        raise ReportError("INTERLOCK_MESH_NO_REPORT is set: every mesh upload is refused on this node")
     data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     headers = {"Content-Type": "application/json", "User-Agent": "interlock-mesh"}
     if token:

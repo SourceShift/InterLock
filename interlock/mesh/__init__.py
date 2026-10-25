@@ -39,12 +39,16 @@ Nothing here imports outside the standard library, like the rest of interlock.
 """
 from __future__ import annotations
 
-__all__ = ["MESH_DIR_ENV", "default_mesh_dir"]
+__all__ = ["MESH_DIR_ENV", "NO_REPORT_ENV", "default_mesh_dir", "reporting_killed"]
 
 import os
 
 #: Environment variable that relocates the mesh state directory (tests, CI).
 MESH_DIR_ENV = "INTERLOCK_MESH_DIR"
+
+#: Environment variable that refuses every upload at the send site
+#: (:func:`interlock.mesh.report.submit`), whatever the node has enabled.
+NO_REPORT_ENV = "INTERLOCK_MESH_NO_REPORT"
 
 
 def default_mesh_dir() -> str:
@@ -59,3 +63,12 @@ def default_mesh_dir() -> str:
     if override:
         return os.path.abspath(os.path.expanduser(override))
     return os.path.join(os.path.expanduser("~"), ".interlock", "mesh")
+
+
+def reporting_killed() -> bool:
+    """True when ``$INTERLOCK_MESH_NO_REPORT`` is set to anything but empty or ``0``.
+
+    Read at call time, so setting it in a running process takes effect at the
+    next upload.
+    """
+    return os.environ.get(NO_REPORT_ENV, "").strip() not in ("", "0")

@@ -345,6 +345,19 @@ interlock mesh grant --list               # the grants in force; `grant revoke .
 
 Then in your policy file:  {"version": 1, "extends": "mesh:coding-agent@stable", "rules": [...]}
 
+Reporting is off until the operator enables it, one layer at a time, and an
+enable never reaches back before its own date:
+
+```bash
+interlock mesh report init                # this node's reporting key
+interlock mesh report build --receipts ~/.interlock/receipts.jsonl --out report.json   # local only
+interlock mesh report enable [--digests] [--fingerprints] [--sample RULE]   # the one consent point
+interlock mesh report status              # what may leave, since when, and a preview
+interlock mesh report submit report.json --consensus URL --aggregator URL --aggregator URL
+```
+
+INTERLOCK_MESH_NO_REPORT=1 refuses every upload, whatever is enabled.
+
 For a maintainer (the people who run a commons):
 
 ```bash
@@ -371,8 +384,9 @@ on a node with no approver installed that escalation is only recorded as a
 shadow finding. See docs/guides/mesh.md.
 
 Exit codes: 0 ok, 1 the mesh is stale or a shadow summary shows findings
-(status), 2 verification or publishing failed or a grant could not be
-changed, 3 a file could not be read, 64 the command line was wrong.
+(status), 2 verification or publishing failed, a grant could not be changed,
+or a report was not sent, 3 a file could not be read, 64 the command line was
+wrong.
 
 ```text
 usage: interlock mesh [-h] ACTION ...

@@ -121,16 +121,24 @@ def _sidecar_checks(args) -> List[Check]:
 
 
 def _mesh_checks() -> List[Check]:
-    """Is the node's mesh subscription fresh? Only reported when one exists."""
+    """What this node may report, always; and, when it subscribes to a
+    commons, whether the subscription is fresh."""
     try:
+        from ..mesh import reporting_killed
         from ..mesh.subscriber import Subscriber
         node = Subscriber()
         status = node.status()
     except Exception as exc:  # the mesh is optional; a broken state dir is a warning, not a crash
         return [Check("mesh.state", WARN, "mesh state unreadable: {}".format(type(exc).__name__))]
+    from .mesh import report_summary
+    consent = status.get("report") or {}
+    summary = report_summary(consent)
+    if reporting_killed():
+        summary += "; INTERLOCK_MESH_NO_REPORT is set: every upload is refused"
+    checks: List[Check] = [Check("mesh.report", INFO, summary, fix="" if consent.get("enabled_at") is None
+                                 else "to stop: interlock mesh report enable --off")]
     if not status.get("configured"):
-        return []
-    checks: List[Check] = []
+        return checks
     if status.get("cache_error"):
         checks.append(Check("mesh.cache", FAIL, "mesh cache does not verify: {}".format(status["cache_error"]),
                             fix="interlock mesh sync"))

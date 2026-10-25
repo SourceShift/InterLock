@@ -136,3 +136,35 @@ def test_similarity_detector_escalates_variants_and_ignores_benign():
 def test_receipt_digest_unchanged_by_observer_hook():
     r = Receipt(ts=1.0, action="a", verdict="BLOCK", args_digest=digest_args({"x": 1}))
     assert "catalog" not in r.fields()
+
+
+def test_the_recorder_follows_the_reporting_consent(tmp_path):
+    """install_recorder (run at every mesh policy load) records only while the
+    fingerprints or samples layer is enabled, with the consent's alpha and rules."""
+    from interlock import receipt as receipt_mod
+    from interlock.mesh.subscriber import Config, Subscriber, install_recorder
+
+    node = Subscriber(str(tmp_path))
+    Config(mirrors=["file:///nowhere"]).save(node.config_path)
+    (tmp_path / "root.json").write_text("{}")  # configured: only its presence matters here
+    try:
+        assert install_recorder(node.dir) is None                   # nothing enabled
+        node.set_report_consent(["counts", "sightings", "digests"])
+        assert install_recorder(node.dir) is None                   # nothing to record for those layers
+        node.set_report_consent(["counts", "sightings", "fingerprints"], alpha=2.5)
+        recorder = install_recorder(node.dir)
+        assert recorder.alpha == 2.5 and recorder.sample_rules == frozenset()
+        node.set_report_consent(["counts", "sightings", "samples"], sample_rules=["prompt_injection"])
+        again = install_recorder(node.dir)
+        assert again is not recorder and again.sample_rules == {"prompt_injection"}
+        node.set_report_consent([])
+        assert install_recorder(node.dir) is None
+        emit_receipt(SensorEvent(action="WebFetch", args={"prompt": ATTACK}), Decision.block("inj", "prompt_injection"))
+        assert not (tmp_path / "fingerprints.jsonl").exists()      # the old recorder was removed
+        # A config.json from before the consent record does not switch it on.
+        Config(mirrors=["file:///nowhere"], recorder={"enabled": True}).save(node.config_path)
+        assert install_recorder(node.dir) is None
+    finally:
+        node.set_report_consent([])
+        install_recorder(node.dir)
+        receipt_mod.set_catalog_id(None)

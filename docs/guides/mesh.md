@@ -204,32 +204,80 @@ by both sets.
 
 ## Report what your guard stopped
 
-Reporting is off until you turn it on, and it is a projection of the receipts
-interlock already writes ([audit log](audit-log.md)). It has three kinds of
-fact, and they leave the node by two different routes:
+Reporting is off by default: nothing leaves a node until its operator turns
+it on, one layer at a time, and an enable never reaches back before its own
+date. A report is a projection of the receipts interlock already writes
+([audit log](audit-log.md)). It has five kinds of fact, called layers, and they
+leave the node by two different routes:
 
-| Layer | Carries | Goes to | Never carries |
-|---|---|---|---|
-| counts | how often each published rule fired, per verdict, tool *class* (shell, http, file.write, mcp, ...), phase and hour | the **aggregators**, only as secret shares; never in the report | tool names, principals, sessions |
-| digests | the SHA-256 of the arguments a rule **blocked or escalated**, exactly as the receipt stores it | the **consensus** service, in the signed report | arguments; anything a redacting or masking rule saw; rewrites; monitor-mode decisions |
-| sightings | "rule X is wrong here", an operator's false-positive statement | the **consensus** service, in the signed report | |
+| Layer | Enabled by | Carries | Goes to | Never carries |
+|---|---|---|---|---|
+| counts | `report enable` | how often each published rule fired, per verdict, tool *class* (shell, http, file.write, mcp, ...), phase and hour | the **aggregators**, only as secret shares; never in the report | tool names, principals, sessions |
+| sightings | `report enable` | "rule X is wrong here", an operator's false-positive statement | the **consensus** service, in the signed report | |
+| digests | `report enable --digests` | the SHA-256 of the arguments a rule **blocked or escalated**, exactly as the receipt stores it | the **consensus** service, in the signed report | arguments; anything a redacting or masking rule saw; rewrites; monitor-mode decisions |
+| fingerprints | `report enable --fingerprints` | a noised fingerprint of what a rule stopped ([below](#find-similar-attacks-without-sharing-text)) | the **consensus** service, in the signed report | the text |
+| samples | `report enable --sample RULE` | the redacted text, for the rules you name | the **consensus** service, in the signed report | text from rules you did not name |
 
 ```bash
 interlock mesh report init                                  # an Ed25519 key: the only identity the mesh sees
+interlock mesh report build --receipts ~/.interlock/receipts.jsonl --since 24h --out report.json   # local only
+interlock mesh report enable --digests                      # counts, sightings and digests, from now on
+interlock mesh report status                                # what is enabled, since when, and a preview
 interlock mesh report build --receipts ~/.interlock/receipts.jsonl --since 24h --out report.json
 interlock mesh report build --receipts ... --false-positive tool_result_injection --out report.json
 interlock mesh report submit report.json --consensus https://consensus.example.org \
     --aggregator https://agg-a.example.org --aggregator https://agg-b.example.org
 ```
 
-`build` prints what the report contains before anything leaves the machine;
-`--json` shows the exact envelope. With `--out report.json` it writes two files:
-the signed envelope, and the count vector beside it in `report.json.counts.json`
-(mode 0600). The envelope carries no counts, and the consensus service refuses
-one that does.
+**One consent point.** `report enable` is the node's only consent. It records
+the enable time and the enabled layers in the mesh state (`state.json` in the
+mesh directory). It needs no commons, so a node can report without
+subscribing. A bare `enable` turns on counts and sightings, and `--digests`,
+`--fingerprints` (with `--alpha`) and `--sample RULE` each add their own layer.
+Each `enable` replaces the one before it, so name every layer you want.
+`report enable --off` turns every layer off, the recorder included.
 
-`submit` sends the signed envelope (digests and sightings) to the
-**consensus** service. Counts **never reach consensus**: `submit` reads them
+**Never retroactive.** A report never holds anything observed before the
+enable. `report build` opens its window no earlier than the enable time,
+whatever `--since` asks for, and leaves out every layer that is not enabled.
+Adding a layer or a sample rule moves the enable time to now, so a new layer
+never covers time before its own enable. Turning reporting off and on again
+starts over, and the gap is never sent. Narrowing the layers keeps the enable
+time.
+
+**`submit` refuses what is not enabled.** Before it opens a connection,
+`submit` refuses:
+
+- any report while reporting is off;
+- a report built over time before the enable, such as a preview built before
+  you enabled (rebuild it);
+- an envelope that carries a layer that is not enabled, or counts to share
+  when counts are not enabled. The message names the flag that would enable
+  it, for example:
+  ``digests are not enabled: run `interlock mesh report enable --digests` ``.
+
+Every refusal exits 2.
+
+**The preview.** `report build` always works locally, with nothing enabled,
+so you can see exactly what would be sent. Until you enable reporting, it
+shows every layer. It prints what the report contains before anything leaves
+the machine, and `--json` shows the exact envelope. `interlock mesh report
+status` and `interlock mesh status` print one line saying what a report built
+now from the last 24 hours of `~/.interlock/receipts.jsonl` would hold: count
+rows, digests, fingerprints and samples. `interlock doctor` adds an INFO check:
+`mesh reporting: off`, or `mesh reporting: on since <date>: layers ...`.
+
+| Variable | Effect |
+|---|---|
+| `INTERLOCK_MESH_DIR` | moves the mesh directory (config, verified cache, `state.json` with the consent, the reporting key) away from `~/.interlock/mesh` |
+| `INTERLOCK_MESH_NO_REPORT=1` | the kill switch, whatever is enabled: `interlock.mesh.report.submit` refuses every upload before it connects. That covers reports, count shares, the aggregator totals query and gossip with peers. `report submit` says why and exits 2. Empty or `0` leaves it off |
+
+With `--out report.json`, `build` writes two files: the signed envelope, and the
+count vector beside it in `report.json.counts.json` (mode 0600). The envelope
+carries no counts, and the consensus service refuses one that does.
+
+`submit` sends the signed envelope (the enabled digests, sightings,
+fingerprints and samples) to the **consensus** service. Counts **never reach consensus**: `submit` reads them
 from the local counts file and splits them into additive secret shares, one per
 **aggregator**. Each aggregator sees a uniformly random number, and only their
 combined sums are the real totals. Two aggregators run by organisations that
@@ -311,8 +359,8 @@ An exact digest matches only the identical payload. Attacks arrive re-spelled,
 so a node can also record a **fingerprint** of what its guard blocked:
 
 ```bash
-interlock mesh report enable --alpha 1.5                      # fingerprints only
-interlock mesh report enable --alpha 1.5 --sample tool_result_injection   # plus redacted samples for one rule
+interlock mesh report enable --fingerprints --alpha 1.5       # fingerprints (with counts and sightings)
+interlock mesh report enable --fingerprints --sample tool_result_injection   # plus redacted samples for one rule
 interlock mesh report enable --off
 ```
 
@@ -324,8 +372,12 @@ through the Python API), keep one bit per dimension, then flip every bit with
 probability `1 / (1 + e^alpha)`. That last step is local differential privacy
 with budget `alpha` per fingerprint: the text cannot be reconstructed, and
 `alpha` is the dial between privacy and match quality. Smaller is more private
-and misses more variants. Fingerprints and samples are included by the next
-`report build` and shown in its summary before anything leaves.
+and misses more variants. Once their layer is enabled, fingerprints and
+samples are included by the next `report build` and shown in its summary
+before anything leaves. The recorder runs while either layer is on, and starts
+or stops when a watched policy next checks the mesh state (otherwise at the
+next policy load). What it records stays on the node: `--sample` without
+`--fingerprints` uploads no fingerprints.
 
 The consensus engine clusters fingerprints across organisations into
 **campaigns** and, once enough distinct reporters are in one, exports a pack

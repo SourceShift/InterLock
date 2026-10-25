@@ -94,6 +94,13 @@ The issuer key is not a role in the root. The collectors are told its public
 key directly (`interlock mesh serve --issuer`), so changing it means telling
 them, not a ceremony.
 
+## Reporting and the early ring
+
+Reporting from a node is off by default (decision R3), so the network learns
+only from organisations that choose to report. Early-ring membership
+credentials (`interlock mesh credential issue --scope early`) go to
+organisations that report.
+
 ## Changing this file
 
 A change to the keyholder table lands in the pull request of the ceremony that

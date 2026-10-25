@@ -7,7 +7,8 @@ A node keeps everything under one directory (``~/.interlock/mesh`` or
     config.json      mirrors, ring, monitor window, ceilings, grants
     metadata/        every metadata document the node verified and now trusts
     targets/         verified pack bytes, content-addressed
-    state.json       when each rule was first seen (the monitor window), last sync
+    state.json       when each rule was first seen (the monitor window), last sync,
+                     and what the operator enabled for reporting (``report``)
     shadow.jsonl     what shadow-mode rules, and capped rules with no approver, would have decided
 
 ``sync`` talks to the network; nothing else does. The policy loader resolves
@@ -36,7 +37,9 @@ from . import default_mesh_dir, metadata
 from ._util import atomic_write, iso, load_json, read_bounded
 from .bundle import (DEFAULT_CEILINGS, DEFAULT_MONITOR_SECONDS, RINGS, PackError, apply_ring, check_grants,
                      normalize_pack)
+from .fingerprint import DEFAULT_ALPHA
 from .metadata import MetadataError, TrustedMetadata
+from .report import LAYERS
 
 __all__ = ["Subscriber", "SubscriberError", "Fetcher", "Config", "parse_spec", "resolve_extends",
            "watch_info", "DEFAULT_RING", "SPEC_PREFIX"]
@@ -96,7 +99,9 @@ class Config:
         self.ceilings = dict(DEFAULT_CEILINGS) if ceilings is None else dict(ceilings)
         self.max_bundle_bytes = int(max_bundle_bytes)
         self.refresh_seconds = int(refresh_seconds)
-        # The fingerprint recorder (phase 2): off until the operator enables it.
+        # Where the fingerprint recorder's settings lived before decision R3.
+        # Kept so an old config.json still loads; it switches nothing on: the
+        # recorder follows the consent in state.json (Subscriber.report_consent).
         self.recorder: Dict[str, Any] = {"enabled": False, "alpha": 1.5, "sample_rules": []}
         if recorder:
             self.recorder.update({k: recorder[k] for k in ("enabled", "alpha", "sample_rules") if k in recorder})
@@ -272,6 +277,51 @@ class Subscriber:
     def _save_state(self, state: Dict[str, Any]) -> None:
         atomic_write(self.state_path, json.dumps(state, sort_keys=True, indent=1).encode("utf-8"), mode=0o600)
 
+    def _merge_state(self, values: Dict[str, Any], drop: Sequence[str] = ()) -> None:
+        """Write ``values`` into the state as it is on disk now, so a long
+        operation never writes back a stale copy over a consent or a split view
+        recorded while it ran."""
+        with _state_lock:
+            state = self._load_state()
+            for key in drop:
+                state.pop(key, None)
+            state.update(values)
+            self._save_state(state)
+
+    # reporting consent (decision R3) ----------------------------------------------
+
+    def report_consent(self) -> Dict[str, Any]:
+        """What the operator enabled for upload: ``enabled_at`` (None while
+        reporting is off), the ``layers``, the fingerprint ``alpha`` and the
+        ``sample_rules``. A missing or malformed record reads as off."""
+        return _consent(self._load_state().get("report"))
+
+    def set_report_consent(self, layers: Sequence[str] = (), *, alpha: float = DEFAULT_ALPHA,
+                           sample_rules: Sequence[str] = ()) -> Dict[str, Any]:
+        """Record the node's one consent point; no ``layers`` turns reporting off.
+
+        The record replaces the previous one. ``enabled_at`` stays put only when
+        the new record enables nothing the old one did not (no new layer, no new
+        sample rule); otherwise it moves to now, so a layer never covers time
+        before its own enable, and an off-then-on never reaches back over the gap.
+        """
+        unknown = sorted(set(layers) - set(LAYERS))
+        if unknown:
+            raise SubscriberError("unknown report layer(s): {}".format(", ".join(unknown)))
+        rules = sorted({r for r in sample_rules if isinstance(r, str) and r})
+        wanted = [layer for layer in LAYERS if layer in layers and (layer != "samples" or rules)]
+        record: Dict[str, Any] = {"enabled_at": None, "layers": wanted, "alpha": float(alpha),
+                                  "sample_rules": rules if "samples" in wanted else []}
+        with _state_lock:
+            state = self._load_state()
+            before = _consent(state.get("report"))
+            if wanted:
+                grew = set(wanted) - set(before["layers"]) or set(record["sample_rules"]) - set(before["sample_rules"])
+                record["enabled_at"] = self._now() if before["enabled_at"] is None or grew else before["enabled_at"]
+            state["report"] = record
+            self._save_state(state)
+        return _consent(record)
+
     # trust ----------------------------------------------------------------------------
 
     def _trusted(self, *, allow_expired: bool) -> TrustedMetadata:
@@ -300,19 +350,13 @@ class Subscriber:
         the cache is left as it was and the error is recorded and raised."""
         config = self.config()
         fetch = self._fetcher or Fetcher(config.mirrors)
-        state = self._load_state()
         now = self._now()
         try:
             result = self._sync(config, fetch, now)
         except (MetadataError, OSError, ValueError, SubscriberError) as exc:
-            state["last_error"] = "{}: {}".format(type(exc).__name__, exc)
-            state["last_error_at"] = now
-            self._save_state(state)
+            self._merge_state({"last_error": "{}: {}".format(type(exc).__name__, exc), "last_error_at": now})
             raise SubscriberError("sync failed, cache unchanged: {}".format(exc))
-        state["last_sync"] = now
-        state.pop("last_error", None)
-        state.pop("last_error_at", None)
-        self._save_state(state)
+        self._merge_state({"last_sync": now}, drop=("last_error", "last_error_at"))
         return result
 
     def _sync(self, config: Config, fetch: Fetcher, now: float) -> Dict[str, Any]:
@@ -428,7 +472,7 @@ class Subscriber:
         ``status`` and ``doctor``; it is evidence, and it names the peer.
         """
         from .log import LogError, MerkleLog, split_view, verify_checkpoint
-        from .report import submit
+        from .report import ReportError, submit
 
         path = self._log_path("checkpoint.json")
         if not os.path.exists(path):
@@ -436,6 +480,8 @@ class Subscriber:
         ours_env = json.loads(read_bounded(path, 16 * 1024).decode("utf-8"))
         try:
             reply = submit(peer_url.rstrip("/") + "/v1/gossip", {"checkpoint": ours_env}, token=token)
+        except ReportError as exc:  # the kill switch: nothing was sent
+            raise SubscriberError("not sent to peer {}: {}".format(peer_url, exc))
         except OSError as exc:
             raise SubscriberError("peer {} unreachable: {}".format(peer_url, exc))
         theirs_env = reply.get("checkpoint")
@@ -572,18 +618,20 @@ class Subscriber:
     # status --------------------------------------------------------------------------
 
     def status(self) -> Dict[str, Any]:
-        out: Dict[str, Any] = {"dir": self.dir, "configured": self.is_configured()}
+        state = self._load_state()
+        # Reporting needs no commons, so its consent is shown on every node.
+        out: Dict[str, Any] = {"dir": self.dir, "configured": self.is_configured(),
+                               "report": _consent(state.get("report"))}
         if not self.is_configured():
             return out
         config = self.config()
-        state = self._load_state()
         out.update({"mirrors": config.mirrors, "ring": config.ring, "monitor_days": config.monitor_days,
                     "last_sync": state.get("last_sync"), "last_error": state.get("last_error"),
                     "subscriptions": state.get("subscriptions", {}),
                     "next_transition": state.get("next_transition", {}),
                     "split_views": state.get("split_views", []),
                     "log": self._saved_checkpoint(),
-                    "recorder": config.recorder, "grants": config.grants,
+                    "grants": config.grants,
                     "capped": _count_capped(state.get("subscriptions", {}))})
         try:
             trusted = self._trusted(allow_expired=True)
@@ -596,6 +644,26 @@ class Subscriber:
             out["cache_error"] = str(exc)
         out["shadow"] = self.shadow_summary()
         return out
+
+
+def _consent(raw: Any) -> Dict[str, Any]:
+    """A ``state.json`` ``report`` record, normalised. Anything malformed reads
+    as off: consent is never inferred."""
+    off: Dict[str, Any] = {"enabled_at": None, "layers": [], "alpha": DEFAULT_ALPHA, "sample_rules": []}
+    if not isinstance(raw, dict):
+        return off
+    enabled_at, layers = raw.get("enabled_at"), raw.get("layers")
+    if not isinstance(enabled_at, (int, float)) or isinstance(enabled_at, bool) or not isinstance(layers, list):
+        return off
+    rules = sorted({r for r in raw.get("sample_rules") or [] if isinstance(r, str) and r})
+    wanted = [layer for layer in LAYERS if layer in layers and (layer != "samples" or rules)]
+    if not wanted:
+        return off
+    alpha = raw.get("alpha")
+    if not isinstance(alpha, (int, float)) or isinstance(alpha, bool) or alpha <= 0:
+        alpha = DEFAULT_ALPHA
+    return {"enabled_at": float(enabled_at), "layers": wanted, "alpha": float(alpha),
+            "sample_rules": rules if "samples" in wanted else []}
 
 
 def _count_capped(subscriptions: Dict[str, Any]) -> int:
@@ -629,34 +697,35 @@ _RECORDER: Optional[Any] = None
 
 def install_recorder(mesh_dir: Optional[str] = None) -> Optional[Any]:
     """Install (or remove) the fingerprint recorder according to the node's
-    config, and stamp receipts with the catalog id. Idempotent; returns the
-    recorder in force, or None."""
+    reporting consent (on while the fingerprints or samples layer is enabled),
+    and stamp receipts with the catalog id. Idempotent; returns the recorder in
+    force, or None."""
     global _RECORDER
     from ..receipt import add_decision_observer, remove_decision_observer, set_catalog_id
     from .catalog import catalog_id
 
     subscriber = Subscriber(mesh_dir)
     try:
-        config = subscriber.config()
+        subscriber.config()
     except SubscriberError:
         return None
     set_catalog_id(catalog_id())
     if _RECORDER is not None:
         remove_decision_observer(_RECORDER)
         _RECORDER = None
-    settings = config.recorder
-    if not settings.get("enabled"):
+    consent = subscriber.report_consent()
+    if "fingerprints" not in consent["layers"] and "samples" not in consent["layers"]:
         return None
     from .fingerprint import Recorder
-    _RECORDER = Recorder(subscriber.dir, alpha=float(settings.get("alpha", 1.5)),
-                         sample_rules=settings.get("sample_rules", []))
+    _RECORDER = Recorder(subscriber.dir, alpha=consent["alpha"], sample_rules=consent["sample_rules"])
     add_decision_observer(_RECORDER)
     return _RECORDER
 
 
 def watch_info(specs: Sequence[str], mesh_dir: Optional[str] = None) -> Tuple[List[str], Optional[float], Callable[[Dict[str, Any]], None]]:
     """For a policy that resolved ``specs``: the files whose change should
-    trigger a reload (``config.json`` too, so a new grant takes effect), the
+    trigger a reload (``config.json`` too, so a new grant takes effect, and
+    ``state.json``, so a new reporting consent reaches the recorder), the
     wall-clock time the next shadow rule leaves its window, and the shadow sink
     to record would-be decisions with."""
     subscriber = Subscriber(mesh_dir)
