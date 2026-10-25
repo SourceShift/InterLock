@@ -44,6 +44,7 @@ import {
   decodeLine,
   encodeFrame,
   parseResponse,
+  readScopeEnvelope,
   requestFrame,
 } from "./wire.js";
 
@@ -230,6 +231,19 @@ export interface RemoteEngineOptions {
   fallbackMaxAge?: number;
   /** Called once per call decided without the daemon. */
   onFallback?: (message: string) => void;
+  /**
+   * The signed scope document the daemon published (its `--scope-document`
+   * file). Presenting it pins the scope set this client expects: the daemon
+   * refuses a request whose document is not the one it serves
+   * (`scope_mismatch`), so a scoped client that reaches a daemon serving a
+   * different scope set blocks instead of being decided under it. Needs
+   * `scopeKey` or `scopeKeyFile`. Read once at construction.
+   */
+  scopeFile?: string;
+  /** The sidecar's `--key-file` key, to verify the scope document. */
+  scopeKey?: Uint8Array;
+  /** Or the key file itself (64 hex characters, or raw bytes). */
+  scopeKeyFile?: string;
 }
 
 const UNREACHABLE_CODES = new Set([
@@ -259,6 +273,14 @@ export class RemoteEngine {
 
   readonly unreachable: Unreachable;
   readonly fallbackFile: string;
+  /**
+   * The verified scope envelope presented on every request, or null.
+   *
+   * The document is fixed at construction. After an operator republishes a
+   * scope document, restart the daemon and its clients together: the old
+   * envelope is refused (`scope_mismatch`), never silently accepted.
+   */
+  readonly scope: Record<string, unknown> | null;
   /** How many calls were decided without the daemon. */
   fallbacks = 0;
   private readonly fallbackKey: Uint8Array | null;
@@ -280,6 +302,25 @@ export class RemoteEngine {
       throw new TypeError('unreachable: "degraded" needs fallbackKey or fallbackKeyFile');
     }
     this.fallbackMaxAge = options.fallbackMaxAge ?? DEFAULT_FALLBACK_MAX_AGE_SECONDS;
+    const scopeKey =
+      options.scopeKey ?? (options.scopeKeyFile ? readKeyFile(options.scopeKeyFile) : null);
+    if (options.scopeFile === undefined) {
+      if (scopeKey !== null) {
+        throw new TypeError(
+          "scopeKey was given without scopeFile: pass the daemon's published scope document",
+        );
+      }
+      this.scope = null;
+    } else {
+      if (scopeKey === null) {
+        throw new TypeError(
+          "scopeFile needs scopeKey or scopeKeyFile to verify the published document",
+        );
+      }
+      // Read eagerly: a missing or foreign-signed file is an operator error to
+      // surface now, not on the first guarded call.
+      this.scope = readScopeEnvelope(options.scopeFile, scopeKey);
+    }
     this.onFallback =
       options.onFallback ?? ((message: string) => process.emitWarning(message, "InterlockFallback"));
   }
@@ -374,7 +415,7 @@ export class RemoteEngine {
     // exit, rather than wait for a socket it will never use again.
     socket.ref();
     try {
-      socket.write(encodeFrame(requestFrame(opId, event)));
+      socket.write(encodeFrame(requestFrame(opId, event, this.scope)));
       const line = await reader.readLine(READ_LIMIT);
       if (line === null || line.length === 0) {
         throw new WireError("bad_response", "daemon closed the connection");

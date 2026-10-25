@@ -414,8 +414,11 @@ See [`rust/README.md`](https://github.com/SourceShift/InterLock/blob/main/rust/R
 - **Binding mistakes surface at resolve time,** which can be the first call
   from that scope. That call is blocked (`scoped_engine.resolution`). Resolve
   right after binding so you find out before a user does.
-- **The Node.js sidecar can't serve a `ScopedEngine`.** It refuses one at start
-  (exit code 2). Serve a `PolicyEngine` or a rule list.
+- **The sidecar can't serve an exported `ScopedEngine`.** A rules module that
+  exports one is refused at start (exit code 2). Serve scopes as data instead:
+  export `templates` and a `scope_document`, and start the daemon with
+  `--scope-document` ([sidecar reference](../reference/sidecar.md#scoped-engines)).
+  A remote client can then pin that document with `scope=`/`scopeFile`.
 - **The tree lives in memory.** Persist your bindings yourself and rebuild the
   tree at start-up.
 
@@ -423,5 +426,6 @@ See [`rust/README.md`](https://github.com/SourceShift/InterLock/blob/main/rust/R
 
 - [Sandbox subprocesses](sandbox.md): turn a scope's bindings into a sandbox profile
 - [Writing rules](writing-rules.md): how to write the rules your templates return
+- [Sidecar, scoped engines](../reference/sidecar.md#scoped-engines): serve these scopes over a socket, and pin the document from a client
 - [Python API reference](../reference/python-api.md): `ScopeTree`, `ScopeRegistry`, `ScopedEngine`
 - [Concepts](../concepts.md): principals and spans

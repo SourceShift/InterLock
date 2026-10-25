@@ -1495,10 +1495,12 @@ Guide: [coding agents](../guides/coding-agents.md).
 ### Sidecar client options
 
 `RemoteEngine(path, *, timeout=5.0, unreachable="deny", fallback=None,
-fallback_key=None, fallback_max_age=604800)`: `unreachable` is `"deny"`,
-`"degraded"` (needs `fallback_key`) or `"allow"`; `.fallbacks` counts calls
-decided without the daemon. `interlock.sidecar.fallback` holds
-`write_fallback`, `read_fallback`, `validate_offline` and `fallback_path`
+fallback_key=None, fallback_max_age=604800, scope=None, scope_key=None)`:
+`unreachable` is `"deny"`, `"degraded"` (needs `fallback_key`) or `"allow"`;
+`scope`/`scope_key` pin the signed scope document the daemon serves;
+`.fallbacks` counts calls decided without the daemon.
+`interlock.sidecar.fallback` holds `write_fallback`, `read_fallback`,
+`validate_offline` and `fallback_path`
 ([sidecar reference](sidecar.md#when-the-daemon-is-down)).
 
 ### MCP inventory (`interlock.mcp_inventory`)

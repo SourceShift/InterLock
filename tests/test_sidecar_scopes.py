@@ -24,17 +24,20 @@ from pathlib import Path
 
 import pytest
 
-from interlock import Verdict
+from interlock import Blocked, Verdict
 from interlock.event import SensorEvent
 from interlock.policy.scopes import Binding, ScopeRegistry, ScopeTree, ScopedEngine
 from interlock.sidecar.__main__ import _load_scope, main
+from interlock.sidecar.client import RemoteEngine
 from interlock.sidecar.rules import RulesError, scope_document_of
 from interlock.sink import InMemorySink
 from interlock.testing.harness import send_raw, serve
 from interlock.wire import (
+    UnauthenticatedScope,
     canonical,
     decode_line,
     encode_frame,
+    read_scope_envelope,
     request_frame,
     scope_envelope,
     scope_identity,
@@ -196,6 +199,93 @@ def test_a_well_signed_but_non_matching_overlay_is_refused(sock_path):
     assert reply["error"]["code"] == "scope_mismatch"
 
 
+# --- the client pins the scope document it expects ---------------------------
+
+
+def _publish(tmp_path, envelope) -> str:
+    path = tmp_path / "scope.json"
+    path.write_text(canonical(envelope), encoding="utf-8")
+    return str(path)
+
+
+def test_the_remote_engine_presents_the_published_scope_document(sock_path, tmp_path):
+    """The client sends the envelope, and the daemon decides (and records) under it."""
+    path = sock_path()
+    envelope = _signed()
+    sink = InMemorySink()
+    with serve(_scoped_engine(), path, sink=sink) as server:
+        server.scope_key = KEY
+        server.scope_document = envelope
+        with RemoteEngine(path, scope=_publish(tmp_path, envelope), scope_key=KEY) as remote:
+            assert remote.evaluate(_event("ls")).verdict is Verdict.ALLOW
+            assert remote.evaluate(_event("rm -rf /")).verdict is Verdict.BLOCK
+    assert {receipt.scope_document for receipt in sink.receipts} == {
+        scope_identity(envelope)
+    }
+
+
+def test_a_client_pinning_a_different_document_is_refused(sock_path, tmp_path):
+    """Which proves the overlay was sent: a client that sent none would be decided.
+
+    Without an overlay the daemon would serve the client under its own document
+    and record that identity, so only a *refused* request shows the client's
+    envelope reached it.
+    """
+    path = sock_path()
+    served = _signed()
+    other = scope_envelope(
+        fixture_rules.scope_document(), KEY, written_at=1_600_000_000
+    )
+    with serve(_scoped_engine(), path) as server:
+        server.scope_key = KEY
+        server.scope_document = served
+        with RemoteEngine(
+            path, scope=_publish(tmp_path, other), scope_key=KEY
+        ) as remote:
+            with pytest.raises(Blocked) as caught:
+                remote.evaluate(_event("ls"))
+    assert "scope_mismatch" in str(caught.value)
+
+
+def test_a_client_cannot_pin_without_the_daemon_key(tmp_path):
+    with pytest.raises(ValueError, match="scope_key"):
+        RemoteEngine("/tmp/never.sock", scope=_publish(tmp_path, _signed()))
+
+
+def test_a_key_without_a_document_is_refused():
+    with pytest.raises(ValueError, match="without scope"):
+        RemoteEngine("/tmp/never.sock", scope_key=KEY)
+
+
+def test_a_document_signed_with_another_key_is_refused_at_construction(tmp_path):
+    published = tmp_path / "scope.json"
+    published.write_text(
+        canonical(scope_envelope(fixture_rules.scope_document(), b"a-different-key")),
+        encoding="utf-8",
+    )
+    with pytest.raises(UnauthenticatedScope, match="signature"):
+        RemoteEngine("/tmp/never.sock", scope=str(published), scope_key=KEY)
+
+
+def test_an_unreadable_document_is_refused_at_construction(tmp_path):
+    with pytest.raises(UnauthenticatedScope, match="cannot read"):
+        RemoteEngine(
+            "/tmp/never.sock", scope=str(tmp_path / "absent.json"), scope_key=KEY
+        )
+
+
+def test_a_file_that_is_not_a_scope_envelope_is_refused(tmp_path):
+    published = tmp_path / "scope.json"
+    published.write_text('{"version": 1}', encoding="utf-8")
+    with pytest.raises(UnauthenticatedScope):
+        read_scope_envelope(str(published), KEY)
+
+
+def test_a_verified_document_is_returned_unchanged(tmp_path):
+    envelope = _signed()
+    assert read_scope_envelope(_publish(tmp_path, envelope), KEY) == envelope
+
+
 # --- startup: the scope document is read, published, or refused --------------
 
 
@@ -281,3 +371,44 @@ def test_live_smoke_wire_decision_equals_in_process_scoped_engine(sock_path, tmp
             proc.kill()
             _, err = proc.communicate()
     print("R29 smoke pass")
+
+
+def test_live_smoke_the_client_pins_the_document_the_daemon_serves(sock_path, tmp_path):
+    """The real client against a real scoped daemon: R29's acceptance, end to end.
+
+    The daemon publishes the scope document signed with the shared key file;
+    ``RemoteEngine`` reads that same file, verifies it, and presents it. Every
+    verdict equals the in-process oracle's for the same event.
+    """
+    sock = sock_path("s")
+    key_file = tmp_path / "key"
+    key_file.write_bytes(KEY)
+    scope = tmp_path / "scope.json"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "interlock.sidecar", "--socket", sock,
+         "--rules", "tests.fixtures.rules:rules", "--scope-document", str(scope),
+         "--key-file", str(key_file)],
+        cwd=str(REPO_ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.time() + 30
+        while not os.path.exists(sock) and time.time() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+        assert os.path.exists(sock), proc.stderr.read().decode()
+
+        oracle = _scoped_engine()
+        with RemoteEngine(sock, scope=str(scope), scope_key=KEY, timeout=5) as remote:
+            for cmd in ("ls", "rm -rf /", "pwd"):
+                event = _event(cmd)
+                decision = remote.evaluate(event)
+                assert decision.verdict is oracle.evaluate(event).verdict, cmd
+    finally:
+        proc.terminate()
+        try:
+            _, err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _, err = proc.communicate()
+    print("R29 client smoke pass")

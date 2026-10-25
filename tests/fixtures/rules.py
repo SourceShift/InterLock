@@ -64,9 +64,9 @@ def scope_document() -> dict:
     """The scope document this module declares.
 
     ``acme`` may run ``ls`` and ``pwd``; ``acme/agent1`` inherits that and may
-    run ``ls`` - a principal scope with no binding at all (``beta/agent2``)
-    resolves to an empty engine and is allowed, which is the per-principal
-    difference the smoke compares.
+    run ``ls``. A principal scope with no binding at all (``beta/agent2``)
+    resolves to an empty engine, which ``ScopedEngine`` denies as unbound - the
+    per-principal difference the smoke compares.
     """
     return {
         "version": 1,

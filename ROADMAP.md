@@ -1405,12 +1405,15 @@ allowlist-first. Standalone.
 
 ## R29 · MCP transport controls and scoped engine over the sidecar
 
-**Status:** `partial` — `mcp_transport_guard` ships, and the wire carries an
-optional signed scope document (`PROTOCOL_VERSION` 1), parsed and encoded in the
-JS client (`js/src/wire.ts`). But no client sets the field: neither
-`RemoteEngine` in Python nor the JS client populates `scope` on a request, so a
-remote client still cannot ask the daemon for a scoped decision. The transport
-half is shipped; the scoped-engine-over-the-sidecar half is not.
+**Status:** `shipped` — `mcp_transport_guard` ships, the wire carries an
+optional signed scope document (`PROTOCOL_VERSION` 1), and both clients pin it:
+`RemoteEngine(scope=PATH, scope_key=KEY)` in Python and
+`new RemoteEngine(path, { scopeFile, scopeKey })` in Node.js verify the
+daemon's published `--scope-document` file at construction and present that
+envelope on every request. A daemon serving a different document answers
+`scope_mismatch`, so a scoped client blocks instead of being decided under a
+scope set it did not ask for. The receipt records the scope document's identity
+in `scope_document`.
 **Size:** M
 
 ### Problem
@@ -1428,10 +1431,11 @@ policy provenance.
 
 ### Acceptance
 A stdio server not on the exception list is refused before launch; a denied HTTP
-transport is refused with a transport-named reason. **Not met:** the Node.js
-client resolves the same per-principal decision as the Python `ScopedEngine`
-for an identical event — the wire can carry the signed scope document, but no
-client sends one.
+transport is refused with a transport-named reason. Met: the Node.js client
+with `scopeFile` resolves the same per-principal decision as the Python
+`ScopedEngine` for an identical event
+(`js/test/scope.test.ts` against a real scoped daemon), and a client pinning a
+different well-signed document is refused with `scope_mismatch`.
 
 ### Risks & dependencies
 The scope document on the wire is new trust surface — signed like the fallback

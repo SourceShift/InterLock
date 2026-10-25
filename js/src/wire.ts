@@ -29,8 +29,26 @@
  * JSON's doubles silently *corrupt*). Both raise rather than pass.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { createRequire } from "node:module";
+
 import { Decision, Verdict } from "./enforce.js";
 import type { Phase, SensorEvent } from "./event.js";
+
+const require_ = createRequire(import.meta.url);
+
+/**
+ * `fs.readFileSync`, required at call time rather than linked at import time.
+ *
+ * Same reason as `fallback.ts`: this module is reachable from `client.js`,
+ * which the ESM-hook preload imports before it can register the loader. A
+ * static `node:fs` import would link the unpatched module record first and the
+ * loader could no longer replace it.
+ */
+function readFileSync(path: string, encoding: "utf8"): string {
+  const fs = require_("node:fs") as typeof import("node:fs");
+  return fs.readFileSync(path, encoding);
+}
 
 export const PROTOCOL_VERSION = 1;
 
@@ -435,6 +453,72 @@ function parseScope(frame: Record<string, unknown>): Record<string, unknown> | n
     throw new WireError("unauthenticated_scope", "scope document is unsigned (no mac)");
   }
   return record;
+}
+
+/**
+ * The MAC over a scope document: `HMAC-SHA256(key, "<written_at>\n<policy>")`.
+ *
+ * Identical to the fallback policy's MAC and to Python's `scope_mac`: one
+ * formula, one place to reason about, and a document verified by the same code
+ * path on both clients.
+ */
+export function scopeMac(key: Uint8Array, writtenAt: number, policy: string): string {
+  return createHmac("sha256", key).update(`${writtenAt}\n${policy}`, "utf8").digest("hex");
+}
+
+/**
+ * Verify a signed scope envelope under `key`; return its `policy` string.
+ *
+ * Mirrors `interlock.wire.verify_scope_envelope`: the shape is checked first
+ * (so an unsigned or malformed overlay is refused before the key is used) and
+ * then the MAC. Every shortfall is `WireError("unauthenticated_scope")` - a
+ * document that cannot be proven must never be sent as if it could.
+ */
+export function verifyScopeEnvelope(envelope: unknown, key: Uint8Array): string {
+  if (envelope === null || envelope === undefined) {
+    throw new WireError("unauthenticated_scope", "scope document is missing");
+  }
+  const record = parseScope({ scope: envelope });
+  if (record === null) {
+    throw new WireError("unauthenticated_scope", "scope document is missing");
+  }
+  const writtenAt = record["written_at"] as number;
+  const policy = record["policy"] as string;
+  const mac = record["mac"] as string;
+  const expected = Buffer.from(scopeMac(key, writtenAt, policy), "hex");
+  const given = Buffer.from(mac, "hex");
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    throw new WireError("unauthenticated_scope", "scope document signature does not verify");
+  }
+  return policy;
+}
+
+/**
+ * Read and verify the signed scope document a daemon published at `path`.
+ *
+ * The client presents the very bytes the daemon serves: the document's identity
+ * includes `written_at`, so re-signing identical content is a *different*
+ * document to the daemon (`scope_mismatch`). Mirror of Python's
+ * `read_scope_envelope`.
+ */
+export function readScopeEnvelope(path: string, key: Uint8Array): Record<string, unknown> {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (err) {
+    throw new WireError("unauthenticated_scope", `cannot read scope document ${path}: ${String(err)}`);
+  }
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(raw);
+  } catch (err) {
+    throw new WireError(
+      "unauthenticated_scope",
+      `scope document ${path} is not valid JSON: ${(err as Error).message}`,
+    );
+  }
+  verifyScopeEnvelope(envelope, key);
+  return envelope as Record<string, unknown>;
 }
 
 export interface ParsedRequest {

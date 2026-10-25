@@ -34,6 +34,7 @@ from ..wire import (
     encode_frame,
     error_frame,
     parse_response,
+    read_scope_envelope,
     request_frame,
 )
 
@@ -66,6 +67,16 @@ class RemoteEngine:
     request/response exchange on a stream socket cannot be interleaved, so
     concurrent callers share the connection in turn rather than racing on it.
 
+    ``scope`` pins the scope set this client expects to be judged under. It is
+    the path of the signed scope document the daemon published (its
+    ``--scope-document`` file), verified at construction under ``scope_key``,
+    and presented on every request. The daemon refuses a request whose scope
+    document is not the one it serves (``scope_mismatch``), so a scoped client
+    that reaches a daemon serving a *different* scope set blocks instead of
+    being quietly decided under it. The envelope is read once: after the
+    operator republishes a scope document, restart the daemon and its clients
+    together (the old envelope would be refused, not silently accepted).
+
     ``timeout`` bounds each socket operation (connect, send, and waiting for a
     reply), in seconds. It defaults to :data:`DEFAULT_TIMEOUT`; pass ``None`` to
     wait forever. A timeout raises ``Blocked``, like any other transport
@@ -81,11 +92,24 @@ class RemoteEngine:
         fallback: Optional[str] = None,
         fallback_key: Optional[bytes] = None,
         fallback_max_age: float = 7 * 86400,
+        scope: Optional[str] = None,
+        scope_key: Optional[bytes] = None,
     ) -> None:
         if unreachable not in UNREACHABLE_LEVELS:
             raise ValueError("unreachable must be one of {}".format(", ".join(UNREACHABLE_LEVELS)))
         if unreachable == "degraded" and fallback_key is None:
             raise ValueError("unreachable='degraded' needs fallback_key to verify the fallback file")
+        if scope is None:
+            if scope_key is not None:
+                raise ValueError("scope_key was given without scope: pass the daemon's "
+                                 "published scope document with scope=PATH")
+            self.scope_envelope = None
+        else:
+            if scope_key is None:
+                raise ValueError("scope=PATH needs scope_key to verify the published document")
+            # Read eagerly: an operator learns at construction that the file is
+            # missing or foreign-signed, not on the first guarded call.
+            self.scope_envelope = read_scope_envelope(scope, scope_key)
         self.path = str(path)
         self.timeout = timeout
         self.unreachable = unreachable
@@ -180,7 +204,9 @@ class RemoteEngine:
         # daemon's close race the reply and surface as EOF, which is classified
         # unreachable. Nothing below sends a byte for a request refused here.
         try:
-            payload = encode_frame(request_frame(op_id, event))
+            payload = encode_frame(
+                request_frame(op_id, event, scope=self.scope_envelope)
+            )
         except Exception as exc:
             raise WireError(
                 "bad_request",

@@ -179,6 +179,25 @@ file is missing, tampered or stale. `allow` lets every call through. Both call
 and refusing, so it always blocks. See the
 [sidecar reference](../docs/reference/sidecar.md#when-the-daemon-is-down).
 
+### Pinning the scope document
+
+If the daemon serves per-principal policies (`--scope-document FILE`), point the
+client at the same published file:
+
+```ts
+new RemoteEngine(path, {
+  scopeFile: "/etc/interlock/scope.json",
+  scopeKeyFile: "/etc/interlock/key",
+});
+```
+
+The client verifies the signed document under the shared key at construction
+and presents it on every request. A daemon serving a different document answers
+`scope_mismatch` and the call blocks - it is never decided under a scope set
+the client did not ask for. The file is read once: after republishing a scope
+document, restart the daemon and its clients together. See
+[pinning the scope document](../docs/reference/sidecar.md#pinning-the-scope-document-from-a-client).
+
 ## Guard your app's fs, exec, and fetch calls
 
 Tool calls aren't the only risk. An agent can also read files, run commands, and

@@ -207,6 +207,37 @@ def scope_identity(envelope: Mapping[str, Any]) -> str:
     return "{}:{}".format(envelope.get("written_at"), envelope.get("mac"))
 
 
+def read_scope_envelope(path: str, key: bytes) -> Dict[str, Any]:
+    """Read and verify the signed scope document a daemon published at ``path``.
+
+    A client presents the *same bytes* the daemon serves, so it reads the
+    daemon's published file instead of signing the document itself: the
+    identity includes ``written_at``, and a fresh signature over identical
+    content is a different document to the daemon (``scope_mismatch``).
+
+    Every shortfall - unreadable, not JSON, not an object, wrong shape, a
+    foreign key, a tampered ``mac`` - raises :class:`UnauthenticatedScope`. A
+    client that cannot prove which scope set it is about to be judged under
+    must not send a request that would be decided under one.
+    """
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(64 * 1024)
+    except OSError as exc:
+        raise UnauthenticatedScope(
+            "cannot read scope document {}: {}".format(path, exc)
+        )
+    try:
+        envelope = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise UnauthenticatedScope(
+            "scope document {} is not valid JSON: {}".format(path, exc)
+        )
+    parse_scope({"scope": envelope})  # shape first, in its own words
+    verify_scope_envelope(envelope, key)  # then the signature
+    return envelope
+
+
 # --- the value codec ---------------------------------------------------------
 
 def encode_value(value: Any) -> Any:

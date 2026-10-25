@@ -106,6 +106,26 @@ The scope document the daemon serves is recorded in every
 `scope_document` provenance field as its `"<written_at>:<mac>"` identity - a name,
 never the policy content.
 
+#### Pinning the scope document from a client
+
+A daemon decides every event under the document it serves. A client can go
+further and pin the scope set it expects:
+
+```python
+RemoteEngine(path, scope="/run/interlock/scope.json", scope_key=key)          # Python
+new RemoteEngine(path, { scopeFile: "/run/interlock/scope.json",               // Node.js
+                         scopeKeyFile: "/etc/interlock/key" })
+```
+
+The client reads the daemon's published `--scope-document` file, verifies it
+under the shared key at construction, and presents that envelope on every
+request. The daemon refuses a request whose document is not the one it serves
+(`scope_mismatch`), so a client that reaches a daemon running a different scope
+set blocks instead of being quietly decided under it. The client must present
+the daemon's own bytes: re-signing the same policy makes a new `written_at` and
+is a different document to the daemon. The envelope is read once, so after
+republishing a scope document, restart the daemon and its clients together.
+
 Startup messages and errors go to stderr. Stop the daemon with `SIGINT` or
 `SIGTERM`. It removes its socket file on the way out.
 
@@ -258,11 +278,12 @@ socket.
 ```python
 from interlock.sidecar import RemoteEngine
 
-RemoteEngine(path, *, timeout=DEFAULT_TIMEOUT)   # DEFAULT_TIMEOUT = 5.0
+RemoteEngine(path, *, timeout=DEFAULT_TIMEOUT, scope=None, scope_key=None)
 ```
 
 | Member | Meaning |
 |---|---|
+| `scope` / `scope_key` | Pin the scope document the daemon serves: `scope` is the path of its published `--scope-document` file and `scope_key` the key that signs it. The envelope is verified at construction and presented on every request (see [Pinning the scope document](#pinning-the-scope-document-from-a-client)). Either both or neither; `scope` without a key, or a key without `scope`, is a `ValueError`. |
 | `timeout` | Seconds each socket operation (connect, send, waiting for the reply) may take. Defaults to `DEFAULT_TIMEOUT`, 5 seconds, importable from `interlock.sidecar.client`. `None` waits forever. A timeout raises `Blocked` like any other failure, so a hung daemon blocks calls instead of hanging them. |
 | `evaluate(event) -> Decision` | Asks the daemon. On any failure (no daemon, timeout, malformed reply, error frame) it raises `Blocked` with a reason such as `guard daemon unreachable at <path>: ...`. |
 | `close()` | Closes the connection. Also available as a context manager. |
@@ -306,7 +327,7 @@ The reference implementation is [`interlock/wire.py`](https://github.com/SourceS
 | `event.phase` | no | `"call"` (default) or `"result"`. |
 | `event.principal`, `event.span_id`, `event.parent_principal`, `event.call_id` | no | String or `null`. `call_id` links a call's and its result's events. |
 | `event.ts` | no | A finite number. |
-| `scope` | no | A signed scope-document overlay (below). When present it must verify under the daemon's key and be the document the daemon serves, or the daemon answers with an error frame. |
+| `scope` | no | A signed scope-document overlay. When present it must verify under the daemon's key and be the document the daemon serves, or the daemon answers with an error frame. Both shipped clients send it when configured with a scope document (`RemoteEngine(scope=...)` in Python, `scopeFile` in Node.js). |
 
 **Response**
 

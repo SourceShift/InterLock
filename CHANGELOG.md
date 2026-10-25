@@ -11,6 +11,14 @@ breaking changes land.
 
 ### Added
 
+- Scoped clients (ROADMAP R29): `RemoteEngine` now pins the scope document a
+  daemon serves. `RemoteEngine(path, scope=PATH, scope_key=KEY)` in Python and
+  `new RemoteEngine(path, { scopeFile, scopeKey })` in Node.js read the daemon's
+  published `--scope-document` file, verify its signature at construction and
+  present that envelope on every request, so a daemon serving a different scope
+  set answers `scope_mismatch` and the call blocks. `interlock.wire` gains
+  `read_scope_envelope`; the JS wire gains `scopeMac`, `verifyScopeEnvelope`
+  and `readScopeEnvelope`.
 - Signed release pipeline (ROADMAP R22): `.github/workflows/release.yml` runs
   on a `v*` tag and publishes `interlock-guard` to PyPI and npm using trusted
   publishing (OpenID Connect) instead of a long-lived registry token. PyPI

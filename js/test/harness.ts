@@ -46,6 +46,10 @@ export interface SpawnOptions {
   python?: string;
   /** A path for `--receipts`, if the test wants a receipt chain. */
   receipts?: string;
+  /** A path for `--scope-document`; the daemon publishes it when absent. */
+  scopeDocument?: string;
+  /** A path for `--key-file`, the key the daemon signs and verifies with. */
+  keyFile?: string;
   /** How long to wait for the socket to accept connections, in ms. */
   timeout?: number;
 }
@@ -141,6 +145,12 @@ export async function spawnDaemon(options: SpawnOptions = {}): Promise<Daemon> {
   const args = ["-m", "interlock.sidecar", "--rules", rules, "--socket", path];
   if (options.receipts !== undefined) {
     args.push("--receipts", options.receipts);
+  }
+  if (options.scopeDocument !== undefined) {
+    args.push("--scope-document", options.scopeDocument);
+  }
+  if (options.keyFile !== undefined) {
+    args.push("--key-file", options.keyFile);
   }
   const child = spawn(python, args, {
     cwd: REPO_ROOT,

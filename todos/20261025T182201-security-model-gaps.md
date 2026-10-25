@@ -528,3 +528,30 @@ have no class seam; compatibility contract + import monitor shipped
     truncation refused (check and re-record), same-length rewrite refused,
     edited/unreadable anchor refused, wrong log refused, check without an
     anchor fails, a broken chain is never anchored, JSON output.
+
+## T21 — R29: let the clients pin the scope document
+
+**Status:** done (2026-10-25)
+
+The wire could carry a signed scope document, but no client set the field, so a
+remote client could not ask the daemon for a scoped decision it could name.
+
+- **Python `RemoteEngine` presents the document**
+  - status: done — `scope=` (the daemon's published `--scope-document` file) and
+    `scope_key=`; verified at construction by `wire.read_scope_envelope`, sent on
+    every request, `request_frame(..., scope=...)`.
+- **Node.js `RemoteEngine` presents the document**
+  - status: done — `scopeFile`/`scopeKey`/`scopeKeyFile`; `wire.readScopeEnvelope`
+    mirrors Python, and `node:fs` is required lazily so the ESM-hook preload
+    cannot cache the unpatched builtin.
+- **Prove the overlay is actually sent**
+  - status: done — a client pinning a different, well-signed envelope is refused
+    with `scope_mismatch` (a client that sent nothing would have been decided).
+- **Live smoke with the real client**
+  - status: done — `tests/test_sidecar_scopes.py` starts a daemon with
+    `--scope-document` + `--key-file` and compares `RemoteEngine` verdicts to an
+    in-process oracle; `js/test/scope.test.ts` does the Node half.
+- **Docs and roadmap**
+  - status: done — sidecar reference "Pinning the scope document from a client",
+    python-api options, js/README, scopes guide, ROADMAP R29 → `shipped`,
+    CHANGELOG.
