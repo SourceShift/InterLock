@@ -27,6 +27,12 @@ With **no approver installed, every escalation is blocked**. A deployment that
 ignores escalation behaves exactly as before. The refusal is `NotApproved`, a
 subclass of `Blocked`, so code that handles blocks already handles it.
 
+One exception: a community rule from the [mesh](mesh.md#grant-a-block) whose
+`block` its ceiling capped to an escalate (the operator has not granted it).
+With no approver installed, that escalation is recorded as a shadow finding
+(receipt `approval: shadow:no-approver`) and the call runs, so a community rule
+never blocks on its own.
+
 ## What an approval covers
 
 An approval is bound to one exact request:

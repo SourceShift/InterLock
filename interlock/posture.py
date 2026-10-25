@@ -315,5 +315,6 @@ def probe_sidecar(path: str, timeout: float = 2.0) -> Check:
 def _approver_check(approver: Any) -> Check:
     if approver is None:
         return Check("approval.approver", INFO,
-                     "no approver: every ESCALATE verdict is blocked")
+                     "no approver: every ESCALATE verdict is blocked, except a capped mesh "
+                     "rule's, which is recorded as a shadow finding")
     return Check("approval.approver", OK, "approver installed")

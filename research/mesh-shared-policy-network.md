@@ -54,9 +54,12 @@ flowchart LR
 ```
 
 An attack that one deployment's guard catches at 09:00 should be a policy
-every other deployment is running in monitor mode by 09:05 and enforcing, if it
-holds up, within a day. Nothing private leaves any deployment: the mesh carries
-*what fired*, never *what the agent said*.
+every other deployment is running in monitor mode by 09:05. It enforces on a
+deployment only after that deployment's monitor window and its operator's
+grant; until then a community `block` asks a human, or, where no approver is
+installed, is recorded as a shadow finding (decision R5 in
+[`mesh-decisions.md`](mesh-decisions.md)). Nothing private leaves any
+deployment: the mesh carries *what fired*, never *what the agent said*.
 
 ## 2. How this was researched
 
@@ -499,12 +502,16 @@ deployment-ring lesson:
 
 | Ring | Who | Receives | Default verdict ceiling |
 |---|---|---|---|
-| **canary** | maintainers' own deployments and volunteers | `experimental` and up, within minutes of merge | `escalate` |
-| **early** | contributing organisations (trusted community) | `test` and up | `escalate` / `modify` |
-| **stable** | everyone | `stable` only, after the early ring is clean | the pack's verdict, after the local monitor window |
+| **canary** | maintainers' own deployments and volunteers | `experimental` and up, within minutes of merge | `escalate` / `modify` |
+| **early** | contributing organisations (trusted community) | `test` and up | `modify` |
+| **stable** | everyone | `stable` only, after the early ring is clean | `modify`; the pack's verdict, after the local monitor window and an operator grant |
 
-An operator may raise or lower the ceiling per ring; the defaults are the
-safety story.
+The `modify` ceiling turns a community `block` into an `escalate` on every
+ring. An operator grants `block` per pack and status, or per rule, in the
+subscriber config; only granted rules carry the pack's own verdict. On a node
+with no approver installed, an ungranted rule's escalation is recorded as a
+shadow finding instead of being refused (decision R5). An operator may also
+raise or lower the ceiling per status; the defaults are the safety story.
 
 ### 7.3 Governance of the commons
 
@@ -621,7 +628,8 @@ a `falsepositives` note.
    need an open data licence and a rights-warranty from contributors.
 5. **Whether `block` ever ships through the mesh by default.** This document
    says no: `stable` rules carry the pack's verdict only after the local
-   monitor window. Operators can choose otherwise per ring.
+   monitor window. Operators can choose otherwise per ring. *(Decided in R5:
+   only after the window and an operator grant; see §7.2.)*
 
 ## 12. Papers and systems read
 

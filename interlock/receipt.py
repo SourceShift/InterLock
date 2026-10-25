@@ -63,7 +63,8 @@ empty, the same rule ``observed`` follows, so older chains verify unchanged:
   and ``observed`` says it was not enforced.
 - ``approval`` records how an escalation was settled: ``approved:once``,
   ``approved:session``, ``approved:ttl``, ``reused:session``, ``reused:ttl``,
-  ``declined``, ``no-approver`` or ``approver-error``.
+  ``declined``, ``no-approver``, ``approver-error``, or ``shadow:no-approver``
+  (a capped mesh rule with no approver installed: recorded, not enforced).
 - ``outcome`` and ``enforcer`` appear on ``phase="outcome"`` receipts, written
   when a tool that was allowed to run then failed: ``outcome`` is ``failed``
   and ``enforcer`` is ``os`` for a permission error from the operating system

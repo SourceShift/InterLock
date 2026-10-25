@@ -76,9 +76,13 @@ def settle(
         def current_epoch() -> Optional[str]:
             return epoch_of(get_engine() if is_global else engine, event)
 
+        # A declarative engine records what a capped mesh rule would have
+        # done when no approver is installed; any other engine has no
+        # recorder, and the escalation is refused as usual.
+        shadow = getattr(engine, "record_shadow", None)
         return settle_escalation(
             event, decision, epoch=epoch, current_epoch=current_epoch,
-            elapsed_us=elapsed_us,
+            elapsed_us=elapsed_us, shadow=shadow if callable(shadow) else None,
         )
     refused = Decision.block(
         "unhandled verdict {!r}, denied fail-closed".format(verdict),

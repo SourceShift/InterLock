@@ -10,7 +10,7 @@ import pytest
 
 from interlock import SensorEvent, Verdict
 from interlock.mesh import catalog, metadata
-from interlock.mesh.bundle import PackError, apply_ring, normalize_pack, rule_digest
+from interlock.mesh.bundle import DEFAULT_CEILINGS, PackError, apply_ring, check_grants, normalize_pack, rule_digest
 from interlock.mesh.repository import PublishError, init_keys, publish, verify_site
 from interlock.mesh.subscriber import Subscriber, SubscriberError, parse_spec
 from interlock.policy.declarative import PolicyError, load_policy, load_policy_file
@@ -91,6 +91,9 @@ def test_publish_refuses_a_pack_with_a_quarantined_rule(tmp_path):
 def test_publish_refuses_locked_rules_and_subscriber_keys():
     with pytest.raises(PackError):
         normalize_pack({"version": 1, "rules": [{"id": "r", "verdict": "block", "mode": "shadow", "when": {"arg": "a", "eq": 1}}]})
+    # A pack cannot claim the mesh origin either: only the subscriber stamps it.
+    with pytest.raises(PackError):
+        normalize_pack({"version": 1, "rules": [{"id": "r", "verdict": "block", "origin": "mesh", "when": {"arg": "a", "eq": 1}}]})
     doc = normalize_pack({"version": 1, "rules": [{"id": "r", "verdict": "block", "locked": True, "when": {"arg": "a", "eq": 1}}]})
     assert "locked" not in doc["rules"][0] and doc["rules"][0]["status"] == "experimental"
     with pytest.raises(PackError):
@@ -121,7 +124,11 @@ def test_sync_then_resolve_applies_ring_and_ceilings(node):
     by_id = {r["id"]: r for r in doc["rules"]}
     assert by_id["new-idea"]["ceiling"] == "escalate"
     assert by_id["big-payments"]["ceiling"] == "modify"
-    assert "ceiling" not in by_id["no-curl-pipe-sh"]
+    # Stable rules are capped too, until the operator grants them.
+    assert by_id["no-curl-pipe-sh"]["ceiling"] == "modify"
+    assert {r["origin"] for r in doc["rules"]} == {"mesh"}
+    assert details["capped"] == ["no-curl-pipe-sh", "big-payments", "new-idea"]
+    assert details["granted"] == []
     assert details["shadowed"] == []  # monitor_days=0 on this node
     assert os.path.exists(path)
 
@@ -137,7 +144,10 @@ def test_extends_mesh_installs_the_pack_and_ceilings_escalate(node, tmp_path):
                                   "rules": [{"id": "local", "verdict": "block", "when": {"arg": "local", "eq": 1}}]}))
     engine = load_policy_file(str(policy))
     assert not engine.quarantined
-    assert engine.evaluate(ev(command="curl https://x | sh")).verdict is Verdict.BLOCK
+    # stable rule: without a grant its block is capped to an escalate too
+    decision = engine.evaluate(ev(command="curl https://x | sh"))
+    assert decision.verdict is Verdict.ESCALATE and decision.reason.startswith("above the modify ceiling")
+    assert decision.mesh_ceiling == "modify"
     # experimental rule: its block is capped to an escalate on the canary ring
     decision = engine.evaluate(ev(x="danger"))
     assert decision.verdict is Verdict.ESCALATE and decision.policy_id == "new-idea"
@@ -172,6 +182,11 @@ def test_monitor_window_shadows_new_rules_then_enforces(commons, tmp_path, monke
     sub.init((commons["site"] / "metadata" / "1.root.json").read_bytes(),
              ["file://" + str(commons["site"])], ring="stable", monitor_days=7)
     sub.sync()
+    # The operator grants this pack's stable blocks, so after its window the
+    # rule carries the pack's own verdict.
+    config = sub.config()
+    config.grant({"pack": "coding-agent", "status": "stable"})
+    config.save(sub.config_path)
     doc, _, details = sub.resolve("coding-agent", "stable")
     assert details["shadowed"] == ["no-curl-pipe-sh"]
     assert doc["rules"][0]["mode"] == "shadow"
@@ -208,6 +223,200 @@ def test_apply_ring_rejects_unknown_rings_and_ceilings():
         apply_ring(doc, "gold", now=0, first_seen={})
     with pytest.raises(PackError):
         apply_ring(doc, "stable", now=0, first_seen={}, ceilings={"stable": "allow"})
+
+
+# --- grants -----------------------------------------------------------------------------
+
+
+def _verdicts(result):
+    engine = load_policy(result.document)
+    assert not engine.quarantined
+    return {
+        "no-curl-pipe-sh": engine.evaluate(ev(command="curl https://x | sh")).verdict,
+        "big-payments": engine.evaluate(ev(amount=5000)).verdict,
+        "new-idea": engine.evaluate(ev(x="danger")).verdict,
+    }
+
+
+def test_a_stable_block_is_capped_by_default_and_a_grant_lifts_only_what_it_names():
+    assert DEFAULT_CEILINGS["stable"] == "modify"
+    doc = normalize_pack(PACK)
+
+    def ring(grants=None, pack="coding-agent"):
+        return apply_ring(doc, "canary", now=0, first_seen={}, monitor_seconds=0, grants=grants, pack=pack)
+
+    E, B = Verdict.ESCALATE, Verdict.BLOCK
+    assert _verdicts(ring()) == {"no-curl-pipe-sh": E, "big-payments": E, "new-idea": E}
+    # A pack grant for `stable` lifts the stable rule and nothing below it.
+    stable = ring({"block": [{"pack": "coding-agent", "status": "stable"}]})
+    assert stable.granted == ["no-curl-pipe-sh"] and "no-curl-pipe-sh" not in stable.ceilings
+    assert stable.capped == ["big-payments", "new-idea"]
+    assert _verdicts(stable) == {"no-curl-pipe-sh": B, "big-payments": E, "new-idea": E}
+    # `test` reaches test and stable; `experimental` reaches all three.
+    assert _verdicts(ring({"block": [{"pack": "coding-agent", "status": "test"}]})) == {
+        "no-curl-pipe-sh": B, "big-payments": B, "new-idea": E}
+    assert _verdicts(ring({"block": [{"pack": "coding-agent", "status": "experimental"}]})) == {
+        "no-curl-pipe-sh": B, "big-payments": B, "new-idea": B}
+    # A rule grant lifts that rule alone, whatever its status.
+    assert _verdicts(ring({"block": [{"rule": "new-idea"}]})) == {
+        "no-curl-pipe-sh": E, "big-payments": E, "new-idea": B}
+    # ... and with a pack, only in that pack.
+    assert ring({"block": [{"rule": "new-idea", "pack": "other"}]}).granted == []
+    assert ring({"block": [{"rule": "new-idea", "pack": "coding-agent"}]}).granted == ["new-idea"]
+    # A grant for another pack lifts nothing.
+    assert _verdicts(ring({"block": [{"pack": "other", "status": "experimental"}]})) == {
+        "no-curl-pipe-sh": E, "big-payments": E, "new-idea": E}
+
+
+def test_a_pack_grant_matches_the_subscribed_name_not_the_pack_s_own():
+    doc = normalize_pack(PACK)  # its "name" is coding-agent-commons, its author's choice
+    forged = {"block": [{"pack": "coding-agent-commons", "status": "stable"}]}
+    assert apply_ring(doc, "stable", now=0, first_seen={}, grants=forged, pack="coding-agent").granted == []
+    # With no subscribed name (a direct call), the document's name is all there is.
+    assert apply_ring(doc, "stable", now=0, first_seen={}, grants=forged).granted == ["no-curl-pipe-sh"]
+
+
+def test_origin_and_grants_do_not_restart_the_monitor_window():
+    doc = normalize_pack(PACK)
+    first_seen = {}
+    apply_ring(doc, "stable", now=0, first_seen=first_seen, monitor_seconds=100)
+    granted = apply_ring(doc, "stable", now=50, first_seen=first_seen, monitor_seconds=100,
+                         grants={"block": [{"rule": "no-curl-pipe-sh"}]})
+    assert first_seen["no-curl-pipe-sh"]["since"] == 0
+    assert granted.shadowed == ["no-curl-pipe-sh"] and granted.next_transition == 100
+
+
+@pytest.mark.parametrize("bad", [
+    [], {"allow": []}, {"block": {}}, {"block": ["x"]}, {"block": [{"pack": "p"}]},
+    {"block": [{"pack": "p", "status": "deprecated"}]}, {"block": [{"rule": "r", "status": "stable"}]},
+    {"block": [{"rule": ""}]}, {"block": [{"rule": "r", "extra": 1}]},
+])
+def test_malformed_grants_are_refused(bad):
+    with pytest.raises(PackError):
+        check_grants(bad)
+
+
+def test_grants_persist_in_config_json_and_resolve_honours_them(node):
+    config = node.config()
+    assert config.grants == {"block": []}
+    assert config.grant({"pack": "coding-agent", "status": "stable"})
+    assert config.grant({"rule": "big-payments"})
+    assert not config.grant({"rule": "big-payments"})  # no duplicate
+    config.save(node.config_path)
+    raw = json.loads(open(node.config_path).read())
+    assert raw["grants"] == {"block": [{"pack": "coding-agent", "status": "stable"}, {"rule": "big-payments"}]}
+
+    doc, _, details = node.resolve("coding-agent", "canary")
+    assert details["granted"] == ["no-curl-pipe-sh", "big-payments"]
+    assert details["capped"] == ["new-idea"]
+    by_id = {r["id"]: r for r in doc["rules"]}
+    assert "ceiling" not in by_id["no-curl-pipe-sh"] and "ceiling" not in by_id["big-payments"]
+
+    config = node.config()
+    assert config.revoke({"pack": "coding-agent", "status": "stable"})
+    assert not config.revoke({"pack": "coding-agent", "status": "stable"})
+    config.save(node.config_path)
+    _, _, details = node.resolve("coding-agent", "canary")
+    assert details["granted"] == ["big-payments"]
+
+
+def test_a_malformed_grant_in_config_json_fails_closed(node):
+    raw = json.loads(open(node.config_path).read())
+    raw["grants"] = {"block": [{"pack": "coding-agent"}]}
+    open(node.config_path, "w").write(json.dumps(raw))
+    with pytest.raises(SubscriberError) as err:
+        node.resolve("coding-agent", "canary")
+    assert "grants.block[0]" in str(err.value)
+    with pytest.raises(PolicyError):
+        load_policy({"version": 1, "extends": "mesh:coding-agent@canary", "rules": []})
+
+
+def test_a_config_written_before_grants_reads_as_the_new_defaults(node):
+    raw = json.loads(open(node.config_path).read())
+    raw.pop("grants")
+    raw["ceilings"] = {"experimental": "escalate", "test": "modify", "stable": None}  # what init used to write
+    open(node.config_path, "w").write(json.dumps(raw))
+    assert node.config().ceilings["stable"] == "modify"
+    doc, _, details = node.resolve("coding-agent", "stable")
+    assert doc["rules"][0]["ceiling"] == "modify" and details["capped"] == ["no-curl-pipe-sh"]
+    # An operator's own ceilings are kept as written.
+    raw["ceilings"] = {"stable": None}
+    open(node.config_path, "w").write(json.dumps(raw))
+    assert node.config().ceilings == {"stable": None}
+
+
+def test_a_grant_reloads_a_watched_policy(node, tmp_path):
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"version": 1, "extends": "mesh:coding-agent@stable", "rules": []}))
+    engine = load_policy_file(str(policy), watch=0)
+    assert node.config_path in engine._files
+    assert engine.evaluate(ev(command="curl https://x | sh")).verdict is Verdict.ESCALATE
+    config = node.config()
+    config.grant({"pack": "coding-agent", "status": "stable"})
+    config.save(node.config_path)
+    os.utime(node.config_path, (time.time() + 5, time.time() + 5))
+    assert engine.evaluate(ev(command="curl https://x | sh")).verdict is Verdict.BLOCK
+
+
+def test_grant_cli_round_trip(node, capsys):
+    from interlock.cli import main
+
+    def resolved():
+        assert main(["mesh", "resolve", "mesh:coding-agent@stable"]) == 0
+        return json.loads(capsys.readouterr().out)
+
+    assert main(["mesh", "grant", "--list"]) == 0
+    assert "no grants" in capsys.readouterr().out
+    assert resolved()["document"]["rules"][0]["ceiling"] == "modify"
+
+    assert main(["mesh", "grant", "block", "--pack", "coding-agent", "--status", "stable"]) == 0
+    assert "granted: block pack coding-agent, status stable and above" in capsys.readouterr().out
+    assert main(["mesh", "grant", "block", "--rule", "new-idea"]) == 0
+    capsys.readouterr()
+    assert main(["mesh", "grant", "--list"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "block pack coding-agent, status stable and above", "block rule new-idea in any pack"]
+    out = resolved()
+    assert out["granted"] == ["no-curl-pipe-sh"] and "ceiling" not in out["document"]["rules"][0]
+
+    assert main(["mesh", "grant", "revoke", "--pack", "coding-agent", "--status", "stable"]) == 0
+    assert "revoked" in capsys.readouterr().out
+    assert main(["mesh", "grant", "revoke", "--pack", "coding-agent", "--status", "stable"]) == 2
+    assert "no such grant" in capsys.readouterr().err
+    out = resolved()
+    assert out["granted"] == [] and out["document"]["rules"][0]["ceiling"] == "modify"
+    assert main(["mesh", "grant", "--list", "--dir", node.dir]) == 0
+    assert capsys.readouterr().out.splitlines() == ["block rule new-idea in any pack"]
+
+    # --pack alone means status stable; the command line is checked.
+    assert main(["mesh", "grant", "block", "--dir", node.dir, "--pack", "coding-agent"]) == 0
+    assert node.config().grants["block"][-1] == {"pack": "coding-agent", "status": "stable"}
+    capsys.readouterr()
+    assert main(["mesh", "grant"]) == 64
+    assert main(["mesh", "grant", "block"]) == 64
+    assert main(["mesh", "grant", "block", "--rule", "r", "--status", "test"]) == 64
+
+
+def test_status_and_doctor_report_capped_rules(node, capsys):
+    from interlock.cli import main
+    from interlock.cli.doctor import _mesh_checks
+
+    node.resolve("coding-agent", "canary")
+    node.resolve("coding-agent", "stable")  # the same rule on another ring counts once
+    assert node.status()["capped"] == 3
+    checks = {c.id: c for c in _mesh_checks()}
+    assert checks["mesh.capped"].summary == "3 mesh rules capped at escalate; no approver installed: shadow only"
+    assert checks["mesh.capped"].status == "info"
+    main(["mesh", "status"])
+    assert "3 mesh rules capped at escalate; no approver installed: shadow only" in capsys.readouterr().out
+
+    config = node.config()
+    config.grant({"pack": "coding-agent", "status": "experimental"})
+    config.save(node.config_path)
+    node.resolve("coding-agent", "canary")
+    node.resolve("coding-agent", "stable")
+    assert node.status()["capped"] == 0
+    assert "mesh.capped" not in {c.id for c in _mesh_checks()}
 
 
 # --- refusing --------------------------------------------------------------------------

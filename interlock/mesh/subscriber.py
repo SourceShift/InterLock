@@ -4,11 +4,11 @@ A node keeps everything under one directory (``~/.interlock/mesh`` or
 ``$INTERLOCK_MESH_DIR``)::
 
     root.json        the pinned root the operator trusted, obtained out of band
-    config.json      mirrors, ring, monitor window, ceilings
+    config.json      mirrors, ring, monitor window, ceilings, grants
     metadata/        every metadata document the node verified and now trusts
     targets/         verified pack bytes, content-addressed
     state.json       when each rule was first seen (the monitor window), last sync
-    shadow.jsonl     what shadow-mode rules would have decided
+    shadow.jsonl     what shadow-mode rules, and capped rules with no approver, would have decided
 
 ``sync`` talks to the network; nothing else does. The policy loader resolves
 ``"extends": "mesh:<pack>@<ring>"`` from the verified cache alone, so a policy
@@ -34,7 +34,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import default_mesh_dir, metadata
 from ._util import atomic_write, iso, load_json, read_bounded
-from .bundle import DEFAULT_CEILINGS, DEFAULT_MONITOR_SECONDS, RINGS, PackError, apply_ring, normalize_pack
+from .bundle import (DEFAULT_CEILINGS, DEFAULT_MONITOR_SECONDS, RINGS, PackError, apply_ring, check_grants,
+                     normalize_pack)
 from .metadata import MetadataError, TrustedMetadata
 
 __all__ = ["Subscriber", "SubscriberError", "Fetcher", "Config", "parse_spec", "resolve_extends",
@@ -52,6 +53,12 @@ STATE_MAX = 16 * 1024 * 1024
 SHADOW_ROTATE_BYTES = 20 * 1024 * 1024
 FETCH_TIMEOUT = 10.0
 _state_lock = threading.Lock()
+
+#: The ceilings ``init`` wrote into every config before a stable block needed
+#: a grant. No operator chose them, so a config that still holds exactly this
+#: map reads as the current defaults; an operator who wants a pack's blocks
+#: grants them.
+_LEGACY_CEILINGS = {"experimental": "escalate", "test": "modify", "stable": None}
 
 
 class SubscriberError(Exception):
@@ -81,7 +88,8 @@ class Config:
                  monitor_days: float = DEFAULT_MONITOR_SECONDS / 86400,
                  ceilings: Optional[Dict[str, Optional[str]]] = None,
                  max_bundle_bytes: int = 1024 * 1024, refresh_seconds: int = 3600,
-                 recorder: Optional[Dict[str, Any]] = None) -> None:
+                 recorder: Optional[Dict[str, Any]] = None,
+                 grants: Optional[Dict[str, Any]] = None) -> None:
         self.mirrors = [m.rstrip("/") for m in mirrors]
         self.ring = ring
         self.monitor_days = float(monitor_days)
@@ -92,12 +100,31 @@ class Config:
         self.recorder: Dict[str, Any] = {"enabled": False, "alpha": 1.5, "sample_rules": []}
         if recorder:
             self.recorder.update({k: recorder[k] for k in ("enabled", "alpha", "sample_rules") if k in recorder})
+        # What the operator lets carry the pack's own verdict (decision R5):
+        # without a grant, a community block is capped to an escalate.
+        self.grants: Dict[str, List[Dict[str, str]]] = check_grants(grants)
 
     def to_dict(self) -> Dict[str, Any]:
         return {"version": 1, "mirrors": list(self.mirrors), "ring": self.ring,
                 "monitor_days": self.monitor_days, "ceilings": self.ceilings,
                 "max_bundle_bytes": self.max_bundle_bytes, "refresh_seconds": self.refresh_seconds,
-                "recorder": dict(self.recorder)}
+                "recorder": dict(self.recorder), "grants": check_grants(self.grants)}
+
+    def grant(self, entry: Dict[str, str]) -> bool:
+        """Add one ``block`` grant; False when an identical one is already there."""
+        (entry,) = check_grants({"block": [entry]})["block"]
+        if entry in self.grants["block"]:
+            return False
+        self.grants["block"].append(entry)
+        return True
+
+    def revoke(self, entry: Dict[str, str]) -> bool:
+        """Remove the ``block`` grant equal to ``entry``; False when none is."""
+        (entry,) = check_grants({"block": [entry]})["block"]
+        if entry not in self.grants["block"]:
+            return False
+        self.grants["block"] = [g for g in self.grants["block"] if g != entry]
+        return True
 
     def save(self, path: str) -> None:
         atomic_write(path, json.dumps(self.to_dict(), indent=1, sort_keys=True).encode("utf-8"), mode=0o600)
@@ -110,11 +137,19 @@ class Config:
         ring = raw.get("ring", DEFAULT_RING)
         if ring not in RINGS:
             raise SubscriberError("{}: unknown ring {!r}".format(path, ring))
+        ceilings = raw.get("ceilings")
+        if ceilings == _LEGACY_CEILINGS:
+            ceilings = None
+        try:
+            grants = check_grants(raw.get("grants"))
+        except PackError as exc:
+            raise SubscriberError("{}: {}".format(path, exc))
         return cls(mirrors=raw.get("mirrors", []), ring=ring,
                    monitor_days=raw.get("monitor_days", DEFAULT_MONITOR_SECONDS / 86400),
-                   ceilings=raw.get("ceilings"), max_bundle_bytes=raw.get("max_bundle_bytes", 1024 * 1024),
+                   ceilings=ceilings, max_bundle_bytes=raw.get("max_bundle_bytes", 1024 * 1024),
                    refresh_seconds=raw.get("refresh_seconds", 3600),
-                   recorder=raw.get("recorder") if isinstance(raw.get("recorder"), dict) else None)
+                   recorder=raw.get("recorder") if isinstance(raw.get("recorder"), dict) else None,
+                   grants=grants)
 
 
 class Fetcher:
@@ -449,9 +484,10 @@ class Subscriber:
         """The installable document for ``pack`` on ``ring``, from the cache only.
 
         Returns ``(document, cache_path, info)``; ``info`` has the rules dropped
-        by the ring, the shadowed ones, the ceilings applied and the next
-        shadow-to-enforce transition. Raises :class:`SubscriberError` when the
-        pack is not in the verified cache.
+        by the ring, the shadowed ones, the ceilings applied, the rules a grant
+        lifted (``granted``) and the ones capped to an escalate (``capped``),
+        and the next shadow-to-enforce transition. Raises
+        :class:`SubscriberError` when the pack is not in the verified cache.
         """
         config = self.config()
         ring = ring or config.ring
@@ -478,10 +514,14 @@ class Subscriber:
         with _state_lock:
             state = self._load_state()
             first_seen = state["first_seen"].setdefault(spec, {})
-            result = apply_ring(doc, ring, now=self._now(), first_seen=first_seen,
-                                monitor_seconds=config.monitor_days * 86400,
-                                ceilings=config.ceilings, source=spec)
-            state["subscriptions"][spec] = {"sha256": info.sha256, "resolved_at": self._now()}
+            try:
+                result = apply_ring(doc, ring, now=self._now(), first_seen=first_seen,
+                                    monitor_seconds=config.monitor_days * 86400,
+                                    ceilings=config.ceilings, source=spec, grants=config.grants, pack=pack)
+            except PackError as exc:
+                raise SubscriberError("{}: {}".format(self.config_path, exc))
+            state["subscriptions"][spec] = {"sha256": info.sha256, "resolved_at": self._now(),
+                                            "granted": result.granted, "capped": result.capped}
             if result.next_transition is None:
                 state["next_transition"].pop(spec, None)
             else:
@@ -489,6 +529,7 @@ class Subscriber:
             self._save_state(state)
         details = {"dropped": result.dropped, "shadowed": result.shadowed,
                    "ceilings": result.ceilings, "next_transition": result.next_transition,
+                   "granted": result.granted, "capped": result.capped,
                    "sha256": info.sha256, "spec": spec}
         return result.document, local, details
 
@@ -542,7 +583,8 @@ class Subscriber:
                     "next_transition": state.get("next_transition", {}),
                     "split_views": state.get("split_views", []),
                     "log": self._saved_checkpoint(),
-                    "recorder": config.recorder})
+                    "recorder": config.recorder, "grants": config.grants,
+                    "capped": _count_capped(state.get("subscriptions", {}))})
         try:
             trusted = self._trusted(allow_expired=True)
             expires = trusted.expires("timestamp")
@@ -554,6 +596,16 @@ class Subscriber:
             out["cache_error"] = str(exc)
         out["shadow"] = self.shadow_summary()
         return out
+
+
+def _count_capped(subscriptions: Dict[str, Any]) -> int:
+    """Distinct pack rules the last resolve capped to an escalate. A pack
+    resolved on two rings counts each rule once."""
+    capped = set()
+    for spec, sub in subscriptions.items():
+        if isinstance(sub, dict) and isinstance(sub.get("capped"), list):
+            capped.update((spec.partition("@")[0], str(rule_id)) for rule_id in sub["capped"])
+    return len(capped)
 
 
 # --- the policy loader's entry points ------------------------------------------------
@@ -604,8 +656,9 @@ def install_recorder(mesh_dir: Optional[str] = None) -> Optional[Any]:
 
 def watch_info(specs: Sequence[str], mesh_dir: Optional[str] = None) -> Tuple[List[str], Optional[float], Callable[[Dict[str, Any]], None]]:
     """For a policy that resolved ``specs``: the files whose change should
-    trigger a reload, the wall-clock time the next shadow rule leaves its
-    window, and the shadow sink to record would-be decisions with."""
+    trigger a reload (``config.json`` too, so a new grant takes effect), the
+    wall-clock time the next shadow rule leaves its window, and the shadow sink
+    to record would-be decisions with."""
     subscriber = Subscriber(mesh_dir)
     state = subscriber._load_state()
     reload_at: Optional[float] = None
@@ -613,4 +666,5 @@ def watch_info(specs: Sequence[str], mesh_dir: Optional[str] = None) -> Tuple[Li
         value = state.get("next_transition", {}).get(spec)
         if isinstance(value, (int, float)):
             reload_at = float(value) if reload_at is None else min(reload_at, float(value))
-    return [subscriber.targets_metadata_path, subscriber.state_path], reload_at, subscriber.shadow_sink
+    files = [subscriber.targets_metadata_path, subscriber.state_path, subscriber.config_path]
+    return files, reload_at, subscriber.shadow_sink

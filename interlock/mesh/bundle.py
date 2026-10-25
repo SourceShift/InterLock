@@ -14,15 +14,21 @@ says how much the community trusts it yet.
 A subscriber is on a **ring** and the ring decides two things: which statuses
 it installs at all, and the strongest verdict a rule of each status may carry
 (its **ceiling**). A decision above the ceiling becomes an ``escalate``, which
-asks a human instead of acting. The defaults follow the design document:
+asks a human instead of acting. The defaults follow decision R5 in
+``research/mesh-decisions.md``: no community rule blocks on its own.
 
-=========  ===========================  =========================================
+=========  ===========================  ==================================================
 ring       installs                     default ceiling by status
-=========  ===========================  =========================================
-canary     experimental, test, stable   experimental → escalate · test → modify
-early      test, stable                 test → modify
-stable     stable                       none: the pack's own verdict
-=========  ===========================  =========================================
+=========  ===========================  ==================================================
+canary     experimental, test, stable   experimental → escalate · test, stable → modify
+early      test, stable                 test, stable → modify
+stable     stable                       stable → modify
+=========  ===========================  ==================================================
+
+A ``modify`` ceiling leaves a pack's rewrites alone and turns its blocks into
+escalations. A **grant** from the operator (``config.json``, ``interlock mesh
+grant``) lifts the ceiling to the pack's own verdict, for one rule or for a pack
+at and above a status.
 
 On top of the ceiling, every rule that is new to this node (or whose logic
 changed) spends a **monitor window** in shadow mode: it is evaluated and its
@@ -44,6 +50,7 @@ from ._util import canonical
 __all__ = [
     "STATUSES", "RINGS", "DEFAULT_CEILINGS", "VERDICT_RANK", "DEFAULT_MONITOR_SECONDS",
     "PackError", "normalize_pack", "rule_digest", "pack_summary", "apply_ring", "RingResult",
+    "GRANT_STATUSES", "check_grants", "grant_matches",
 ]
 
 STATUSES = ("experimental", "test", "stable", "deprecated")
@@ -55,15 +62,19 @@ RINGS: Dict[str, Tuple[str, ...]] = {
 DEFAULT_CEILINGS: Dict[str, Optional[str]] = {
     "experimental": "escalate",
     "test": "modify",
-    "stable": None,
+    "stable": "modify",
 }
 VERDICT_RANK = {"escalate": 1, "modify": 2, "block": 3}
 DEFAULT_MONITOR_SECONDS = 7 * 86400
 
+#: How far a grant for a status reaches: a grant for ``test`` covers ``test``
+#: and ``stable`` rules. ``deprecated`` rules are never installed, so never granted.
+GRANT_STATUSES: Dict[str, int] = {"experimental": 0, "test": 1, "stable": 2}
+
 #: Keys the subscriber sets on a rule when applying a ring; a pack author may
 #: not set them, so a pack cannot pre-empt the node's own safety settings.
-_SUBSCRIBER_KEYS = ("mode", "ceiling")
-_IGNORED_FOR_DIGEST = ("status", "mode", "ceiling", "description", "locked")
+_SUBSCRIBER_KEYS = ("mode", "ceiling", "origin")
+_IGNORED_FOR_DIGEST = ("status", "mode", "ceiling", "origin", "description", "locked")
 
 
 class PackError(ValueError):
@@ -136,35 +147,99 @@ def pack_summary(doc: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def check_grants(grants: Any) -> Dict[str, List[Dict[str, str]]]:
+    """Validate an operator's grants and return a normalised copy.
+
+    The shape is ``{"block": [entry, ...]}`` where an entry is either
+    ``{"pack": NAME, "status": STATUS}`` (that pack's rules at or above
+    ``STATUS``) or ``{"rule": ID}``, optionally with ``"pack"`` to keep the
+    grant to one pack's rule of that id. Anything else is refused rather than
+    read as "no grant", so a typo is seen.
+    """
+    if grants is None:
+        return {"block": []}
+    if not isinstance(grants, Mapping):
+        raise PackError("grants must be an object like {\"block\": [...]}")
+    unknown = sorted(set(grants) - {"block"})
+    if unknown:
+        raise PackError("unknown grant kind(s) {}; only 'block' is granted".format(", ".join(unknown)))
+    entries = grants.get("block", [])
+    if not isinstance(entries, list):
+        raise PackError("grants.block must be a list")
+    out: List[Dict[str, str]] = []
+    for index, entry in enumerate(entries):
+        where = "grants.block[{}]".format(index)
+        if not isinstance(entry, Mapping) or set(entry) - {"pack", "status", "rule"}:
+            raise PackError("{} must be {{pack, status}} or {{rule[, pack]}}".format(where))
+        for key in ("pack", "rule"):
+            if key in entry and (not isinstance(entry[key], str) or not entry[key]):
+                raise PackError("{}.{} must be a non-empty string".format(where, key))
+        if "rule" in entry:
+            if "status" in entry:
+                raise PackError("{} grants one rule; it takes no status".format(where))
+        elif "pack" not in entry or entry.get("status") not in GRANT_STATUSES:
+            raise PackError("{} needs a pack and a status ({})".format(where, ", ".join(GRANT_STATUSES)))
+        out.append({k: str(v) for k, v in sorted(entry.items())})
+    return {"block": out}
+
+
+def grant_matches(grants: Mapping[str, Any], *, pack: Optional[str], rule_id: str, status: str) -> bool:
+    """Whether a (checked) grant lifts the ceiling of this rule.
+
+    ``pack`` is the name the node subscribed to (``mesh:<pack>``), not the
+    pack document's own ``name``, which its author chose.
+    """
+    rank = GRANT_STATUSES.get(status)
+    for entry in grants.get("block", ()):
+        if "rule" in entry:
+            if entry["rule"] == rule_id and entry.get("pack") in (None, pack):
+                return True
+        elif entry["pack"] == pack and rank is not None and rank >= GRANT_STATUSES[entry["status"]]:
+            return True
+    return False
+
+
 class RingResult:
     """What :func:`apply_ring` produced: the installable document, the rules it
-    dropped and why, and when the next shadow rule leaves its window."""
+    dropped and why, when the next shadow rule leaves its window, the rules a
+    grant lifted, and the rules whose verdict the ceiling caps to an escalate."""
 
     def __init__(self, document: Dict[str, Any], dropped: List[Tuple[str, str]],
                  shadowed: List[str], ceilings: Dict[str, str],
-                 next_transition: Optional[float]) -> None:
+                 next_transition: Optional[float], *, granted: Optional[List[str]] = None,
+                 capped: Optional[List[str]] = None) -> None:
         self.document = document
         self.dropped = dropped
         self.shadowed = shadowed
         self.ceilings = ceilings
         self.next_transition = next_transition
+        self.granted = list(granted or [])
+        self.capped = list(capped or [])
 
 
 def apply_ring(doc: Mapping[str, Any], ring: str, *, now: float,
                first_seen: MutableMapping[str, Any],
                monitor_seconds: float = DEFAULT_MONITOR_SECONDS,
                ceilings: Optional[Mapping[str, Optional[str]]] = None,
-               source: str = "mesh") -> RingResult:
+               source: str = "mesh", grants: Optional[Mapping[str, Any]] = None,
+               pack: Optional[str] = None) -> RingResult:
     """Turn a published pack into the document this node installs.
 
     ``first_seen`` maps a rule id to ``{"digest": ..., "since": ts}`` and is
     updated in place: it is the node's memory of when it first saw each rule's
     current logic, and it must persist between loads for the monitor window to
     mean anything.
+
+    ``grants`` (see :func:`check_grants`) lifts the ceiling of the rules it
+    matches to the pack's own verdict. Pack grants match ``pack``, the name the
+    node subscribed to; without one they match the document's ``name``. Every
+    installed rule is marked ``"origin": "mesh"``.
     """
     if ring not in RINGS:
         raise PackError("unknown ring {!r}; use one of {}".format(ring, ", ".join(RINGS)))
     allowed = RINGS[ring]
+    granting = check_grants(grants)
+    pack_name = pack if pack is not None else doc.get("name")
     ceiling_by_status: Dict[str, Optional[str]] = dict(DEFAULT_CEILINGS)
     if ceilings:
         for status, ceiling in ceilings.items():
@@ -178,6 +253,8 @@ def apply_ring(doc: Mapping[str, Any], ring: str, *, now: float,
     out["rules"] = []
     dropped: List[Tuple[str, str]] = []
     shadowed: List[str] = []
+    granted: List[str] = []
+    capped: List[str] = []
     applied_ceilings: Dict[str, str] = {}
     next_transition: Optional[float] = None
     for rule in doc.get("rules", []):
@@ -191,12 +268,21 @@ def apply_ring(doc: Mapping[str, Any], ring: str, *, now: float,
             dropped.append((rule_id, "status {} is below the {} ring".format(status, ring)))
             continue
         rule.pop("locked", None)
-        rule.pop("mode", None)
-        rule.pop("ceiling", None)
+        for key in _SUBSCRIBER_KEYS:
+            rule.pop(key, None)
         ceiling = ceiling_by_status.get(status)
+        if grant_matches(granting, pack=pack_name, rule_id=rule_id, status=status):
+            granted.append(rule_id)
+            ceiling = None
         if ceiling is not None:
             rule["ceiling"] = ceiling
             applied_ceilings[rule_id] = ceiling
+            limit = VERDICT_RANK[ceiling]
+            # A detector may return any verdict, so any ceiling below block can bite it.
+            if VERDICT_RANK.get(rule.get("verdict"), 0) > limit or (
+                    "detector" in rule and limit < VERDICT_RANK["block"]):
+                capped.append(rule_id)
+        rule["origin"] = "mesh"
         digest = rule_digest(rule)
         memory = first_seen.get(rule_id)
         if not isinstance(memory, dict) or memory.get("digest") != digest:
@@ -210,4 +296,5 @@ def apply_ring(doc: Mapping[str, Any], ring: str, *, now: float,
             next_transition = until if next_transition is None else min(next_transition, until)
         out["rules"].append(rule)
     out.setdefault("name", source)
-    return RingResult(out, dropped, shadowed, applied_ceilings, next_transition)
+    return RingResult(out, dropped, shadowed, applied_ceilings, next_transition,
+                      granted=granted, capped=capped)

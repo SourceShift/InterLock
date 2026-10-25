@@ -16,7 +16,10 @@ class Verdict(IntEnum):
     ESCALATE the action is legal but a human must decide: it runs only if an
              approver approves this exact call. With no approver installed it
              is blocked - never allowed - so a deployment that ignores
-             escalation keeps today's behaviour.
+             escalation keeps today's behaviour. The one exception is a
+             community (mesh) rule whose block its ceiling capped
+             (``Decision.mesh_ceiling``): with no one to ask, that escalation
+             is recorded as a shadow finding and the call proceeds.
     """
 
     ALLOW = 0
@@ -42,6 +45,10 @@ class Decision:
     # What a masking rewrite masked: entity name -> count. Names and counts
     # only, never values; copied into the receipt and summed by reports.
     masked: Optional[Dict[str, int]] = None
+    # On an ESCALATE: the ceiling that capped a mesh rule's stronger verdict
+    # (an ungranted community block). Set only by the declarative loader; with
+    # no approver installed such an escalation is recorded, not refused.
+    mesh_ceiling: Optional[str] = None
 
     @classmethod
     def allow(cls, reason: str = "", policy_id: Optional[str] = None) -> "Decision":

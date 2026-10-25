@@ -338,6 +338,9 @@ interlock mesh init --root root.json --mirror https://commons.example.org [--rin
 interlock mesh sync                       # fetch and verify; the cache only changes if all of it verifies
 interlock mesh status [--json]            # subscriptions, freshness, what shadow rules would have done
 interlock mesh resolve mesh:coding-agent@stable   # print the pack as this node would install it
+interlock mesh grant block --pack coding-agent --status stable   # let this pack's stable blocks block
+interlock mesh grant block --rule no-curl-pipe-sh                # or one rule (add --pack to keep it to one pack)
+interlock mesh grant --list               # the grants in force; `grant revoke ...` takes one back
 ```
 
 Then in your policy file:  {"version": 1, "extends": "mesh:coding-agent@stable", "rules": [...]}
@@ -352,11 +355,14 @@ interlock mesh verify site/               # walk the site exactly as a subscribe
 
 A node never auto-enforces a new community rule: every rule it has not seen
 before spends a monitor window in shadow mode, and a rule's status and the
-node's ring cap how strong its verdict may be. See docs/guides/mesh.md.
+node's ring cap how strong its verdict may be. No community rule blocks until
+the operator grants it: without a grant a block is capped to an escalate, and
+on a node with no approver installed that escalation is only recorded as a
+shadow finding. See docs/guides/mesh.md.
 
 Exit codes: 0 ok, 1 the mesh is stale or a shadow summary shows findings
-(status), 2 verification or publishing failed, 3 a file could not be read,
-64 the command line was wrong.
+(status), 2 verification or publishing failed or a grant could not be
+changed, 3 a file could not be read, 64 the command line was wrong.
 
 ```text
 usage: interlock mesh [-h] ACTION ...
@@ -365,6 +371,7 @@ usage: interlock mesh init [-h] --root FILE [--mirror URL] [--ring {canary,early
 usage: interlock mesh sync [-h] [--dir DIR] [--json]
 usage: interlock mesh status [-h] [--dir DIR] [--json]
 usage: interlock mesh resolve [-h] [--dir DIR] spec
+usage: interlock mesh grant [-h] [--list] [--dir DIR] ACTION ...
 usage: interlock mesh keys [-h] ACTION ...
 usage: interlock mesh publish [-h] --source DIR --out DIR --keys DIR [--timestamp-days DAYS]
                               [--no-validate] [--json]

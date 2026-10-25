@@ -107,14 +107,16 @@ OPERATORS: FrozenSet[str] = frozenset(
 )
 VERDICTS: FrozenSet[str] = frozenset({"block", "escalate", "modify"})
 #: Mesh facts a rule may carry (see ``interlock.mesh.bundle``): how far the
-#: community trusts it, whether this node only observes it, and the strongest
-#: verdict it may carry here. A decision above the ceiling becomes an escalate.
+#: community trusts it, whether this node only observes it, the strongest
+#: verdict it may carry here, and that it came from the mesh. A decision above
+#: the ceiling becomes an escalate.
 RULE_STATUSES: FrozenSet[str] = frozenset({"experimental", "test", "stable", "deprecated"})
 RULE_MODES: FrozenSet[str] = frozenset({"enforce", "shadow"})
 RULE_CEILINGS: Dict[str, int] = {"escalate": 1, "modify": 2, "block": 3}
+RULE_ORIGINS: FrozenSet[str] = frozenset({"mesh"})
 _RULE_KEYS = frozenset(
     {"id", "verdict", "reason", "when", "set", "locked", "phase", "detector", "with",
-     "widenable", "description", "on", "status", "mode", "ceiling"}
+     "widenable", "description", "on", "status", "mode", "ceiling", "origin"}
 )
 _DOC_KEYS = frozenset({"version", "name", "description", "extends", "rules", "disable", "tools",
                        "channel"})
@@ -331,27 +333,41 @@ class DeclarativeEngine(PolicyEngine):
                 continue
             if would is None or would.verdict == Verdict.ALLOW:
                 continue
-            policy_id = would.policy_id or getattr(rule, "policy_id", "?")
-            verdict = would.verdict.name
-            key = (str(policy_id), verdict)
-            self.shadow_counts[key] = self.shadow_counts.get(key, 0) + 1
-            _log.info("interlock: shadow rule %s would %s action=%s reason=%s",
-                      policy_id, verdict, event.action, would.reason)
+            self.record_shadow(event, would, policy_id=would.policy_id or getattr(rule, "policy_id", "?"))
+
+    def record_shadow(self, event: SensorEvent, would: Decision, *, policy_id: Optional[str] = None,
+                      approval: Optional[str] = None) -> None:
+        """Record a decision that was observed and decided nothing: count it,
+        log it, meter it as observed and hand it to ``shadow_sink``.
+
+        Shadow rules land here, and so does an escalation from a capped mesh
+        rule that no approver was installed to decide (``approval`` says so);
+        :func:`interlock.approval.settle_escalation` calls this. Never raises.
+        """
+        policy_id = policy_id or would.policy_id or "?"
+        verdict = would.verdict.name
+        key = (str(policy_id), verdict)
+        self.shadow_counts[key] = self.shadow_counts.get(key, 0) + 1
+        _log.info("interlock: shadow rule %s would %s action=%s reason=%s",
+                  policy_id, verdict, event.action, would.reason)
+        try:
+            from .. import metrics
+            metrics.record(verdict, getattr(event, "phase", "call"), str(policy_id), observed=True)
+        except Exception:
+            pass
+        if self.shadow_sink is not None:
             try:
-                from .. import metrics
-                metrics.record(verdict, getattr(event, "phase", "call"), str(policy_id), observed=True)
-            except Exception:
-                pass
-            if self.shadow_sink is not None:
-                try:
-                    from ..receipt import digest_args
-                    self.shadow_sink({
-                        "ts": time.time(), "action": event.action, "phase": getattr(event, "phase", "call"),
-                        "policy_id": policy_id, "verdict": verdict, "reason": would.reason,
-                        "args_digest": digest_args(event.args), "principal": event.principal,
-                    })
-                except Exception as exc:
-                    _log.warning("interlock: shadow sink failed: %s", exc)
+                from ..receipt import digest_args
+                record = {
+                    "ts": time.time(), "action": event.action, "phase": getattr(event, "phase", "call"),
+                    "policy_id": policy_id, "verdict": verdict, "reason": would.reason,
+                    "args_digest": digest_args(event.args), "principal": event.principal,
+                }
+                if approval:
+                    record["approval"] = approval
+                self.shadow_sink(record)
+            except Exception as exc:
+                _log.warning("interlock: shadow sink failed: %s", exc)
 
 
 def _stamps(files: Sequence[str]) -> Tuple[Tuple[str, float, int], ...]:
@@ -756,6 +772,9 @@ def _compile_rule(raw: Any, where: str) -> _Compiled:
     ceiling = raw.get("ceiling")
     if ceiling is not None and ceiling not in RULE_CEILINGS:
         raise PolicyError("'ceiling' must be one of {}".format(", ".join(sorted(RULE_CEILINGS))), where)
+    origin = raw.get("origin")
+    if origin is not None and origin not in RULE_ORIGINS:
+        raise PolicyError("'origin' must be one of {}".format(", ".join(sorted(RULE_ORIGINS))), where)
     scope = _action_condition(raw["on"], where + " on") if "on" in raw else None
     scope_names = _actions_in([{"action": raw["on"]}]) if "on" in raw else None
     if "detector" in raw:
@@ -815,14 +834,16 @@ def _compile_rule(raw: Any, where: str) -> _Compiled:
 def _finish(rule_id: str, rule: Rule, raw: Mapping[str, Any], locked: bool, mode: str,
             ceiling: Optional[str]) -> _Compiled:
     if ceiling is not None:
-        rule = _ceilinged(rule, ceiling)
+        rule = _ceilinged(rule, ceiling, mesh=raw.get("origin") == "mesh")
     return _Compiled(rule_id, _labelled(rule, rule_id, locked), raw, locked, shadow=(mode == "shadow"))
 
 
-def _ceilinged(rule: Rule, ceiling: str) -> Rule:
+def _ceilinged(rule: Rule, ceiling: str, *, mesh: bool = False) -> Rule:
     """Cap a rule's verdict: a decision stronger than ``ceiling`` becomes an
     ESCALATE, so a community rule the node does not fully trust yet asks a
-    human instead of acting on its own."""
+    human instead of acting on its own. For a mesh rule the escalation carries
+    ``mesh_ceiling``, so a node with no approver records it instead of
+    refusing the call."""
     limit = RULE_CEILINGS[ceiling]
 
     def capped(event: SensorEvent) -> Optional[Decision]:
@@ -832,8 +853,11 @@ def _ceilinged(rule: Rule, ceiling: str) -> Rule:
         rank = RULE_CEILINGS.get(decision.verdict.name.lower())
         if rank is None or rank <= limit:
             return decision
-        return Decision.escalate("above the {} ceiling: {}".format(ceiling, decision.reason),
-                                 decision.policy_id, attributed_to=decision.attributed_to)
+        escalation = Decision.escalate("above the {} ceiling: {}".format(ceiling, decision.reason),
+                                       decision.policy_id, attributed_to=decision.attributed_to)
+        if mesh:
+            escalation.mesh_ceiling = ceiling
+        return escalation
 
     capped.phase = getattr(rule, "phase", "call")  # type: ignore[attr-defined]
     return capped

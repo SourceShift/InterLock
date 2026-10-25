@@ -42,27 +42,79 @@ which statuses it installs and the strongest verdict each may carry (its
 **ceiling**). A decision above the ceiling becomes an `escalate`, so the rule
 asks a human instead of acting.
 
-| Ring | Installs | Default ceiling by status |
-|---|---|---|
-| `canary` | experimental, test, stable | experimental → escalate, test → modify |
-| `early` | test, stable | test → modify |
-| `stable` | stable | none: the pack's own verdict |
+| Ring | Installs | Default ceiling by status | After a grant |
+|---|---|---|---|
+| `canary` | experimental, test, stable | experimental → escalate, test → modify, stable → modify | the pack's verdict |
+| `early` | test, stable | test → modify, stable → modify | the pack's verdict |
+| `stable` | stable | stable → modify | the pack's verdict |
 
-Deprecated rules are always dropped. `locked` is stripped from every mesh
-rule: you can always `disable` a community rule in your own file.
+A `modify` ceiling leaves a pack's rewrites as they are and turns its blocks
+into escalations, so **no community rule blocks on its own**, on any ring. A
+rule carries the pack's own verdict only after its monitor window and an
+operator grant (see [Grant a block](#grant-a-block)). Deprecated rules are
+always dropped. `locked` is stripped from every mesh rule: you can always
+`disable` a community rule in your own file.
 
 On top of that, every rule the node has not seen before spends a **monitor
 window** (seven days by default, `--monitor-days` at `init`) in **shadow
 mode**: it is evaluated, what it would have decided is logged and counted, and
 it decides nothing. When the window ends the policy reloads itself and the
-rule starts enforcing. The window restarts if the rule's logic changes, not
-when its status is promoted.
+rule starts enforcing, under its ceiling. The window restarts if the rule's
+logic changes, not when its status is promoted.
 
 ```bash
-interlock mesh status          # subscriptions, freshness, what shadow rules would have done
+interlock mesh status          # subscriptions, freshness, grants, capped rules, what shadow rules would have done
 interlock mesh resolve mesh:coding-agent@early   # the exact document this node would install
 interlock doctor               # warns when the timestamp has expired or a sync failed
 ```
+
+### Grant a block
+
+A grant is the operator's consent for community blocks to block on this node.
+It lives in the node's `config.json` and lifts the ceiling to the pack's own
+verdict for the rules it names:
+
+```bash
+interlock mesh grant block --pack coding-agent --status stable   # this pack's stable rules
+interlock mesh grant block --pack coding-agent --status test     # its test and stable rules
+interlock mesh grant block --rule no-curl-pipe-sh                # one rule id, in any pack
+interlock mesh grant block --rule no-curl-pipe-sh --pack coding-agent   # that rule in that pack only
+interlock mesh grant --list
+interlock mesh grant revoke --pack coding-agent --status stable  # the same arguments take it back
+```
+
+```json
+{"grants": {"block": [{"pack": "coding-agent", "status": "stable"}, {"rule": "no-curl-pipe-sh"}]}}
+```
+
+- A pack grant covers rules at **or above** its status (experimental, then
+  test, then stable); `--status` defaults to `stable`. `--pack` is the name
+  you subscribe to (`mesh:<pack>`), not the `name` inside the pack, which its
+  authors chose.
+- A rule id is chosen by a pack's authors too, so a bare `--rule` grant
+  reaches that id in every pack you subscribe to; add `--pack` to keep it to
+  one.
+- A grant does not skip the monitor window: a new rule still spends it in
+  shadow mode first. Granting or revoking does not restart the window.
+- `interlock mesh resolve` lists the rules a grant lifted (`granted`) and the
+  ones still capped to an escalate (`capped`). A policy loaded with a watch
+  picks a grant up at its next check; any other picks it up at its next load.
+- A malformed `grants` entry makes the mesh config unreadable, and the policy
+  load fails closed (the last good policy stays in force): a typo never grants
+  anything.
+
+**With no approver installed**, a capped community block has no one to ask.
+Rather than refusing the call (an `escalate` with no approver is otherwise
+`NotApproved`), the node records it as a shadow finding: the call runs, the
+receipt says `approval: shadow:no-approver`, and the decision goes to the same
+shadow log as monitor-window rules, under `interlock mesh status`. `interlock
+mesh status` and `interlock doctor` say how many rules are capped: "3 mesh
+rules capped at escalate; no approver installed: shadow only". Every other
+escalation with no approver, including a mesh rule whose own verdict is
+`escalate`, is still refused. This applies where the policy is loaded and the
+escalation settled in the agent's process (`@guard`, `enforce_tool_call`); an
+escalation decided by a sidecar is refused as before, and the coding-agent
+hook adapters hand every escalation to the agent's own prompt, as before.
 
 ### What is verified, and what happens when it fails
 
@@ -226,7 +278,8 @@ planned upgrade.
 **pack**: one rule using the `mesh_indicator_guard` detector with the active
 digests, published with status `test`. On a subscriber's canary and early
 rings that caps it to an escalate, and the stable ring does not install it
-until a maintainer promotes the pack. The commons publishes it like any other
+until a maintainer promotes the pack; it blocks only where an operator has
+granted it. The commons publishes it like any other
 pack, so indicators reach nodes through the same verified path.
 
 ## Find similar attacks without sharing text

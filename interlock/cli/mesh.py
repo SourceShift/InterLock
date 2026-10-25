@@ -6,6 +6,9 @@ For a node (the deployment running an agent):
   interlock mesh sync                       # fetch and verify; the cache only changes if all of it verifies
   interlock mesh status [--json]            # subscriptions, freshness, what shadow rules would have done
   interlock mesh resolve mesh:coding-agent@stable   # print the pack as this node would install it
+  interlock mesh grant block --pack coding-agent --status stable   # let this pack's stable blocks block
+  interlock mesh grant block --rule no-curl-pipe-sh                # or one rule (add --pack to keep it to one pack)
+  interlock mesh grant --list               # the grants in force; `grant revoke ...` takes one back
 
 Then in your policy file:  {"version": 1, "extends": "mesh:coding-agent@stable", "rules": [...]}
 
@@ -17,14 +20,18 @@ For a maintainer (the people who run a commons):
 
 A node never auto-enforces a new community rule: every rule it has not seen
 before spends a monitor window in shadow mode, and a rule's status and the
-node's ring cap how strong its verdict may be. See docs/guides/mesh.md.
+node's ring cap how strong its verdict may be. No community rule blocks until
+the operator grants it: without a grant a block is capped to an escalate, and
+on a node with no approver installed that escalation is only recorded as a
+shadow finding. See docs/guides/mesh.md.
 
 Exit codes: 0 ok, 1 the mesh is stale or a shadow summary shows findings
-(status), 2 verification or publishing failed, 3 a file could not be read,
-64 the command line was wrong.
+(status), 2 verification or publishing failed or a grant could not be
+changed, 3 a file could not be read, 64 the command line was wrong.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
@@ -56,6 +63,21 @@ def add_arguments(parser) -> None:
     resolve = sub.add_parser("resolve", help="print a pack as this node would install it")
     resolve.add_argument("spec", help="e.g. mesh:coding-agent@stable")
     resolve.add_argument("--dir", default=None, metavar="DIR")
+
+    grant = sub.add_parser("grant", help="let a mesh rule's block take effect on this node")
+    grant.add_argument("--list", action="store_true", help="print the grants in force")
+    grant.add_argument("--dir", default=None, metavar="DIR", help="mesh state directory")
+    grant_sub = grant.add_subparsers(dest="grant_command", metavar="ACTION")
+    for name, text in (("block", "grant block to a pack's rules at and above a status, or to one rule"),
+                       ("revoke", "take back a grant given with the same arguments")):
+        child = grant_sub.add_parser(name, help=text)
+        child.add_argument("--pack", default=None, metavar="PACK",
+                           help="the pack as subscribed (mesh:PACK), not its document name")
+        child.add_argument("--status", default=None, choices=["experimental", "test", "stable"],
+                           help="with --pack: this status and above (default stable)")
+        child.add_argument("--rule", default=None, metavar="ID", help="one rule id (with --pack: in that pack only)")
+        # SUPPRESS: the child's default would otherwise overwrite `grant --dir DIR`.
+        child.add_argument("--dir", default=argparse.SUPPRESS, metavar="DIR", help="mesh state directory")
 
     keys = sub.add_parser("keys", help="create signing keys for a commons")
     keys_sub = keys.add_subparsers(dest="keys_command", metavar="ACTION")
@@ -193,6 +215,8 @@ def run(args) -> int:
         return _status(args)
     if command == "resolve":
         return _resolve(args)
+    if command == "grant":
+        return _grant(args)
     if command == "keys":
         return _keys(args)
     if command == "publish":
@@ -215,8 +239,8 @@ def run(args) -> int:
         return _gossip(args)
     if command == "credential":
         return _credential(args)
-    sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, keys, publish, verify, "
-                     "report, serve, consensus, harness, forge, log, gossip, credential\n")
+    sys.stderr.write("interlock mesh: choose an action: init, sync, status, resolve, grant, keys, publish, "
+                     "verify, report, serve, consensus, harness, forge, log, gossip, credential\n")
     return 64
 
 
@@ -753,9 +777,14 @@ def _status(args) -> int:
             nxt = status.get("next_transition", {}).get(spec)
             print("  subscribed {}{}".format(spec, "" if not nxt else
                                            ", next shadow rule enforces in {}".format(_ago(nxt - time.time()))))
+        for line in _grant_lines(status.get("grants", {})):
+            print("  grant: {}".format(line))
+        if status.get("capped"):
+            print("  {}".format(capped_summary(status["capped"])))
         shadow = status.get("shadow", {})
         if shadow.get("total"):
-            print("  shadow findings: {} (what monitor-window rules would have decided)".format(shadow["total"]))
+            print("  shadow findings: {} (what monitor-window rules, and capped rules with no approver, "
+                  "would have decided)".format(shadow["total"]))
             for rule, verdicts in sorted(shadow["by_rule"].items()):
                 print("    {}: {}".format(rule, ", ".join("{} {}".format(v, n) for v, n in sorted(verdicts.items()))))
     stale = bool(status.get("timestamp_expired")) or bool(status.get("last_error"))
@@ -774,6 +803,75 @@ def _resolve(args) -> int:
         sys.stderr.write("interlock mesh resolve: {}\n".format(exc))
         return 2
     sys.stdout.write(json.dumps({"document": doc, "cache_path": path, **details}, indent=2, sort_keys=True) + "\n")
+    return 0
+
+
+def capped_summary(count: int) -> str:
+    """The line ``status`` and ``doctor`` print for rules capped at escalate."""
+    return "{} mesh rule{} capped at escalate; no approver installed: shadow only".format(
+        count, "" if count == 1 else "s")
+
+
+def _grant_lines(grants) -> list:
+    lines = []
+    for entry in grants.get("block", []):
+        if "rule" in entry:
+            lines.append("block rule {}{}".format(entry["rule"], " in pack {}".format(entry["pack"])
+                                                  if "pack" in entry else " in any pack"))
+        else:
+            lines.append("block pack {}, status {} and above".format(entry["pack"], entry["status"]))
+    return lines
+
+
+def _grant(args) -> int:
+    from ..mesh.subscriber import Subscriber, SubscriberError
+
+    command = getattr(args, "grant_command", None)
+    if command is None and not args.list:
+        sys.stderr.write("interlock mesh grant: choose an action: block, revoke, or --list\n")
+        return 64
+    if command is not None and args.list:
+        sys.stderr.write("interlock mesh grant: --list takes no action\n")
+        return 64
+    node = Subscriber(args.dir)
+    try:
+        config = node.config()
+    except SubscriberError as exc:
+        sys.stderr.write("interlock mesh grant: {}\n".format(exc))
+        return 2
+    if args.list:
+        lines = _grant_lines(config.grants)
+        for line in lines:
+            print(line)
+        if not lines:
+            print("no grants: every mesh block is capped at escalate")
+        return 0
+    if args.rule:
+        if args.status:
+            sys.stderr.write("interlock mesh grant: --status goes with --pack, not --rule\n")
+            return 64
+        entry = {"rule": args.rule}
+        if args.pack:
+            entry["pack"] = args.pack
+    elif args.pack:
+        entry = {"pack": args.pack, "status": args.status or "stable"}
+    else:
+        sys.stderr.write("interlock mesh grant: give --pack PACK [--status S] or --rule ID\n")
+        return 64
+    (line,) = _grant_lines({"block": [entry]})
+    if command == "block":
+        if not config.grant(entry):
+            print("already granted: {}".format(line))
+            return 0
+        config.save(node.config_path)
+        print("granted: {}".format(line))
+        print("a watched policy picks it up at its next check; otherwise at the next policy load")
+        return 0
+    if not config.revoke(entry):
+        sys.stderr.write("interlock mesh grant: no such grant: {}\n".format(line))
+        return 2
+    config.save(node.config_path)
+    print("revoked: {}".format(line))
     return 0
 
 

@@ -151,10 +151,14 @@ def _mesh_checks() -> List[Check]:
             fix="stop trusting this commons until its maintainers explain; keep the evidence in the mesh state"))
     elif status.get("log"):
         checks.append(Check("mesh.log", OK, "transparency log verified: {} entries".format(status["log"].get("size"))))
+    if status.get("capped"):
+        from .mesh import capped_summary
+        checks.append(Check("mesh.capped", INFO, capped_summary(status["capped"]),
+                            fix="to let a pack's blocks block: interlock mesh grant block --pack PACK --status stable"))
     shadow = status.get("shadow") or {}
     if shadow.get("total"):
-        checks.append(Check("mesh.shadow", INFO, "{} shadow finding(s) from rules in their monitor window".format(
-            shadow["total"]), fix="interlock mesh status"))
+        checks.append(Check("mesh.shadow", INFO, "{} shadow finding(s) from rules in their monitor window "
+                            "or capped with no approver".format(shadow["total"]), fix="interlock mesh status"))
     return checks
 
 

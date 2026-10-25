@@ -83,9 +83,12 @@ class PolicyEngine:
         An ESCALATE does not end evaluation either: a later BLOCK still wins,
         because a human may only be asked about a call that no rule refuses.
         When no rule blocks, the first ESCALATE is the result, carrying any
-        rewrites the other rules made, so an approved call runs rewritten. A
-        verdict the engine does not know ends evaluation like a BLOCK and is
-        returned as-is; every enforcement site treats it as a block.
+        rewrites the other rules made, so an approved call runs rewritten. An
+        escalation from a capped mesh rule (``mesh_ceiling``) yields to any
+        other one: with no approver it is only recorded, so it must never
+        stand in for an escalation that asks. A verdict the engine does not
+        know ends evaluation like a BLOCK and is returned as-is; every
+        enforcement site treats it as a block.
 
         Phase separation: a rule tagged ``phase="result"`` (set the attribute
         on the callable) sees only result-phase events; an untagged rule is
@@ -108,7 +111,7 @@ class PolicyEngine:
             if decision is None or decision.verdict == Verdict.ALLOW:
                 continue
             if decision.verdict == Verdict.ESCALATE:
-                if escalation is None:
+                if escalation is None or (escalation.mesh_ceiling and not decision.mesh_ceiling):
                     escalation = decision
                 continue
             if decision.verdict != Verdict.MODIFY:
@@ -137,6 +140,7 @@ class PolicyEngine:
                 attributed_to=escalation.attributed_to,
                 modified_result=final_result if replaced_result else None,
                 masked=masked or None,
+                mesh_ceiling=escalation.mesh_ceiling,
             )
         if not rewrites:
             return Decision.allow()

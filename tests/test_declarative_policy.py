@@ -116,6 +116,25 @@ def test_detector_rules_and_on_scoping():
     assert verdict(engine, ev("http_post", url="https://evil.example/x")) is Verdict.BLOCK
 
 
+def test_only_a_capped_mesh_rule_marks_its_escalation():
+    engine = load_policy({"rules": [
+        rule(id="mesh", origin="mesh", ceiling="modify", status="stable", when={"arg": "m", "exists": True}),
+        rule(id="local", ceiling="modify", when={"arg": "l", "exists": True}),
+        rule(id="mesh-rewrite", origin="mesh", ceiling="modify", verdict="modify", set={"x": 1},
+             when={"arg": "r", "exists": True}),
+        rule(id="mesh-granted", origin="mesh", when={"arg": "g", "exists": True}),
+    ]})
+    assert not engine.quarantined
+    capped = engine.evaluate(ev(m=1))
+    assert (capped.verdict, capped.policy_id, capped.mesh_ceiling) == (Verdict.ESCALATE, "mesh", "modify")
+    local = engine.evaluate(ev(l=1))
+    assert (local.verdict, local.mesh_ceiling) == (Verdict.ESCALATE, None)
+    # Below the ceiling nothing is capped, so nothing is marked.
+    assert engine.evaluate(ev(r=1)).verdict is Verdict.MODIFY
+    assert engine.evaluate(ev(r=1)).mesh_ceiling is None
+    assert engine.evaluate(ev(g=1)).verdict is Verdict.BLOCK
+
+
 # --- load-time checks ------------------------------------------------------------
 
 
@@ -133,6 +152,7 @@ def test_detector_rules_and_on_scoping():
     ({"id": "d", "detector": "no_such_detector"}, "unknown detector"),
     ({"id": "d", "detector": "destructive_command_guard", "with": {"bogus": 1}}, "does not accept"),
     ({"id": "bad id!", "verdict": "block", "when": {"action": "x"}}, "'id' must be"),
+    (rule(when={"action": "x"}, origin="local"), "'origin' must be one of mesh"),
 ])
 def test_bad_rules_are_quarantined_with_a_reason(bad, message):
     engine = load_policy({"rules": [bad, rule(id="good", when={"action": "x"})]})

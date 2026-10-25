@@ -137,6 +137,23 @@ breaking changes land.
   `interlock mesh consensus export --stats --aggregator URL --aggregator URL`
   (`interlock.mesh.aggregate.fire_totals`). Breaking: reports built before
   this change are refused, and reporters and collectors upgrade together.
+- A mesh rule's `block` takes effect only with an operator grant (decision R5).
+  The stable status's default ceiling is `modify`, so a community block is
+  capped to an escalate on every ring; `interlock mesh grant block --pack P
+  [--status S]` or `--rule ID [--pack P]` lifts it to the pack's verdict
+  (`grant --list`, `grant revoke ...`; stored as `grants` in the node's
+  `config.json`, which a watched policy now reloads on). A pack grant matches
+  the subscribed name, not the pack's own `name`. Installed mesh rules carry
+  `"origin": "mesh"` (a pack may not set it), `mesh resolve` reports `granted`
+  and `capped`, and `mesh status` and `doctor` print "N mesh rules capped at
+  escalate; no approver installed: shadow only". With no approver installed, a
+  capped mesh rule's escalation (`Decision.mesh_ceiling`) is recorded as a
+  shadow finding and the call proceeds (receipt `approval:
+  shadow:no-approver`) where interlock settles it in process; every other
+  escalation is still `NotApproved`, and a capped mesh escalation never
+  replaces a local one. A `config.json` whose `ceilings` are exactly what
+  `init` used to write reads as the new defaults. Breaking: a stable
+  subscription stops blocking until its operator grants it.
 
 ### Fixed
 

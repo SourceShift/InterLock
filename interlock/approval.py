@@ -21,9 +21,14 @@ where hand-rolled guards usually go wrong, so this module fixes the rules:
 - **No approver means blocked.** With no approver installed, a declining
   approver, an approver that raises, or a policy that changed while the
   approver was deciding, the call raises :class:`~interlock.enforce.NotApproved`.
+  One exception, with no approver installed only: an escalation a mesh rule's
+  ceiling made (an ungranted community block, ``Decision.mesh_ceiling``) is
+  recorded as a shadow finding through the engine and the call proceeds, so a
+  community rule never blocks on a node whose operator did not grant it.
 
 Every outcome is a receipt: ``policy_verdict="ESCALATE"`` with ``verdict``
-ALLOW, MODIFY or BLOCK and an ``approval`` field saying how it was settled.
+ALLOW, MODIFY or BLOCK and an ``approval`` field saying how it was settled
+(``shadow:no-approver`` for the exception above).
 
 Same-process limit: the approver runs in the agent's process, so code that is
 already malicious there can install an approver of its own. That is the same
@@ -38,7 +43,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field, replace
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 from .enforce import Decision, NotApproved, Verdict
 from .event import SensorEvent
@@ -304,12 +309,19 @@ def settle_escalation(
     current_epoch: Callable[[], Optional[str]],
     elapsed_us: Optional[int] = None,
     approver: Optional[Approver] = None,
+    shadow: Optional[Callable[..., Any]] = None,
 ) -> Decision:
     """Ask for (or reuse) an approval; return what the call proceeds with.
 
     Returns an ALLOW, or a MODIFY carrying the escalation's rewrites, when
     approved. Raises :class:`NotApproved` otherwise. Writes one receipt either
     way.
+
+    ``shadow`` is the deciding engine's shadow recorder
+    (``DeclarativeEngine.record_shadow``). With no approver installed, an
+    escalation carrying ``mesh_ceiling`` is handed to it and proceeds, with
+    ``approval="shadow:no-approver"`` on the receipt; without a recorder, or
+    if recording fails, it is refused like any other.
     """
     request = make_request(event, decision, epoch)
     proceed = _proceed(decision)
@@ -336,6 +348,16 @@ def settle_escalation(
 
     chosen = approver if approver is not None else get_approver()
     if chosen is None:
+        if decision.mesh_ceiling and shadow is not None:
+            # An ungranted community block, capped to an escalate, with no one
+            # to ask: it is observed like a rule in its monitor window and
+            # decides nothing (decision R5). Other rules' rewrites still apply.
+            try:
+                shadow(effective_event, decision, approval="shadow:no-approver")
+            except Exception:
+                refuse("no-approver", "no approver is installed")
+            record(proceed, "shadow:no-approver")
+            return proceed
         refuse("no-approver", "no approver is installed")
         raise AssertionError("unreachable")
     try:
