@@ -180,7 +180,29 @@ def build_scoped_engine(
             params = entry.get("params") or {}
             if not isinstance(params, Mapping):
                 raise RulesError("scope {!r} binding params must be an object".format(key))
-            compiled.append(Binding(template_id, dict(params)))
+            raw_delegated = entry.get("delegated_from")
+            if "delegated_from" in entry:
+                if not isinstance(raw_delegated, str):
+                    raise RulesError(
+                        "scope {!r} binding delegated_from must be a scope path "
+                        "string".format(key)
+                    )
+                delegated_from = _scope_path(raw_delegated)
+            else:
+                delegated_from = None
+            enabled = entry.get("enabled", True)
+            if not isinstance(enabled, bool):
+                raise RulesError(
+                    "scope {!r} binding enabled must be a boolean".format(key)
+                )
+            compiled.append(
+                Binding(
+                    template_id,
+                    dict(params),
+                    enabled=enabled,
+                    delegated_from=delegated_from,
+                )
+            )
         tree.bind(_scope_path(key), compiled)
     registry = ScopeRegistry(tree, templates)
     default_scope = document.get("default_scope") or []

@@ -83,9 +83,11 @@ def test_the_wire_reaches_the_same_per_principal_decision_as_the_oracle(sock_pat
         other = send_raw(path, canonical(request_frame("op-3", _event("rm", "beta/agent2"))))
     assert allowed["verdict"] == int(Verdict.ALLOW)
     assert blocked["verdict"] == int(Verdict.BLOCK)
-    # A principal with no binding resolves to an empty engine: the same call
-    # that acme/agent1 is denied is allowed for beta/agent2.
-    assert other["verdict"] == int(Verdict.ALLOW)
+    # A principal with no bound prefix resolves to an empty engine, which is a
+    # refusal, not a permission: beta/agent2 is blocked as an unbound scope
+    # rather than silently allowed. The oracle uses the same ScopedEngine, so
+    # wire == oracle still holds.
+    assert other["verdict"] == int(Verdict.BLOCK)
 
 
 def test_an_unscoped_event_is_blocked_fail_closed(sock_path):

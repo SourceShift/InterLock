@@ -124,6 +124,28 @@ in logs and receipts. Two ways to handle them on purpose:
 - `allow_unscoped=True` lets them through with no rules at all. Use it only when
   every call that matters is sure to carry a principal.
 
+### An unknown or typo'd scope is denied too
+
+A non-empty scope that resolves to **no templates** used to compile an empty
+engine, which allows everything. It is now a refusal: a typo like
+`"acme/payemnts/agent"`, an unknown tenant, or a scope whose every template is
+tombstoned blocks with policy id `scoped_engine.unbound` and a reason naming the
+scope path. A prefix binding still counts, so `"acme/payments/agent"` inherits
+whatever `"acme"` grants and is not unbound.
+
+```python
+engine = ScopedEngine(registry)
+engine.evaluate(SensorEvent(action="fetch", args={"host": "api.internal"},
+                            principal="acme/payemnts/agent"))
+# -> Blocked: scope ('acme', 'payemnts', 'agent') resolves to no policy templates,
+#    denied fail-closed (pass allow_unbound=True to allow it)
+```
+
+`allow_unbound=True` restores the old allow-everything behaviour. It is a
+separate opt-out from `allow_unscoped`: that one covers an *empty path*, this one
+an unresolved non-empty scope. Both default to `False`, and tightening one does
+not loosen the other.
+
 ## How settings combine
 
 Walking from the root down to the agent, each template's settings are merged
@@ -278,6 +300,29 @@ registry.resolve(("root", "acme", "sub7"))["egress_allowlist"]
 The subset check still applies: swapping in `["exfil.example"]` here raises
 `DelegationOverGrant`.
 
+### Deny-lists narrow in the opposite direction
+
+A parameter can be a **deny-list** - the tools or actions a binding disables -
+rather than an allowlist. Declare it in the template's `deny_params`:
+
+```python
+templates["denied_tools"] = Template(
+    "denied_tools", denied_tools, deny_params=frozenset({"denied"})
+)
+```
+
+For a deny-list the subset rule is reversed: a delegate must disable **at least
+as much** as its delegator did - it may disable more things, never fewer - so
+its list must be a **superset** of the delegator's. A delegate that denies only
+`["shell"]` while its delegator denies `["shell", "write"]` would regain
+`write`, so resolving it raises `DelegationOverGrant`. An equal or larger list
+is allowed, and so is omitting the key when the delegator's list is empty; a
+delegate that omits a non-empty deny-list denies nothing and is refused.
+
+A parameter cannot appear in both `union_params` and `deny_params`; that is a
+`ValueError` at `Template` construction, because the two directions contradict
+each other.
+
 ### Loops and depth
 
 A chain of delegations is followed up to `ScopeRegistry(max_delegation_depth=...)`
@@ -340,6 +385,12 @@ reg.hits, reg.misses
   `python benchmarks/scope_memory.py` measures memory and lookup time on your
   machine.
 - `registry.invalidate(scope)` drops one cached entry early. You rarely need it.
+- **A delegator change invalidates its delegates.** The freshness stamp covers
+  not just the leaf's own path but every `delegated_from` scope reachable from
+  its bindings, transitively (bounded by `max_delegation_depth`). A policy change
+  - or a revoked grant - at a delegator on another branch recompiles the leaf on
+  its next call, even though no node on the leaf's path changed. Without this, an
+  already-cached engine could outlive the grant it was built from.
 
 For very large trees, an optional Rust implementation of `ScopeTree` cuts memory
 per node by roughly ten times. It's used automatically once built. Check which
@@ -350,8 +401,16 @@ See [`rust/README.md`](https://github.com/SourceShift/InterLock/blob/main/rust/R
 
 - **Calls with no principal are blocked** unless you set `default_scope` or
   `allow_unscoped=True`. Wrap every agent run in a `span`.
-- **Removing a template removes the restriction.** A tombstoned allowlist means
-  no allowlist.
+- **An unbound scope is denied, not allowed.** A non-empty scope that resolves to
+  no templates blocks with `scoped_engine.unbound`. Bind every principal path you
+  expect to use, or opt out deliberately with `allow_unbound=True`.
+- **Removing one template removes that restriction.** A tombstoned allowlist
+  means no allowlist for that template. If *every* template is tombstoned the
+  scope is unbound, so it is blocked rather than left with an empty rule set.
+- **A sidecar scope document can express delegation and tombstones.** Binding
+  entries accept `"delegated_from": "acme/root"` and `"enabled": false`, the same
+  fields as `Binding`; a document without them keeps the old root-grant
+  behaviour.
 - **Binding mistakes surface at resolve time,** which can be the first call
   from that scope. That call is blocked (`scoped_engine.resolution`). Resolve
   right after binding so you find out before a user does.

@@ -651,12 +651,15 @@ A *scope* is a tuple path such as `("root", "acme", "agent42")`.
 ### `Template`
 
 ```python
-Template(template_id, factory, union_params=frozenset())
+Template(template_id, factory, union_params=frozenset(), deny_params=frozenset())
 ```
 
 A frozen dataclass: a named rule factory. `factory(**params)` must return a
 `Rule`. Parameters named in `union_params` accumulate down the tree. All others
-are overridden by deeper bindings.
+are overridden by deeper bindings. Parameters named in `deny_params` are
+deny-lists: for a delegated binding they must be a **superset** of the
+delegator's, so a delegate can only narrow. A parameter may not appear in both
+sets (`ValueError`).
 
 ### `Binding`
 
@@ -725,7 +728,7 @@ Resolves scopes and caches one compiled `PolicyEngine` per scope.
 ### `ScopedEngine`
 
 ```python
-ScopedEngine(registry, scope_of=None, *, default_scope=(), allow_unscoped=False)
+ScopedEngine(registry, scope_of=None, *, default_scope=(), allow_unscoped=False, allow_unbound=False)
 ```
 
 An engine that picks a scope for each event and delegates to that scope's
@@ -737,6 +740,7 @@ compiled engine. Install it with `interlock.install(engine=ScopedEngine(registry
 | `scope_of` | `event -> scope tuple`. Defaults to [`principal_scope`](#principal_scope). |
 | `default_scope` | Used when `scope_of` returns an empty tuple (typically an event with no principal). |
 | `allow_unscoped` | `False` (default): an event with no scope is blocked. `True`: it is allowed without running any rule. |
+| `allow_unbound` | `False` (default): a non-empty scope that resolves to no templates is blocked. `True`: it is allowed (the old, fail-open behaviour). |
 
 **An event with no scope is blocked by default.** With no principal and no
 `default_scope`, `evaluate` returns a block with the reason `no scope for this
@@ -744,6 +748,13 @@ event (no principal and no default_scope); denied fail-closed` and the policy id
 `scoped_engine.unscoped` (`UNSCOPED_POLICY_ID` in `interlock.policy.scopes`). Set
 `default_scope` to a baseline node to give such callers a floor policy instead, or
 pass `allow_unscoped=True` if they really should run unchecked.
+
+**A non-empty scope that resolves to no templates is blocked too.** A typo'd
+principal, an unknown tenant, or a scope whose every template is tombstoned
+would otherwise compile an empty engine that allows everything. `evaluate`
+returns a block naming the scope with policy id `scoped_engine.unbound`
+(`UNBOUND_POLICY_ID`); `allow_unbound=True` restores the old allow. This is
+separate from `allow_unscoped`, which governs only the empty path.
 
 ### `principal_scope`
 

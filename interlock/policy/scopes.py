@@ -52,11 +52,33 @@ class Template:
     ``union_params`` names the parameters that accumulate as set-union when a
     deeper binding declares them (allowlists, keyword lists). Every other param
     is override: the more specific binding wins.
+
+    ``deny_params`` names parameters that are *deny-lists*: the things a
+    binding forbids rather than permits. A delegated binding for one of these
+    must be a **superset** of its delegator's, so a delegate can only widen the
+    set of things it disables - narrowing the capabilities it inherits - and
+    never the reverse. A parameter may not be both a union and a deny list,
+    because the two directions are contradictory.
     """
 
     template_id: str
     factory: RuleFactory
     union_params: FrozenSet[str] = frozenset()
+    deny_params: FrozenSet[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        union = frozenset(self.union_params or ())
+        deny = frozenset(self.deny_params or ())
+        overlap = union & deny
+        if overlap:
+            raise ValueError(
+                "template {!r} names params in both union_params and "
+                "deny_params: {}".format(self.template_id, ", ".join(sorted(overlap)))
+            )
+        # Normalise plain sets to frozensets so the frozen dataclass stays
+        # hashable whatever the caller passed.
+        object.__setattr__(self, "union_params", union)
+        object.__setattr__(self, "deny_params", deny)
 
 
 @dataclass(frozen=True)
@@ -190,9 +212,12 @@ class ScopeRegistry:
     and recompile only when a node on its path changes version.
 
     The cache is a bounded LRU. Its key is the leaf scope; its stored value is
-    ``(path_versions, engine)``. A hit requires both that the leaf is present and
-    that its stored version tuple still matches the tree, so an ancestor edit
-    transparently forces a recompile without walking the tree eagerly.
+    ``(stamp, engine)``, where the stamp covers every node that can change the
+    resolution: the leaf's own path versions *and* the path versions of every
+    delegator scope reachable from the bindings on that path. A hit requires that
+    the leaf is present and that its stored stamp still matches the tree, so an
+    ancestor edit - or a rebind anywhere in the delegation closure - transparently
+    forces a recompile without walking the tree eagerly.
     """
 
     def __init__(
@@ -207,9 +232,7 @@ class ScopeRegistry:
         self.templates = dict(templates)
         self.maxsize = maxsize
         self.max_delegation_depth = max_delegation_depth
-        self._cache: "OrderedDict[Scope, Tuple[Tuple[int, ...], PolicyEngine]]" = (
-            OrderedDict()
-        )
+        self._cache: "OrderedDict[Scope, Tuple[Any, PolicyEngine]]" = OrderedDict()
         self.hits = 0
         self.misses = 0
 
@@ -227,6 +250,10 @@ class ScopeRegistry:
     def _union_lookup(self, template_id: str) -> FrozenSet[str]:
         tmpl = self.templates.get(template_id)
         return tmpl.union_params if tmpl is not None else frozenset()
+
+    def _deny_lookup(self, template_id: str) -> FrozenSet[str]:
+        tmpl = self.templates.get(template_id)
+        return tmpl.deny_params if tmpl is not None else frozenset()
 
     def resolve(self, leaf: Scope) -> Dict[str, Dict[str, Any]]:
         """Effective params per template for a leaf.
@@ -266,7 +293,9 @@ class ScopeRegistry:
                     tuple(b.delegated_from), depth=depth + 1
                 )
                 d_eff = delegator_eff.get(b.template_id)
-                if not _delegation_subset(b_eff, d_eff):
+                if not _delegation_subset(
+                    b_eff, d_eff, self._deny_lookup(b.template_id)
+                ):
                     raise DelegationOverGrant(
                         f"delegation over-grant at {prefix!r}: template "
                         f"{b.template_id!r} binds {b_eff!r} which is not a "
@@ -306,17 +335,51 @@ class ScopeRegistry:
         ]
         return PolicyEngine(rules=rules)
 
+    def _delegation_closure(self, leaf: Scope) -> Tuple[Tuple[Scope, Tuple[int, ...]], ...]:
+        """Path versions of every delegator scope reachable from ``leaf``.
+
+        The cache key must observe anything that can change the resolution, not
+        just the nodes on the leaf's own path: a binding's ``delegated_from`` can
+        point at a sibling or another branch, and a policy change (or a revoked
+        grant) there must recompile the leaf. This walks every binding on every
+        prefix of ``leaf`` and, transitively, every binding on its delegator,
+        recording each reachable delegator's ``path_versions``.
+
+        The result is deterministic: prefixes are visited root->leaf and
+        bindings in their stored order, and each delegator is recorded once, the
+        first time it is reached. The walk is bounded by ``max_delegation_depth``
+        so a delegation loop cannot hang a cache lookup (``resolve`` raises the
+        same bound when the engine is actually compiled).
+        """
+        seen: Dict[Scope, Tuple[int, ...]] = {}
+
+        def walk(scope: Scope, depth: int) -> None:
+            if depth > self.max_delegation_depth:
+                return
+            for i in range(1, len(scope) + 1):
+                for binding in self.tree.bindings_at(scope[:i]):
+                    if binding.delegated_from is None:
+                        continue
+                    delegator = tuple(binding.delegated_from)
+                    if delegator in seen:
+                        continue
+                    seen[delegator] = self.tree.path_versions(delegator)
+                    walk(delegator, depth + 1)
+
+        walk(leaf, 0)
+        return tuple(seen.items())
+
     def for_scope(self, leaf: Scope) -> PolicyEngine:
         """Return the compiled engine for a leaf, from cache when still fresh."""
-        pv = self.tree.path_versions(leaf)
+        stamp = (self.tree.path_versions(leaf), self._delegation_closure(leaf))
         hit = self._cache.get(leaf)
-        if hit is not None and hit[0] == pv:
+        if hit is not None and hit[0] == stamp:
             self.hits += 1
             self._cache.move_to_end(leaf)
             return hit[1]
         self.misses += 1
         eng = self.compile(leaf)
-        self._cache[leaf] = (pv, eng)
+        self._cache[leaf] = (stamp, eng)
         self._cache.move_to_end(leaf)
         if len(self._cache) > self.maxsize:
             self._cache.popitem(last=False)
@@ -367,23 +430,45 @@ def delegation_chain(event: SensorEvent) -> Tuple[Scope, ...]:
 def _delegation_subset(
     binding_eff: Optional[Dict[str, Any]],
     delegator_eff: Optional[Dict[str, Any]],
+    deny_params: FrozenSet[str] = frozenset(),
 ) -> bool:
-    """True iff ``binding_eff`` is a subset of ``delegator_eff`` under the
-    union/override contract the rest of the registry uses.
+    """True iff ``binding_eff`` grants no more than ``delegator_eff``.
 
     A missing binding (``None``, e.g. tombstoned at this level) is trivially
     a subset. Otherwise every key the binding sets must exist on the
     delegator, and its value must be a subset (set-like) or equal (override).
+
+    ``deny_params`` inverts the direction for list values: a deny-list names
+    what a binding *forbids*, so a delegate must disable at least as much as
+    its delegator did - its list must be a **superset** of the delegator's,
+    which grants no more. Omitting the key when the delegator denies something
+    is an over-grant too: the delegate would deny nothing, so the check looks
+    at delegator deny-keys the binding never names as well. An absent delegator
+    deny-key forbids nothing, so any delegate list is allowed. Non-list values
+    stay equality for every key.
     """
     if binding_eff is None:
         return True
     if delegator_eff is None:
         return False
     for k, v in binding_eff.items():
+        is_list = isinstance(v, (set, frozenset, list, tuple))
+        if k in deny_params:
+            if is_list:
+                # Superset for deny-lists; a legacy subset would be an
+                # over-grant because it disables fewer of the delegator's items.
+                d = delegator_eff.get(k, ())
+                if not isinstance(d, (set, frozenset, list, tuple)):
+                    return False
+                if not set(d).issubset(set(v)):
+                    return False
+            elif k not in delegator_eff or v != delegator_eff[k]:
+                return False
+            continue
         if k not in delegator_eff:
             return False
         d = delegator_eff[k]
-        if isinstance(v, (set, frozenset, list, tuple)):
+        if is_list:
             if not isinstance(d, (set, frozenset, list, tuple)):
                 return False
             if not set(v).issubset(set(d)):
@@ -391,10 +476,24 @@ def _delegation_subset(
         else:
             if v != d:
                 return False
+    # A deny-list the delegator sets but the binding never names would pass the
+    # loop above untouched: the delegate denies nothing where its delegator
+    # denied something, which is exactly the widening this check exists to
+    # refuse. Reject unless the delegator's own deny-list is empty.
+    for k in deny_params:
+        if k in binding_eff or k not in delegator_eff:
+            continue
+        d = delegator_eff[k]
+        if isinstance(d, (set, frozenset, list, tuple)):
+            if d:
+                return False
+        elif d is not None:
+            return False
     return True
 
 
 UNSCOPED_POLICY_ID = "scoped_engine.unscoped"
+UNBOUND_POLICY_ID = "scoped_engine.unbound"
 RESOLUTION_POLICY_ID = "scoped_engine.resolution"
 
 
@@ -419,6 +518,13 @@ class ScopedEngine:
     and allowing it would let any call made outside ``span(principal=...)``
     skip policy entirely. Pass ``allow_unscoped=True`` to opt back into
     allowing it.
+
+    A non-empty scope that resolves to **no templates** - a typo'd principal, an
+    unknown tenant, or a scope whose every template is tombstoned - is blocked
+    too, with policy id ``scoped_engine.unbound``. An empty rule set allows
+    everything, so silence is a refusal, not a permission. ``allow_unscoped``
+    covers the empty *path* and ``allow_unbound`` the unresolved *scope*; they
+    are separate knobs and both default to false.
     """
 
     def __init__(
@@ -428,11 +534,13 @@ class ScopedEngine:
         *,
         default_scope: Scope = (),
         allow_unscoped: bool = False,
+        allow_unbound: bool = False,
     ) -> None:
         self.registry = registry
         self.scope_of = scope_of or principal_scope
         self.default_scope = tuple(default_scope)
         self.allow_unscoped = allow_unscoped
+        self.allow_unbound = allow_unbound
 
     def evaluate(self, event: SensorEvent) -> Decision:
         scope = self.scope_of(event) or self.default_scope
@@ -455,19 +563,31 @@ class ScopedEngine:
                 "fail-closed: {}".format(scope, exc),
                 policy_id=RESOLUTION_POLICY_ID,
             )
+        if len(engine) == 0 and not self.allow_unbound:
+            # A non-empty path with no resolved template is a typo or an
+            # unknown principal, not a permission. An empty engine allows every
+            # action, so it must never decide silently.
+            return Decision.block(
+                "scope {!r} resolves to no policy templates, denied "
+                "fail-closed (pass allow_unbound=True to allow it)".format(scope),
+                policy_id=UNBOUND_POLICY_ID,
+            )
         return engine.evaluate(event)
 
     def epoch_for(self, event: SensorEvent) -> Optional[str]:
         """The epoch of the scope engine that decides ``event`` (see
         ``PolicyEngine.epoch``). That engine is rebuilt when the scope's
         bindings change, so a rebind changes the epoch. None when the event
-        has no resolvable scope."""
+        has no resolvable scope - including an unbound scope that would be
+        refused rather than decided."""
         scope = self.scope_of(event) or self.default_scope
         if not scope:
             return None
         try:
             engine = self.registry.for_scope(scope)
         except (DelegationError, UnknownTemplate):
+            return None
+        if len(engine) == 0 and not self.allow_unbound:
             return None
         epoch = getattr(engine, "epoch", None)
         return epoch if isinstance(epoch, str) else None

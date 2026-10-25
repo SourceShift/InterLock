@@ -75,6 +75,20 @@ with which params:
               "acme/agent1": [{"template": "shell_allowlist", "params": {"allow": ["ls"]}}]}}
 ```
 
+A binding entry also accepts the same delegation fields as
+`interlock.policy.scopes.Binding`:
+
+- `"delegated_from": "acme"` is a scope path (split on `/`) that granted the
+  binding; the registry checks the binding does not exceed it. A non-string is a
+  startup refusal (`RulesError`).
+- `"enabled": false` makes the entry a tombstone, removing an inherited binding
+  for that template at and below that scope. A non-boolean is a startup refusal.
+
+A document that omits both keys behaves exactly as before: a root grant with
+`enabled=True` and no delegator. And because every scope resolves through the
+same `ScopedEngine`, a non-empty scope with no templates is denied
+(`scoped_engine.unbound`) rather than served an empty, allow-everything engine.
+
 The templates it names are code, and stay in the rules module, which must export
 a `templates` mapping (`{template_id: interlock.policy.scopes.Template}`). A
 binding that names a template the module does not declare is a refusal at
