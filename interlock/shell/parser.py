@@ -159,6 +159,15 @@ _WRAPPERS: Dict[str, Tuple[FrozenSet[str], int]] = {
     "exec": (frozenset({"-a"}), 0),
     "stdbuf": (frozenset({"-i", "-o", "-e"}), 0),
     "chroot": (frozenset({"--userspec", "--groups"}), 1),
+    "runuser": (frozenset({"-u", "--user", "-g", "--group", "-s", "--shell",
+                           "-c", "--command", "-w", "--whitelist-environment"}),
+                0),
+    "nsenter": (frozenset({"-t", "--target", "-S", "--setuid", "-G", "--setgid",
+                           "-w", "--wd"}), 0),
+    "unshare": (frozenset({"-w", "--wd", "-S", "--setuid", "-G", "--setgid",
+                           "--map-user", "--map-group", "--map-users",
+                           "--map-groups", "--propagation",
+                           "--kill-child-signal"}), 0),
     "flock": (frozenset({"-w", "--timeout", "-E", "--conflict-exit-code"}), 1),
     "caffeinate": (frozenset({"-w", "-t"}), 0),
     "unbuffer": (frozenset(), 0),
@@ -368,11 +377,26 @@ class _Parser:
             if name in _ASSIGNING_WRAPPERS:
                 # ``env P=/x cmd`` binds P for the wrapped command too.
                 self._bind_assignments(args)
+            if name == "runuser":
+                # ``runuser -u root -c 'cmd'`` runs the string as a shell.
+                script = _option_value(args, ("-c", "--command"))
+                if script is not None:
+                    self.text(script, nested, via)
+                    return
             if name == "xargs":
                 self._xargs(inv, args, nested, via)
                 return
-            rest = _skip_options(args, *_WRAPPERS[name],
+            options, positional = _WRAPPERS[name]
+            if name == "runuser" and not any(
+                    a in ("-u", "--user") or a.startswith("--user=") for a in args):
+                # Without ``-u`` the user is the first positional argument.
+                positional = 1
+            rest = _skip_options(args, options, positional,
                                  assignments=name in _ASSIGNING_WRAPPERS)
+            if rest and rest[0] == "--":
+                # ``runuser root -- cmd``: the separator follows the wrapper's
+                # positional argument, after ``_skip_options`` stops.
+                rest = rest[1:]
             if rest:
                 self.command(rest, nested, via, inv.redirects, inv.pipeline, inv.stage)
             return
@@ -603,12 +627,12 @@ def _split(text: str) -> Tuple[List[Tuple[str, str]], List[str], List[str], bool
                 flush(";")
                 i += 1
                 if pending:
-                    executes = _reads_stdin_code(line)
+                    program = _stdin_code_program(line)
                     for delimiter, strip_tabs in pending:
                         body, i, found = _consume_heredoc(
                             text, i, delimiter, strip_tabs)
-                        if found and executes:
-                            heredoc_scripts.append(body)
+                        if found and program:
+                            heredoc_scripts.append(_heredoc_text(program, body))
                 continue
             if c == "|" or c == ";":
                 flush("|" if c == "|" else ";")
@@ -759,12 +783,24 @@ def _unwrap_wrappers(tokens: List[str]) -> List[str]:
     return tokens
 
 
-def _reads_stdin_code(line: str) -> bool:
-    """Whether the command on ``line`` reads its stdin as a script."""
+def _heredoc_text(program: str, body: str) -> str:
+    """The text to judge for a here-document that ``program`` reads as a script.
+
+    A shell runs the body as shell, so it is parsed unchanged. A script
+    interpreter runs it in *its own* language, so only the string literals are
+    judged - that is where an embedded command lives (``os.system("rm -rf /")``).
+    """
+    if _SCRIPT_INTERPRETER.match(program):
+        return "\n".join(_literals(body))
+    return body
+
+
+def _stdin_code_program(line: str) -> Optional[str]:
+    """The program on ``line`` that reads its stdin as a script, if any."""
     try:
         tokens = shlex.split(line, posix=True)
     except ValueError:
-        return False
+        return None
     while tokens and tokens[0] in _LEADING_KEYWORDS:
         tokens.pop(0)
     while tokens and _ASSIGNMENT.match(tokens[0]):
@@ -775,15 +811,20 @@ def _reads_stdin_code(line: str) -> bool:
     while tokens and _ASSIGNMENT.match(tokens[0]):
         tokens.pop(0)
     if not tokens:
-        return False
+        return None
     name = _basename(tokens[0]).lower()
     if not _STDIN_CODE.match(name):
-        return False
+        return None
     # A redirection token (``<<EOF``, ``2>``, ``<file``) is not a script
     # operand: ``bash <<EOF`` still reads its script from stdin.
     operands = [a for a in tokens[1:]
                 if not a.startswith("-") and not a.lstrip("0123456789").startswith(("<<", "<", ">", "&>"))]
-    return not operands or operands[0] == "-"
+    return name if not operands or operands[0] == "-" else None
+
+
+def _reads_stdin_code(line: str) -> bool:
+    """Whether the command on ``line`` reads its stdin as a script."""
+    return _stdin_code_program(line) is not None
 
 
 def _c_unescape(value: str) -> str:
@@ -985,7 +1026,13 @@ def _shell_script(args: Sequence[str]) -> Tuple[Optional[str], List[str]]:
             i += 2
             continue
         if tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
-            if "c" in tok[1:]:
+            body = tok[1:]
+            if "c" in body:
+                # ``sh -c'rm -rf /'`` is one token: the script is attached to
+                # the flag. Reading only a separate token left it unparsed.
+                attached = body.split("c", 1)[1]
+                if attached:
+                    return attached, list(args[i + 1:])
                 has_c = True
             i += 1
             continue
