@@ -164,7 +164,7 @@ launched it. The review queue records that user's login as the approver
 - `docs/reference/detectors.md`: the 115 detectors in 9 categories. The catalog's content.
 - `docs/security-model.md`: what the guard does **not** protect against. Read the "Settings that weaken protection" table; each row is a doctor check.
 - `specs/console/01..05-*.md`: the prototype's behavioural specs (error codes, edge cases).
-- `internal-docs/research/hoop-review.md`, `internal-docs/research/agentjail-review.md`: why the review queue, policy files, hooks and MCP inventory exist.
+- `research/hoop-review.md`, `research/agentjail-review.md`: why the review queue, policy files, hooks and MCP inventory exist.
 
 ### 5d. API surface: today and proposed
 
@@ -734,7 +734,7 @@ All proposed. Confirm with PM.
 - **Teleport Access Requests / hoop.dev reviews**: just-in-time approval of a
   specific, bounded action rather than a standing permission. The closest
   competitor pattern; hoop's review flow is summarised in
-  `internal-docs/research/hoop-review.md`.
+  `research/hoop-review.md`.
 - **VS Code Problems panel**: a list of validation problems, each jumping to its
   source. Fits per-rule quarantine messages that have no character positions.
 - **Log explorers with live tail** (Grafana Explore, Papertrail): filters in the

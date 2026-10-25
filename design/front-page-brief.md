@@ -52,7 +52,7 @@ comparison table. The fourth needs the hero to be legible at a glance.
 We surveyed the READMEs and docs of thirteen comparable projects: NeMo
 Guardrails, Guardrails AI, LLM Guard, LlamaFirewall, Invariant, Snyk Agent Scan,
 Leash, Lasso MCP Gateway, Superagent, sandbox-runtime, E2B, OPA, and Presidio.
-The full note is in [`internal-docs/research/readme-docs-benchmark.md`](../internal-docs/research/readme-docs-benchmark.md).
+The full note is in [`research/readme-docs-benchmark.md`](../research/readme-docs-benchmark.md).
 
 What the study found, and what it means for this page:
 

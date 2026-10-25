@@ -72,6 +72,10 @@ fails if that directory comes back. The landing page at the host root is `landin
 a second one-page build; `make docs` builds both halves into `site/` and checks them,
 `make docs-serve` serves the result.
 
+`internal-docs/` is ignored: private notes, and reviews nothing public links to. `research/`
+is tracked and holds only what ROADMAP, GOVERNANCE, the manual or the code link to; a file
+moves there when something public starts linking to it, not before.
+
 ## Guards
 
 Install once per clone, and again whenever `.githooks/` changes:

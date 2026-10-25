@@ -17,9 +17,9 @@ Presidio, git-fetched runbooks, the control-plane fleet sync, and the OCR screen
 guard.
 
 > **Implementation status (2026-10-13).** H1–H7 shipped; see
-> [`ROADMAP.md`](../../ROADMAP.md#h1h7--from-the-hoop-review) for the evidence and
-> [`docs/guides/databases.md`](../../docs/guides/databases.md) and
-> [`docs/guides/reviews.md`](../../docs/guides/reviews.md) for usage. As built, the
+> [`ROADMAP.md`](../ROADMAP.md#h1h7--from-the-hoop-review) for the evidence and
+> [`docs/guides/databases.md`](../docs/guides/databases.md) and
+> [`docs/guides/reviews.md`](../docs/guides/reviews.md) for usage. As built, the
 > SQL analyzer also looks *inside* opaque bodies (`DO $$...$$`, `EXEC('...')`) for
 > DML, and `EXPLAIN ANALYZE` counts as executing (hoop folds every `EXPLAIN` into
 > a select).

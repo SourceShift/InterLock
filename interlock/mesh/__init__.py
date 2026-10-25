@@ -4,7 +4,7 @@ Every interlock deployment runs its own policy. The mesh lets a deployment
 *subscribe* to policy packs the community maintains (the commons), verified
 end to end and applied in monitor mode first, and *report* what its guard
 stopped in a form that never carries a prompt or an argument. The design and
-the research behind it are in ``internal-docs/research/mesh-shared-policy-network.md``.
+the research behind it are in ``research/mesh-shared-policy-network.md``.
 
 The package is organised by the phase of that design it implements:
 

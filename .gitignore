@@ -2,6 +2,9 @@
 # The RSI harness references private lane scripts (~/ps/scripts/cl_*.sh) and
 # internal strategy. The public repo is the interlock/ package plus tests/.
 rsi/
+# Private notes and the reviews that are not linked from public documents.
+# What public documents do link to lives in research/, which is tracked.
+internal-docs/
 
 # --- python ---
 __pycache__/

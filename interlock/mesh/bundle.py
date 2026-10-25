@@ -15,7 +15,7 @@ A subscriber is on a **ring** and the ring decides two things: which statuses
 it installs at all, and the strongest verdict a rule of each status may carry
 (its **ceiling**). A decision above the ceiling becomes an ``escalate``, which
 asks a human instead of acting. The defaults follow decision R5 in
-``internal-docs/research/mesh-decisions.md``: no community rule blocks on its own.
+``research/mesh-decisions.md``: no community rule blocks on its own.
 
 =========  ===========================  ==================================================
 ring       installs                     default ceiling by status
