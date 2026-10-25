@@ -60,9 +60,12 @@ attribute, so a hostile file cannot walk from an event into the interpreter.
 - *Locked rules stay on.* ``"locked": true`` rules cannot be disabled by a
   file that ``"extends"`` this one, nor by any overlay.
 - *Overlays only tighten.* A project overlay (``.interlock/policy.json``) may
-  add rules and may widen lists a base rule names in ``"widenable"``; it may not
-  disable, replace or relax anything, and it is ignored until trusted by
-  content hash (see :mod:`interlock.policy.trust`).
+  add blocking or escalating rules and may widen lists a base rule names in
+  ``"widenable"``; it may not disable, replace or relax anything, may not
+  rewrite (no ``"set"`` or ``"modify"`` and no detector rules, whose verdicts
+  are not known at load time), and may not redefine or persist a tool schema.
+  It is ignored until trusted by content hash (see
+  :mod:`interlock.policy.trust`).
 
 The combining logic is the engine's and is not configurable: a BLOCK wins, an
 ESCALATE waits for no-block, rewrites compose.
@@ -81,6 +84,7 @@ import logging
 import os
 import pkgutil
 import re
+import threading
 import time
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -123,10 +127,34 @@ MAX_SCAN = 64 * 1024
 #: against them at load. Adapters and policy files can add more.
 TOOL_SCHEMAS: Dict[str, FrozenSet[str]] = {}
 
+#: Serialises writes to the process-global ``TOOL_SCHEMAS``. An ``RLock``
+#: because a load holds it while compiling, and ``_compile_overlay`` takes it
+#: again to scope the tools an overlay declares to its own rules.
+_tool_schemas_lock = threading.RLock()
+
+#: Marks an action that was absent when a snapshot was taken, so restoring it
+#: removes the key rather than writing a placeholder back.
+_MISSING_TOOL = object()
+
 
 def register_tool_schema(action: str, args: Iterable[str]) -> None:
     """Declare the argument names ``action`` takes, for load-time checking."""
-    TOOL_SCHEMAS[action] = frozenset(args)
+    with _tool_schemas_lock:
+        TOOL_SCHEMAS[action] = frozenset(args)
+
+
+def _snapshot_tools(actions: Iterable[str]) -> Dict[str, Any]:
+    """Capture the current schema of ``actions``, missing ones included."""
+    return {action: TOOL_SCHEMAS.get(action, _MISSING_TOOL) for action in actions}
+
+
+def _restore_tools(snapshot: Mapping[str, Any]) -> None:
+    """Put back the schemas captured by :func:`_snapshot_tools`, in place."""
+    for action, value in snapshot.items():
+        if value is _MISSING_TOOL:
+            TOOL_SCHEMAS.pop(action, None)
+        else:
+            TOOL_SCHEMAS[action] = value  # type: ignore[assignment]
 
 
 class PolicyError(ValueError):
@@ -204,6 +232,10 @@ class DeclarativeEngine(PolicyEngine):
                  watch: Optional[float] = None, files: Sequence[str] = (),
                  shadow_rules: Sequence[Rule] = ()) -> None:
         super().__init__(list(rules))
+        #: Rules installed through ``add_rule``. They are part of the running
+        #: policy, not of a document, so a reload re-appends them after the
+        #: freshly loaded rules instead of silently dropping them.
+        self._code_rules: List[Rule] = []
         self.documents = [copy.deepcopy(dict(d)) for d in documents]
         self.quarantined = list(quarantined)
         self.locked = sorted(set(locked))
@@ -232,6 +264,12 @@ class DeclarativeEngine(PolicyEngine):
     def epoch(self) -> str:  # type: ignore[override]
         return self._content_epoch
 
+    def add_rule(self, rule: Rule) -> "DeclarativeEngine":
+        """Append a rule and remember it: a later file reload keeps it."""
+        self._code_rules.append(rule)
+        super().add_rule(rule)
+        return self
+
     def reload(self) -> bool:
         """Re-read the files. On any error keep the current policy, log it, and
         return False; ``last_error`` says why."""
@@ -243,7 +281,9 @@ class DeclarativeEngine(PolicyEngine):
             self.last_error = str(exc)
             _log.warning("interlock: policy reload failed, keeping the last good policy: %s", exc)
             return False
-        self._rules = list(fresh._rules)
+        # The freshly loaded rules come first; rules added in code are part of
+        # the running policy and are re-appended once, in insertion order.
+        self._rules = list(fresh._rules) + list(self._code_rules)
         self._shadow = list(fresh._shadow)
         self._epoch = None
         self.documents = fresh.documents
@@ -335,23 +375,38 @@ def _content_epoch(documents: Sequence[Mapping[str, Any]]) -> str:
 def load_policy(doc: Mapping[str, Any], *, source: str = "<policy>",
                 overlays: Sequence[Tuple[str, Mapping[str, Any]]] = (),
                 base_dir: Optional[str] = None) -> DeclarativeEngine:
-    """Compile a policy document (plus already-trusted overlay documents)."""
-    documents, rules, quarantined, locked = _compile_with_extends(doc, source, base_dir, depth=0)
-    applied: List[Tuple[str, str]] = []
-    for name, overlay in overlays:
+    """Compile a policy document (plus already-trusted overlay documents).
+
+    The documents' ``"tools"`` sections register argument schemas in the
+    process-global :data:`TOOL_SCHEMAS` so load-time argument checks can run.
+    Nothing a load registers outlives it: the map is restored in ``finally``,
+    so an overlay's schema cannot poison the next load (and neither can a base
+    document's, which is what makes two loads of the same base identical). The
+    module lock serialises concurrent loads over that map.
+    """
+    with _tool_schemas_lock:
+        saved_tools = dict(TOOL_SCHEMAS)
         try:
-            extra, widened = _compile_overlay(overlay, name, rules)
-        except PolicyError as exc:
-            _log.warning("interlock: overlay ignored: %s", exc)
-            applied.append((name, "ignored: {}".format(exc)))
-            continue
-        rules = widened + extra
-        documents.append({"overlay": name, **dict(overlay)})
-        applied.append((name, "applied"))
-    compiled = [r.rule for r in rules if not r.shadow]
-    shadow = [r.rule for r in rules if r.shadow]
-    return DeclarativeEngine(compiled, documents=documents, quarantined=quarantined,
-                             locked=locked, overlays=applied, shadow_rules=shadow)
+            documents, rules, quarantined, locked = _compile_with_extends(
+                doc, source, base_dir, depth=0)
+            applied: List[Tuple[str, str]] = []
+            for name, overlay in overlays:
+                try:
+                    extra, widened = _compile_overlay(overlay, name, rules)
+                except PolicyError as exc:
+                    _log.warning("interlock: overlay ignored: %s", exc)
+                    applied.append((name, "ignored: {}".format(exc)))
+                    continue
+                rules = widened + extra
+                documents.append({"overlay": name, **dict(overlay)})
+                applied.append((name, "applied"))
+            compiled = [r.rule for r in rules if not r.shadow]
+            shadow = [r.rule for r in rules if r.shadow]
+            return DeclarativeEngine(compiled, documents=documents, quarantined=quarantined,
+                                     locked=locked, overlays=applied, shadow_rules=shadow)
+        finally:
+            TOOL_SCHEMAS.clear()
+            TOOL_SCHEMAS.update(saved_tools)
 
 
 def load_policy_file(path: str, *, overlays: Sequence[str] = (), trust: Any = None,
@@ -544,51 +599,117 @@ def _register_tools(tools: Any, source: str) -> None:
         register_tool_schema(action, names)
 
 
+def _overlay_tool_schemas(tools: Any, name: str) -> Dict[str, FrozenSet[str]]:
+    """Validate an overlay's ``"tools"`` and return the actions to register.
+
+    Only actions the base does not already declare are returned; declaring an
+    existing action with the same argument set is a no-op, and with a different
+    set is an error - an overlay must not change what the base validates
+    against. Everything is checked before anything is registered, so a
+    conflicting entry cannot leave an earlier one behind.
+    """
+    if tools is None:
+        return {}
+    if not isinstance(tools, dict):
+        raise PolicyError("'tools' must map an action to its argument names", name)
+    new: Dict[str, FrozenSet[str]] = {}
+    for action, names in tools.items():
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise PolicyError("tools[{!r}] must be a list of argument names".format(action), name)
+        declared = frozenset(names)
+        existing = TOOL_SCHEMAS.get(action)
+        if existing is None:
+            new[action] = declared
+        elif existing != declared:
+            raise PolicyError("overlay tools may not redefine action {!r}".format(action), name)
+    return new
+
+
+def _reject_overlay_rewrite(raw: Any, where: str) -> None:
+    """Refuse an overlay rule that could rewrite the call.
+
+    A rewrite runs before the base rules judge the working copy, so an overlay
+    with ``set`` / ``verdict: "modify"`` - or any detector, whose verdict is not
+    known at load time and several of which return MODIFY - could change the
+    very argument a locked rule inspects. An overlay may only add a rule that
+    blocks or escalates.
+    """
+    if not isinstance(raw, dict):
+        return
+    if "detector" in raw:
+        what = "use a detector (its verdict is not known at load time)"
+    elif "set" in raw or raw.get("verdict") == "modify":
+        what = "rewrite arguments with set/modify"
+    else:
+        return
+    rule_id = raw.get("id")
+    named = " {!r}".format(rule_id) if isinstance(rule_id, str) else ""
+    raise PolicyError(
+        "overlay rule{} may not {}; overlays may only add blocking or escalating "
+        "rules".format(named, what), where)
+
+
 def _compile_overlay(overlay: Mapping[str, Any], name: str,
                      base: List[_Compiled]) -> Tuple[List[_Compiled], List[_Compiled]]:
     """Return (overlay rules, base rules with widened lists). Raises on anything
     an overlay may not do."""
     _check_keys(overlay, _OVERLAY_KEYS, name, "overlay")
-    _register_tools(overlay.get("tools"), name)
-    widened = list(base)
-    widen = overlay.get("widen", {})
-    if not isinstance(widen, dict):
-        raise PolicyError("'widen' must map a rule id to the lists it extends", name)
-    for rule_id, params in widen.items():
-        index = next((i for i, r in enumerate(widened) if r.id == rule_id), None)
-        if index is None:
-            raise PolicyError("widen: no base rule {!r}".format(rule_id), name)
-        original = widened[index]
-        allowed = original.doc.get("widenable", [])
-        if not isinstance(params, dict):
-            raise PolicyError("widen[{!r}] must be an object".format(rule_id), name)
-        new_doc = copy.deepcopy(dict(original.doc))
-        with_args = dict(new_doc.get("with", {}))
-        for param, values in params.items():
-            if param not in allowed:
-                raise PolicyError("widen[{!r}]: {!r} is not widenable".format(rule_id, param), name)
-            if not isinstance(values, list) or not isinstance(with_args.get(param, []), list):
-                raise PolicyError("widen[{!r}][{!r}] must extend a list".format(rule_id, param), name)
-            merged = list(with_args.get(param, []))
-            merged.extend(v for v in values if v not in merged)
-            with_args[param] = merged
-        new_doc["with"] = with_args
-        widened[index] = _compile_rule(new_doc, "{} widen[{}]".format(name, rule_id))
-    extra: List[_Compiled] = []
-    raw_rules = overlay.get("rules", [])
-    if not isinstance(raw_rules, list):
-        raise PolicyError("'rules' must be a list", name)
-    taken = {r.id for r in widened}
-    for index, raw in enumerate(raw_rules):
-        where = "{} rules[{}]".format(name, index)
-        if isinstance(raw, dict) and raw.get("locked"):
-            raise PolicyError("an overlay rule cannot be locked", where)
-        compiled = _compile_rule(raw, where)
-        if compiled.id in taken:
-            raise PolicyError("an overlay cannot replace rule {!r}".format(compiled.id), where)
-        taken.add(compiled.id)
-        extra.append(compiled)
-    return extra, widened
+    with _tool_schemas_lock:
+        # A new action an overlay declares is visible while its own rules
+        # compile and gone afterwards; the base's schemas are untouched.
+        new_tools = _overlay_tool_schemas(overlay.get("tools"), name)
+        saved_tools = _snapshot_tools(new_tools)
+        try:
+            for action, names in new_tools.items():
+                register_tool_schema(action, names)
+            widened = list(base)
+            widen = overlay.get("widen", {})
+            if not isinstance(widen, dict):
+                raise PolicyError("'widen' must map a rule id to the lists it extends", name)
+            for rule_id, params in widen.items():
+                index = next((i for i, r in enumerate(widened) if r.id == rule_id), None)
+                if index is None:
+                    raise PolicyError("widen: no base rule {!r}".format(rule_id), name)
+                original = widened[index]
+                allowed = original.doc.get("widenable", [])
+                if not isinstance(params, dict):
+                    raise PolicyError("widen[{!r}] must be an object".format(rule_id), name)
+                new_doc = copy.deepcopy(dict(original.doc))
+                with_args = dict(new_doc.get("with", {}))
+                for param, values in params.items():
+                    if param not in allowed:
+                        raise PolicyError("widen[{!r}]: {!r} is not widenable".format(
+                            rule_id, param), name)
+                    if not isinstance(values, list) or not isinstance(
+                            with_args.get(param, []), list):
+                        raise PolicyError("widen[{!r}][{!r}] must extend a list".format(
+                            rule_id, param), name)
+                    merged = list(with_args.get(param, []))
+                    merged.extend(v for v in values if v not in merged)
+                    with_args[param] = merged
+                new_doc["with"] = with_args
+                # The base rule being widened may itself be a detector: that is
+                # the documented widen capability, so only the overlay's own
+                # rules are screened by _reject_overlay_rewrite below.
+                widened[index] = _compile_rule(new_doc, "{} widen[{}]".format(name, rule_id))
+            extra: List[_Compiled] = []
+            raw_rules = overlay.get("rules", [])
+            if not isinstance(raw_rules, list):
+                raise PolicyError("'rules' must be a list", name)
+            taken = {r.id for r in widened}
+            for index, raw in enumerate(raw_rules):
+                where = "{} rules[{}]".format(name, index)
+                if isinstance(raw, dict) and raw.get("locked"):
+                    raise PolicyError("an overlay rule cannot be locked", where)
+                _reject_overlay_rewrite(raw, where)
+                compiled = _compile_rule(raw, where)
+                if compiled.id in taken:
+                    raise PolicyError("an overlay cannot replace rule {!r}".format(compiled.id), where)
+                taken.add(compiled.id)
+                extra.append(compiled)
+            return extra, widened
+        finally:
+            _restore_tools(saved_tools)
 
 
 # --- rules ----------------------------------------------------------------------

@@ -33,7 +33,10 @@ interlock.install(engine=load_policy_file("policy.json", watch=2.0))
 
 `watch=2.0` re-checks the file at most every two seconds and reloads it when it
 changes. A file that no longer parses leaves the last good policy running and
-logs the error (`engine.last_error` says why).
+logs the error (`engine.last_error` says why). Rules added in code with
+`engine.add_rule(...)` are part of the running policy: a successful reload
+re-appends them after the freshly loaded rules, and a failed reload leaves the
+rule set exactly as it was.
 
 ## Rules
 
@@ -169,8 +172,8 @@ whoever controls the repository, which may be the agent itself. So:
 
 - **It is ignored until a human trusts it**, by content hash:
   `interlock trust add`. Editing the file revokes trust until it's re-approved.
-- **It can only tighten.** An overlay may add rules (`block`, `escalate`,
-  `modify`) and extend lists that the base marks `widenable`:
+- **It can only tighten.** An overlay may add rules that `block` or `escalate`,
+  and extend lists that the base marks `widenable`:
 
   ```json
   {"widen": {"egress": {"allowed_hosts": ["staging.acme.com"]}},
@@ -178,8 +181,15 @@ whoever controls the repository, which may be the agent itself. So:
               "when": {"arg": "env", "eq": "prod"}}]}
   ```
 
-  It can't `disable` anything, replace a base rule's id, lock a rule, or widen a
-  list the base didn't mark widenable. An overlay that tries is ignored whole.
+  It can't add a `modify` rule, a rule with `"set"`, or any detector rule: a
+  rewrite runs before the rules it would otherwise have to pass, so an overlay
+  could rewrite the very argument a locked rule inspects. It also can't
+  `disable` anything, replace a base rule's id, lock a rule, or widen a list the
+  base didn't mark widenable. An overlay that tries is ignored whole.
+- **Its `tools` entries are local.** An overlay may declare a new action so its
+  own rules' argument names type-check, but it may not redefine an action the
+  base declares with a different argument list, and no schema it registers
+  outlives the load: the next `load_policy` sees exactly the map it saw before.
 
 ```python
 from interlock.policy.declarative import load_policy_file
