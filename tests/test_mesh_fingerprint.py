@@ -170,3 +170,27 @@ def test_the_recorder_follows_the_reporting_consent(tmp_path):
         node.set_report_consent([])
         install_recorder(node.dir)
         receipt_mod.set_catalog_id(None)
+
+
+def _flipped(live, bits):
+    raw = bytearray(live)
+    for bit in bits:
+        raw[bit // 8] ^= 1 << (bit % 8)
+    return bytes(raw)
+
+
+def test_similarity_review_band_escalates_near_misses_only():
+    """A one-character edit lands just past the threshold; the band asks a human
+    there and still allows a call far outside it. ``review_margin=0`` restores
+    the hard edge."""
+    live = fp.fingerprint(ATTACK, None)
+    event = SensorEvent(action="WebFetch", args={"prompt": ATTACK})
+    near = mesh_similarity_guard([_flipped(live, [0, 1, 2]).hex()],
+                                 max_distance=0, review_margin=8, verdict="block")
+    assert near(event).verdict is Verdict.ESCALATE
+    far = mesh_similarity_guard([_flipped(live, range(12)).hex()],
+                                max_distance=0, review_margin=8)
+    assert far(event) is None
+    edge = mesh_similarity_guard([_flipped(live, [0, 1, 2]).hex()],
+                                 max_distance=0, review_margin=0)
+    assert edge(event) is None

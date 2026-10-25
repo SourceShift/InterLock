@@ -6,10 +6,12 @@ codes are exercised together. The protocol itself is covered by
 server stands in.
 """
 
+import io
 import json
 import os
 
 from interlock.cli import main
+from interlock.mesh import ed25519
 from interlock.mesh.dap import task as taskmod
 
 BUCKETS = ["rule-a|block|shell|pre|*", "rule-b|allow|read|post|*"]
@@ -209,3 +211,60 @@ def test_serve_dap_refuses_a_bad_bind_before_serving(tmp_path, capsys):
                    "--bind", "not-a-bind"])
     assert status == 2
     assert "HOST:PORT" in capsys.readouterr().err
+
+
+# --- submit: the accepted path and the collector's reason ------------------
+
+def test_dap_submit_reads_the_report_id_from_the_accepted_plan(tmp_path, monkeypatch, capsys):
+    """An accepted upload reads ``plan.report.metadata.report_id``: the report
+    object has no top-level ``report_id``, and reaching for one crashed after
+    the leader had already accepted the report."""
+    import json
+    import types
+
+    from interlock.mesh.report import ReporterKey, build_report, sign_report
+
+    task, leader, helper, collector, out = _create(tmp_path)
+    key = ReporterKey(ed25519.generate_seed())
+    body = build_report([], since=0, until=86400, catalog_id="cat1", reporter_id=key.keyid)
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(sign_report(body, key)))
+    (tmp_path / "report.json.counts.json").write_text(json.dumps({
+        "reporter": body["reporter"], "period": body["period"],
+        "counts": {"rule-a|block|shell|pre|0": 1}}))
+    # The leader key file holds the collector token the task names.
+    roles = json.loads((out / "leader.json").read_text())
+    roles["tokens"] = {"leader": "leader-secret"}
+    (out / "leader.json").write_text(json.dumps(roles))
+
+    seen = {}
+
+    def fake_submit(task_, counts, token=None, batch_index=None):
+        seen.update(counts=counts, token=token, batch_index=batch_index)
+        plan = types.SimpleNamespace(
+            report=types.SimpleNamespace(metadata=types.SimpleNamespace(report_id=b"\xab" * 16)),
+            batch_index=batch_index, measurement=[1, 0])
+        return plan, types.SimpleNamespace(accepted=1, errors=[])
+
+    monkeypatch.setattr("interlock.mesh.dap.client.submit_counts", fake_submit)
+    monkeypatch.setattr("interlock.mesh.subscriber.Subscriber.report_consent",
+                        lambda self: {"enabled_at": 0.0, "layers": ["counts"], "sample_rules": []})
+
+    status = main(["mesh", "dap", "submit", "--report", str(report_path),
+                   "--task", str(out / "task.json"), "--keys", str(out / "leader.json"), "--json"])
+    printed = capsys.readouterr().out
+    assert status == 0, printed
+    document = json.loads(printed)
+    assert document["report_id"] == (b"\xab" * 16).hex()
+    assert document["accepted"] is True
+    assert seen["token"] == "leader-secret" and seen["batch_index"] == 0
+
+
+def test_upstream_reason_reads_a_collector_refusal_body():
+    from urllib.error import HTTPError
+
+    from interlock.cli.mesh import _upstream_reason
+
+    error = HTTPError("http://collector", 422, "Unprocessable", {},
+                      io.BytesIO(json.dumps({"reason": "credential required"}).encode()))
+    assert _upstream_reason(error).endswith("credential required")

@@ -100,7 +100,8 @@ def configure(server: Any, *, policy_path: Optional[str] = None, reviews_db: Opt
               trust_path: Optional[str] = None, four_eyes: bool = False,
               sidecar: Optional[str] = None, sidecar_admin: Optional[str] = None,
               key_file: Optional[str] = None, cwd: Optional[str] = None,
-              unlock_code: Optional[str] = None, transcripts: Optional[str] = None) -> WriteGate:
+              unlock_code: Optional[str] = None, transcripts: Optional[str] = None,
+              mesh_dir: Optional[str] = None) -> WriteGate:
     """Attach the settings the console's feature modules read to ``server``.
 
     Kept off :class:`ConsoleServer`'s constructor so each module reads its own
@@ -118,6 +119,7 @@ def configure(server: Any, *, policy_path: Optional[str] = None, reviews_db: Opt
     server.key_file = key_file
     server.project_cwd = os.path.abspath(cwd or os.getcwd())
     server.transcripts_root = os.path.abspath(os.path.expanduser(transcripts)) if transcripts else None
+    server.mesh_dir = os.path.abspath(os.path.expanduser(mesh_dir)) if mesh_dir else None
     server.write_gate = WriteGate(unlock_code)
     return server.write_gate
 

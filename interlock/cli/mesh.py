@@ -64,6 +64,30 @@ import time
 COUNTS_SUFFIX = ".counts.json"
 
 
+def _upstream_reason(error) -> str:
+    """A collector's refusal, not just its status line.
+
+    ``report.submit`` raises ``urllib.error.HTTPError`` on a non-2xx answer;
+    its body is the collector's JSON problem document. Reading it here keeps
+    the operator's message ("unknown catalog ...", "certificate revoked")
+    instead of the standard library's generic ``HTTP Error 422``.
+    """
+    read = getattr(error, "read", None)
+    if read is None:
+        return str(error)
+    try:
+        raw = read()
+        document = json.loads(raw.decode("utf-8")) if raw else {}
+    except (OSError, ValueError, TypeError):
+        return str(error)
+    if isinstance(document, dict):
+        reason = document.get("reason") or document.get("detail") or document.get("error")
+        if isinstance(reason, str) and reason:
+            code = getattr(error, "code", None)
+            return "HTTP {}: {}".format(code, reason) if code else reason
+    return str(error)
+
+
 def add_arguments(parser) -> None:
     sub = parser.add_subparsers(dest="mesh_command", metavar="ACTION")
 
@@ -215,6 +239,9 @@ def add_arguments(parser) -> None:
                        help="consensus: refuse reports without a membership certificate")
     serve.add_argument("--issuer", action="append", default=[], metavar="HEX_PUBLIC",
                        help="consensus: a credential issuer's public key; repeatable")
+    serve.add_argument("--revoked", default=None, metavar="FILE",
+                       help="consensus: the issuer's revoked.json; re-read before every report, "
+                            "so a revocation takes effect without a restart")
     serve.add_argument("--min-batch", type=int, default=None, metavar="N",
                        help="aggregator: release totals over at least N reconciled reports (default 3, at least 2)")
 
@@ -247,6 +274,9 @@ def add_arguments(parser) -> None:
     dap_submit.add_argument("--task", required=True, metavar="FILE")
     dap_submit.add_argument("--token", default=None, metavar="TOKEN",
                             help="bearer token the leader requires for uploads")
+    dap_submit.add_argument("--keys", default=None, metavar="FILE",
+                            help="a DAP role key file to read the leader's collector token from "
+                                 "when --token is not given")
     dap_submit.add_argument("--dir", default=None, metavar="DIR",
                             help="the mesh state whose consent applies, as `report submit` uses")
     dap_submit.add_argument("--json", action="store_true")
@@ -289,6 +319,8 @@ def add_arguments(parser) -> None:
     cred_verify = cred_sub.add_parser("verify", help="check a certificate against an issuer public key")
     cred_verify.add_argument("file", metavar="FILE")
     cred_verify.add_argument("--issuer-public", required=True, metavar="HEX_PUBLIC")
+    cred_verify.add_argument("--revoked", default=None, metavar="FILE",
+                             help="the issuer's revoked.json; a listed certificate is refused")
 
     harness = sub.add_parser("harness", help="measure a policy's false-positive rate and cost on a benign corpus")
     harness.add_argument("--policy", required=True, metavar="FILE", help="a policy or pack document")
@@ -313,6 +345,8 @@ def add_arguments(parser) -> None:
     consensus_export.add_argument("--state", required=True, metavar="FILE")
     consensus_export.add_argument("--out", default=None, metavar="FILE", help="write the pack here (default: stdout)")
     consensus_export.add_argument("--stats", action="store_true", help="export the public statistics instead")
+    consensus_export.add_argument("--similarity", action="store_true",
+                                  help="export the active similarity campaigns as a mesh_similarity_guard pack")
     consensus_export.add_argument("--aggregator", action="append", default=[], metavar="URL",
                                   help="with --stats: an aggregator whose combined totals give per-rule fire "
                                        "counts; give at least two")
@@ -422,7 +456,8 @@ def _gossip(args) -> int:
 def _credential(args) -> int:
     import os
 
-    from ..mesh.credential import CredentialError, Issuer, Revocations, issuer_map, verify_certificate
+    from ..mesh.credential import (CredentialError, Issuer, Revocations, issuer_map,
+                                      load_revocations, verify_certificate)
 
     command = args.credential_command
     if command == "init":
@@ -462,7 +497,8 @@ def _credential(args) -> int:
         try:
             with open(args.file, "r", encoding="utf-8") as fh:
                 cert = json.load(fh)
-            body = verify_certificate(cert, issuer_map([args.issuer_public]))
+            body = verify_certificate(cert, issuer_map([args.issuer_public]),
+                                      revoked=load_revocations(args.revoked) if args.revoked else None)
         except (OSError, ValueError, CredentialError) as exc:
             sys.stderr.write("interlock mesh credential: REFUSED: {}\n".format(exc))
             return 2
@@ -891,7 +927,8 @@ def _report_submit(args, mesh_dir: str) -> int:
     try:
         reply = submit(args.consensus.rstrip("/") + "/v1/reports", outgoing, token=args.token)
     except (OSError, ReportError) as exc:
-        sys.stderr.write("interlock mesh report: consensus {}: {}\n".format(args.consensus, exc))
+        sys.stderr.write("interlock mesh report: consensus {}: {}\n".format(
+            args.consensus, _upstream_reason(exc)))
         return 2
     print("consensus: {}".format("accepted" if reply.get("accepted") else "refused: {}".format(reply.get("reason"))))
     if shares is None:
@@ -903,7 +940,8 @@ def _report_submit(args, mesh_dir: str) -> int:
         try:
             answer = submit(url.rstrip("/") + "/v1/shares", {"report_id": report_id, "shares": share}, token=args.token)
         except (OSError, ReportError) as exc:
-            sys.stderr.write("interlock mesh report: aggregator {}: {}\n".format(url, exc))
+            sys.stderr.write("interlock mesh report: aggregator {}: {}\n".format(
+                url, _upstream_reason(exc)))
             return 2
         print("aggregator {}: {}".format(url, "accepted" if answer.get("accepted") else answer))
     return 0 if reply.get("accepted") else 2
@@ -948,6 +986,11 @@ def _dap(args) -> int:
             return 2
         try:
             task = load_task(args.task)
+            token = args.token
+            if token is None and args.keys:
+                token = load_role_keys(args.keys, task).token("leader")
+                if token is None:
+                    raise TaskError("{} holds no leader token".format(args.keys))
             with open(args.report, "r", encoding="utf-8") as fh:
                 envelope = json.load(fh)
             body = verify_report(envelope)
@@ -962,14 +1005,14 @@ def _dap(args) -> int:
             return 2
         try:
             batch_index = task.batch_for_counts(counts)
-            plan, result = client.submit_counts(task, counts, token=args.token,
+            plan, result = client.submit_counts(task, counts, token=token,
                                                 batch_index=batch_index)
         except (client.ClientError, TaskError, ReportError, OSError) as exc:
             sys.stderr.write("interlock mesh dap: not sent: {}\n".format(exc))
             return 2
         if args.json:
             print(json.dumps({
-                "report_id": plan.report.report_id.hex(),
+                "report_id": plan.report.metadata.report_id.hex(),
                 "batch": plan.batch_index,
                 "measurement": list(plan.measurement),
                 "accepted": bool(result.accepted),
@@ -979,7 +1022,7 @@ def _dap(args) -> int:
             return 0 if result.accepted else 2
         if result.accepted:
             print("report {}: accepted by the leader for batch {}".format(
-                plan.report.report_id.hex(), plan.batch_index))
+                plan.report.metadata.report_id.hex(), plan.batch_index))
             return 0
         for error in result.errors:
             print("report {}: refused: {}".format(error.report_id.hex(), m_name(error.error)),
@@ -1066,6 +1109,17 @@ def _serve(args) -> int:
         return _serve_dap(args)
 
     config = {}
+    if args.revoked and args.role != "consensus":
+        sys.stderr.write("interlock mesh serve: --revoked is for --role consensus\n")
+        return 64
+    if args.revoked:
+        from ..mesh.credential import CredentialError, load_revocations
+
+        try:
+            config["revoked"] = sorted(load_revocations(args.revoked).ids)
+        except (OSError, ValueError, CredentialError) as exc:
+            sys.stderr.write("interlock mesh serve: cannot read {}: {}\n".format(args.revoked, exc))
+            return 2
     if args.min_orgs:
         config["min_orgs"] = args.min_orgs
     if args.min_batch is not None:
@@ -1076,12 +1130,14 @@ def _serve(args) -> int:
         config["min_batch"] = args.min_batch
     if args.require_credential:
         config["require_credential"] = True
+    if args.issuer:
         config["issuers"] = list(args.issuer)
     directory = args.dir or default_mesh_dir()
     try:
         server = make_server(args.role, args.bind, state_path=args.state, token=args.token,
                              known_catalogs=tuple(args.known_catalog), config=config or None,
-                             directory=directory if args.role == "mirror" else None)
+                             directory=directory if args.role == "mirror" else None,
+                             revoked_path=args.revoked)
     except (OSError, ValueError) as exc:
         sys.stderr.write("interlock mesh serve: {}\n".format(exc))
         return 2
@@ -1112,6 +1168,9 @@ def _consensus(args) -> int:
     if args.consensus_command != "export":
         sys.stderr.write("interlock mesh consensus: choose an action: export, forget\n")
         return 64
+    if args.stats and args.similarity:
+        sys.stderr.write("interlock mesh consensus: --stats and --similarity are different exports\n")
+        return 64
     if args.aggregator and (not args.stats or len(args.aggregator) < 2):
         sys.stderr.write("interlock mesh consensus: --aggregator goes with --stats, given at least twice\n")
         return 64
@@ -1120,7 +1179,12 @@ def _consensus(args) -> int:
     except (OSError, ValueError) as exc:
         sys.stderr.write("interlock mesh consensus: cannot load {}: {}\n".format(args.state, exc))
         return 3
-    payload = engine.export_stats() if args.stats else engine.export_indicators()
+    if args.stats:
+        payload = engine.export_stats()
+    elif args.similarity:
+        payload = engine.export_similarity()
+    else:
+        payload = engine.export_indicators()
     if args.aggregator:
         try:
             fire = _aggregator_fire_totals(args.aggregator, args.token)

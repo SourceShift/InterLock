@@ -14,6 +14,7 @@ import type {
   DetectorsResponse,
   DoctorCheck,
   EvaluateResult,
+  MeshStatus,
   Hook,
   McpServer,
   Overlay,
@@ -176,6 +177,8 @@ export interface Data {
   backtestErr: string | null;
   sweep: SweepResult | null;
   sweepErr: string | null;
+  mesh: MeshStatus | null;
+  meshErr: string | null;
 }
 
 export const initialState = (): State => ({
@@ -280,4 +283,6 @@ export const initialData = (): Data => ({
   backtestErr: null,
   sweep: null,
   sweepErr: null,
+  mesh: null,
+  meshErr: null,
 });

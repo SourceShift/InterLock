@@ -6,6 +6,7 @@ import { AuditScreen } from "./AuditScreen";
 import { CatalogScreen } from "./CatalogScreen";
 import { InspectorScreen } from "./InspectorScreen";
 import { KeysDialog } from "./KeysDialog";
+import { MeshScreen } from "./MeshScreen";
 import { NavDrawer } from "./NavDrawer";
 import { NotFoundScreen } from "./NotFoundScreen";
 import { OpsScreen } from "./OpsScreen";
@@ -148,6 +149,21 @@ export function Shell({ v }: { v: Vals }) {
                       <span className="sc-interp">{v.posture.mark}</span>
                     </span>
                   </a>
+                  <a href="#/mesh" data-testid="nav-mesh" style={{ display: "flex", alignItems: "center", gap: "10px", padding: "7px 10px", borderRadius: "7px", textDecoration: "none", color: v.nav.mesh.c, background: v.nav.mesh.bg }} className="ilh-3">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 3v6"></path>
+                      <path d="M12 15v6"></path>
+                      <path d="M3 12h6"></path>
+                      <path d="M15 12h6"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                    <span style={{ flex: "1" }}>
+                      Mesh
+                    </span>
+                    <span style={{ fontFamily: "'Martian Mono',monospace", fontSize: "10px", color: v.posture.c }}>
+                      <span className="sc-interp">{v.posture.mark}</span>
+                    </span>
+                  </a>
                 </div>
               </nav>
               <div style={{ padding: "14px 18px 16px", borderTop: "1px solid var(--il-rule)", display: "flex", flexDirection: "column", gap: "6px", fontFamily: "'Martian Mono',monospace", fontSize: "10px", color: "var(--il-dim)" }}>
@@ -272,6 +288,8 @@ export function Shell({ v }: { v: Vals }) {
             {v.is.inspector ? <InspectorScreen v={v} /> : null}
             {" "}
             {v.is.ops ? <OpsScreen v={v} /> : null}
+            {" "}
+            {v.is.mesh ? <MeshScreen v={v} /> : null}
             {" "}
             {v.is.notfound ? <NotFoundScreen v={v} /> : null}
           </main>

@@ -50,7 +50,8 @@ class MeshServer(ThreadingHTTPServer):
 
     def __init__(self, address: Tuple[str, int], role: str, *, state_path: Optional[str] = None,
                  token: Optional[str] = None, engine: Optional[ConsensusEngine] = None,
-                 aggregator: Optional[Aggregator] = None, directory: Optional[str] = None) -> None:
+                 aggregator: Optional[Aggregator] = None, directory: Optional[str] = None,
+                 revoked_path: Optional[str] = None) -> None:
         if role not in ("consensus", "aggregator", "mirror"):
             raise ValueError("role must be consensus, aggregator or mirror")
         super().__init__(address, _Handler)
@@ -60,6 +61,9 @@ class MeshServer(ThreadingHTTPServer):
         self.lock = threading.Lock()
         self.engine = engine
         self.aggregator = aggregator
+        #: The issuer's published revocation document, re-read before every
+        #: report: replacing the file revokes a member without a restart.
+        self.revoked_path = os.path.abspath(revoked_path) if revoked_path else None
         # mirror: the directory whose metadata/, targets/ and log/ are served read-only
         # (a node's verified mesh cache, or a published site).
         self.directory = os.path.abspath(directory) if directory else None
@@ -78,6 +82,23 @@ class MeshServer(ThreadingHTTPServer):
         elif self.role == "aggregator" and self.aggregator is not None:
             atomic_write(self.state_path, json.dumps({"version": 1, "reports": self.aggregator.to_dict()},
                                                      sort_keys=True).encode("utf-8"), mode=0o600)
+
+    def refresh_revocations(self) -> None:
+        """Reload ``revoked_path`` if it changed; keep the last good list.
+
+        A file that becomes unreadable must not silently un-revoke anyone, so
+        an error leaves the previous list in force (fail closed on the list we
+        already had). Startup already loaded it via ``make_server``.
+        """
+        if not self.revoked_path or self.engine is None:
+            return
+        from .credential import CredentialError, load_revocations
+
+        try:
+            revoked = load_revocations(self.revoked_path)
+        except (OSError, ValueError, CredentialError):
+            return
+        self.engine.set_revocations(revoked.ids)
 
     @property
     def url(self) -> str:
@@ -217,6 +238,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._reply(404, {"error": "no such route"})
             return
         if self.server.role == "consensus" and self.server.engine is not None and path == "/v1/reports":
+            self.server.refresh_revocations()
             result = self.server.engine.ingest(payload)
             if result.get("accepted"):
                 with self.server.lock:
@@ -255,7 +277,8 @@ class _Handler(BaseHTTPRequestHandler):
 
 def make_server(role: str, bind: str = "127.0.0.1:0", *, state_path: Optional[str] = None,
                 token: Optional[str] = None, known_catalogs: Tuple[str, ...] = (),
-                config: Optional[Dict[str, Any]] = None, directory: Optional[str] = None) -> MeshServer:
+                config: Optional[Dict[str, Any]] = None, directory: Optional[str] = None,
+                revoked_path: Optional[str] = None) -> MeshServer:
     """Build a server for ``role`` on ``bind`` (``host:port``; port 0 picks one),
     restoring state from ``state_path`` when it exists. A ``mirror`` serves
     ``directory`` read-only and answers gossip. ``config`` is the consensus
@@ -271,6 +294,9 @@ def make_server(role: str, bind: str = "127.0.0.1:0", *, state_path: Optional[st
     if role == "consensus":
         if state_path and _exists(state_path):
             engine = ConsensusEngine.load(state_path)
+            # A flag on this restart is an operator decision and wins over the
+            # stored config; a flag that is absent keeps what the state had.
+            engine.reconfigure(config or {})
         else:
             engine = ConsensusEngine(config)
         for cid in known_catalogs:
@@ -283,7 +309,7 @@ def make_server(role: str, bind: str = "127.0.0.1:0", *, state_path: Optional[st
         else:
             aggregator = Aggregator(min_batch)
     return MeshServer((host, port), role, state_path=state_path, token=token, engine=engine,
-                      aggregator=aggregator)
+                      aggregator=aggregator, revoked_path=revoked_path)
 
 
 def _exists(path: str) -> bool:

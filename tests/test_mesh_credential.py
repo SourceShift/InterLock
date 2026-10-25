@@ -60,3 +60,28 @@ def test_verification_refusals():
         verify_certificate("nope", issuers, now=NOW)
     with pytest.raises(CredentialError):
         issuer.issue("x", b"short", epoch=epoch)
+
+
+def test_credential_verify_refuses_a_revoked_certificate(tmp_path, capsys):
+    """`credential revoke` writes the list; `credential verify --revoked` is the
+    reader that makes it enforceable. Without the flag only the signature and
+    epoch are checked."""
+    import json
+
+    from interlock.cli import main
+
+    issuer_dir = tmp_path / "issuer"
+    assert main(["mesh", "credential", "init", "--out", str(issuer_dir)]) == 0
+    public = json.loads((issuer_dir / "issuer.json").read_text())["public"]
+    pseudonym = ed25519.public_key(ed25519.generate_seed()).hex()
+    cert_path = tmp_path / "cert.json"
+    assert main(["mesh", "credential", "issue", "--issuer", str(issuer_dir),
+                 "--member", "acme", "--pseudonym", pseudonym,
+                 "--out", str(cert_path)]) == 0
+    cert = json.loads(cert_path.read_text())
+    assert main(["mesh", "credential", "verify", str(cert_path),
+                 "--issuer-public", public]) == 0
+    assert main(["mesh", "credential", "revoke", "--issuer", str(issuer_dir), cert["id"]]) == 0
+    assert main(["mesh", "credential", "verify", str(cert_path), "--issuer-public", public,
+                 "--revoked", str(issuer_dir / "revoked.json")]) == 2
+    assert "REFUSED" in capsys.readouterr().err

@@ -474,3 +474,44 @@ def test_enable_needs_no_commons_and_status_and_doctor_show_it(tmp_path, monkeyp
         state["report"] = bad
         node._save_state(state)
         assert node.report_consent()["enabled_at"] is None
+
+
+def test_restart_flags_override_persisted_consensus_config(tmp_path):
+    path = str(tmp_path / "consensus.json")
+    first = make_server("consensus", "127.0.0.1:0", state_path=path, config={"min_orgs": 5})
+    first.engine.save(path)
+    first.server_close()
+    again = make_server("consensus", "127.0.0.1:0", state_path=path, config={"min_orgs": 2})
+    try:
+        assert again.engine.config["min_orgs"] == 2
+    finally:
+        again.server_close()
+
+
+def test_a_revoked_certificate_is_refused_after_the_next_report(tmp_path, servers):
+    """The consensus server re-reads the revocation file before every report, so
+    a revocation lands without a restart; a listed certificate cannot report."""
+    from interlock.mesh.credential import Issuer, epoch_of
+
+    issuer = Issuer(ed25519.generate_seed())
+    revoked_path = tmp_path / "revoked.json"
+    revoked_path.write_text(json.dumps({"revoked": []}))
+    consensus = servers("consensus", known_catalogs=("cat1",),
+                        config={"require_credential": True, "issuers": [issuer.public.hex()]},
+                        revoked_path=str(revoked_path))
+
+    admitted, listed = ReporterKey(ed25519.generate_seed()), ReporterKey(ed25519.generate_seed())
+    epoch = epoch_of(time.time())
+    admitted_cert = issuer.issue("admitted", admitted.public, epoch=epoch)
+    listed_cert = issuer.issue("listed", listed.public, epoch=epoch)
+    assert submit(consensus.url + "/v1/reports",
+                  sign_report(report_for(admitted), admitted, credential=admitted_cert))["accepted"]
+    assert submit(consensus.url + "/v1/reports",
+                  sign_report(report_for(listed), listed, credential=listed_cert))["accepted"]
+
+    revoked_path.write_text(json.dumps({"revoked": [listed_cert["id"]]}))
+    with pytest.raises(urllib.error.HTTPError) as err:
+        submit(consensus.url + "/v1/reports",
+               sign_report(report_for(listed), listed, credential=listed_cert))
+    assert err.value.code == 422
+    assert "credential" in json.loads(err.value.read().decode())["reason"]

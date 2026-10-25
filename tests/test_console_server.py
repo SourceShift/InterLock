@@ -458,3 +458,22 @@ def test_server_handle_error_is_silent_for_a_gone_client_and_one_line_otherwise(
         server.server_close()
     assert err == "interlock-console: RuntimeError while handling a request\n"
     assert "Traceback" not in err and "secret detail" not in err
+
+
+def test_mesh_endpoint_reads_the_configured_directory(tmp_path):
+    """The Mesh page's route reports this node's real mesh state, and an
+    unconfigured directory reads as off rather than as an error."""
+    import os
+
+    root = tmp_path / "dist"
+    root.mkdir()
+    mesh_dir = tmp_path / "mesh"
+    mesh_dir.mkdir()
+    with _serve(root) as server:
+        server.mesh_dir = os.path.abspath(str(mesh_dir))
+        response, body = _request(server, "/api/mesh")
+        assert response.status == 200
+        document = json.loads(body)
+        assert document["configured"] is False
+        assert document["dir"] == os.path.abspath(str(mesh_dir))
+        assert document["report"]["layers"] == [] and document["report"]["enabled_at"] is None

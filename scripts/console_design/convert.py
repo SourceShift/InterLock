@@ -359,7 +359,8 @@ def main():
         comp = "".join(w.capitalize() for w in re.split(r"[.]", key)[-1:])
         comp = {"is.activity": "ActivityScreen", "is.reviews": "ReviewsScreen", "is.audit": "AuditScreen",
                 "is.policy": "PolicyScreen", "is.playground": "PlaygroundScreen", "is.catalog": "CatalogScreen",
-                "is.inspector": "InspectorScreen", "is.ops": "OpsScreen", "is.notfound": "NotFoundScreen",
+                "is.inspector": "InspectorScreen", "is.ops": "OpsScreen", "is.mesh": "MeshScreen",
+                "is.notfound": "NotFoundScreen",
                 "navOpen": "NavDrawer", "unlockOpen": "UnlockDialog", "keysOpen": "KeysDialog",
                 "saveOpen": "SaveDialog"}[key]
         names[key] = comp

@@ -97,6 +97,111 @@ function ReceiptCall({ S, D, A }: { S: State; D: Data; A: Actions }) {
   );
 }
 
+// --- mesh (the shared policy commons) ---------------------------------------------------
+
+function MeshPanel({ D, A }: { D: Data; A: Actions }) {
+  const m = D.mesh;
+  if (D.meshErr) {
+    return (
+      <section style={panel} data-testid="mesh-panel">
+        <span style={label}>Mesh</span>
+        <span style={{ fontSize: "12.5px", color: "var(--il-block)" }}>✗ {D.meshErr}</span>
+      </section>
+    );
+  }
+  if (!m) {
+    return (
+      <section style={panel} data-testid="mesh-panel">
+        <span style={label}>Mesh</span>
+        <span style={dim}>Reading this node's mesh state…</span>
+      </section>
+    );
+  }
+  const packs = Object.entries(m.packs ?? {});
+  const layers = m.report.layers;
+  const lastSync = typeof m.last_sync === "number" ? fmtDT(m.last_sync * 1000) : "never";
+  const enabled = typeof m.report.enabled_at === "number" ? fmtDT(m.report.enabled_at * 1000) : "";
+  const splits = Array.isArray(m.split_views) ? m.split_views.length : 0;
+  return (
+    <section style={panel} data-testid="mesh-panel">
+      <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, fontSize: "14px", fontWeight: 600 }}>Mesh</h2>
+        <span style={{ ...dim, flex: 1 }}>
+          {m.configured ? "a shared policy commons, verified against this node's pinned root" : "no commons on this node"}
+        </span>
+        <button style={btn} onClick={() => A.refreshMesh()}>Refresh</button>
+      </div>
+
+      {!m.configured ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <span style={dim}>Reporting consent can be set without a commons; policy packs need one.</span>
+          <code style={code}>interlock mesh init --root root.json --mirror https://commons.example.org</code>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "1px", background: "var(--il-rule)", border: "1px solid var(--il-rule)", borderRadius: "8px", overflow: "hidden" }}>
+          {[
+            { k: "root", v: m.root_version ? "v" + m.root_version : "—", c: m.timestamp_expired ? "var(--il-rewrite)" : "var(--il-fg)" },
+            { k: "ring", v: m.ring ?? "—", c: "var(--il-fg)" },
+            { k: "packs", v: num(packs.length), c: "var(--il-fg)" },
+            { k: "last sync", v: lastSync, c: "var(--il-fg)" },
+            { k: "timestamp expires", v: m.timestamp_expires ? fmtDT(Date.parse(m.timestamp_expires)) : "—", c: m.timestamp_expired ? "var(--il-rewrite)" : "var(--il-fg)" },
+            { k: "split views", v: num(splits), c: splits ? "var(--il-block)" : "var(--il-allow)" },
+          ].map((x) => (
+            <div key={x.k} style={{ background: "var(--il-panel)", padding: "9px 11px", display: "flex", flexDirection: "column", gap: "1px" }}>
+              <span style={{ fontSize: "14px", fontWeight: 600, fontVariantNumeric: "tabular-nums", color: x.c }}>{x.v}</span>
+              <span style={{ fontFamily: mono, fontSize: "9.5px", color: "var(--il-dim)" }}>{x.k}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {m.last_error ? <span style={{ fontSize: "12px", color: "var(--il-rewrite)" }}>! last sync: {m.last_error}</span> : null}
+      {m.cache_error ? <span style={{ fontSize: "12px", color: "var(--il-block)" }}>✗ cache: {m.cache_error}</span> : null}
+
+      {m.configured ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+          <span style={label}>Verified packs</span>
+          {packs.length === 0 ? <span style={dim}>No packs in the verified cache yet. Run <code style={{ fontFamily: mono }}>interlock mesh sync</code>.</span> : null}
+          {packs.map(([path, info]) => {
+            const status = typeof info.status === "string" ? info.status : null;
+            const version = typeof info.version === "number" || typeof info.version === "string" ? String(info.version) : null;
+            const sha = typeof info.sha256 === "string" ? info.sha256.slice(0, 12) : "";
+            return (
+              <div key={path} style={{ display: "flex", gap: "8px", alignItems: "center", borderTop: "1px solid var(--il-rule)", paddingTop: "6px", minWidth: 0 }}>
+                <code style={{ fontFamily: mono, fontSize: "10.5px", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{path}</code>
+                {version ? <span style={{ ...dim, fontFamily: mono, fontSize: "10px" }}>v{version}</span> : null}
+                {status ? <span style={{ fontFamily: mono, fontSize: "9.5px", padding: "1px 6px", borderRadius: "4px", border: "1px solid var(--il-rule2)", color: "var(--il-fg2)" }}>{status}</span> : null}
+                <span style={{ fontFamily: mono, fontSize: "9.5px", color: "var(--il-dim)" }}>{sha}</span>
+              </div>
+            );
+          })}
+          <span style={dim}>
+            {typeof m.capped === "number" && m.capped > 0 ? m.capped + " rule(s) capped to escalate by the node's grants. " : ""}
+            {Object.keys(m.grants ?? {}).length} grant(s) in force.
+          </span>
+        </div>
+      ) : null}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px", borderTop: "1px solid var(--il-rule)", paddingTop: "10px" }}>
+        <span style={label}>Reporting consent</span>
+        {layers.length ? (
+          <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", alignItems: "center" }}>
+            {layers.map((layer) => (
+              <span key={layer} style={{ fontFamily: mono, fontSize: "10px", padding: "2px 7px", borderRadius: "5px", color: "var(--il-allow)", border: "1px solid color-mix(in oklch, var(--il-allow) 45%, transparent)" }}>{layer}</span>
+            ))}
+            <span style={dim}>since {enabled}; alpha {m.report.alpha}</span>
+            {m.report.sample_rules.length ? <span style={dim}>samples for {m.report.sample_rules.join(", ")}</span> : null}
+          </div>
+        ) : (
+          <span style={dim}>Off. Nothing leaves this node. Enable one layer at a time with <code style={{ fontFamily: mono }}>interlock mesh report enable</code>.</span>
+        )}
+      </div>
+
+      <code style={code}>{m.configured ? "interlock mesh sync\ninterlock mesh status" : "interlock mesh init --root root.json --mirror URL"}</code>
+    </section>
+  );
+}
+
 // --- real calls in the playground --------------------------------------------------------
 
 function RealCalls({ S, D, A }: { S: State; D: Data; A: Actions }) {
@@ -342,6 +447,7 @@ export interface Extras {
   backtest: ReactNode;
   sweep: ReactNode;
   detectorHits: ReactNode;
+  mesh: ReactNode;
 }
 
 export function renderExtras(S: State, D: Data, A: Actions): Extras {
@@ -351,5 +457,6 @@ export function renderExtras(S: State, D: Data, A: Actions): Extras {
     backtest: <Backtest S={S} D={D} A={A} />,
     sweep: <Sweep S={S} D={D} A={A} />,
     detectorHits: <DetectorHits S={S} D={D} A={A} />,
+    mesh: <MeshPanel D={D} A={A} />,
   };
 }

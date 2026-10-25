@@ -50,6 +50,7 @@ input,textarea,select,button{font:inherit;color:inherit}
 <div style="display:flex;flex-direction:column;gap:2px">
 <span style="font-family:'Martian Mono',monospace;font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--il-dim);padding:0 10px 6px">Operate</span>
 <a href="#/ops" data-testid="nav-ops" style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;text-decoration:none;color:{{ nav.ops.c }};background:{{ nav.ops.bg }}" style-hover="background:var(--il-hover)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 14 4-4"></path><path d="M3.34 19a10 10 0 1 1 17.32 0"></path></svg><span style="flex:1">Ops</span><span style="font-family:'Martian Mono',monospace;font-size:10px;color:{{ posture.c }}">{{ posture.mark }}</span></a>
+<a href="#/mesh" data-testid="nav-mesh" style="display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;text-decoration:none;color:{{ nav.mesh.c }};background:{{ nav.mesh.bg }}" style-hover="background:var(--il-hover)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v6"></path><path d="M12 15v6"></path><path d="M3 12h6"></path><path d="M15 12h6"></path><circle cx="12" cy="12" r="3"></circle></svg><span style="flex:1">Mesh</span><span style="font-family:'Martian Mono',monospace;font-size:10px;color:{{ posture.c }}">{{ posture.mark }}</span></a>
 </div>
 </nav>
 <div style="padding:14px 18px 16px;border-top:1px solid var(--il-rule);display:flex;flex-direction:column;gap:6px;font-family:'Martian Mono',monospace;font-size:10px;color:var(--il-dim)">
@@ -622,6 +623,12 @@ input,textarea,select,button{font:inherit;color:inherit}
 </div>
 </sc-if>
 
+<sc-if value="{{ is.mesh }}">
+<div style="padding:18px 18px 40px;display:flex;flex-direction:column;gap:16px;max-width:1180px">
+<il-extra name="mesh"></il-extra>
+</div>
+</sc-if>
+
 <sc-if value="{{ is.notfound }}">
 <div style="padding:60px 28px;display:flex;flex-direction:column;gap:10px;align-items:flex-start"><span style="font-family:'Martian Mono',monospace;font-size:11px;color:var(--il-dim)">#/{{ notFoundPath }}</span><h2 style="margin:0;font-size:20px;font-weight:600">There's no page here</h2><a href="#/">Go to Activity →</a></div>
 </sc-if>
@@ -876,10 +883,10 @@ class Component extends DCLogic {
   renderVals() {
     const S = this.state, P = this.props, now = S.now, route = S.route, path = route.path;
     const narrow = P.frame === 'narrow' || S.w < 760, wide = !narrow;
-    const known = ['activity', 'reviews', 'audit', 'policy', 'playground', 'catalog', 'inspector', 'ops'];
+    const known = ['activity', 'reviews', 'audit', 'policy', 'playground', 'catalog', 'inspector', 'ops', 'mesh'];
     const is = {}; known.forEach(k => is[k] = path === k); is.notfound = !known.includes(path);
     const nav = {}; known.forEach(k => nav[k] = { c: path === k ? 'var(--il-fg)' : 'var(--il-fg2)', bg: path === k ? 'var(--il-sel)' : 'transparent' });
-    const titles = { activity: 'Activity', reviews: 'Reviews', audit: 'Audit log', policy: 'Policy', playground: 'Playground', catalog: 'Detectors', inspector: 'Scopes & sandbox', ops: 'Ops' };
+    const titles = { activity: 'Activity', reviews: 'Reviews', audit: 'Audit log', policy: 'Policy', playground: 'Playground', catalog: 'Detectors', inspector: 'Scopes & sandbox', ops: 'Ops', mesh: 'Mesh' };
     const connDown = P.connection === 'unreachable';
     const conn = connDown ? { c: 'var(--il-block)', short: 'console unreachable', down: true } : { c: 'var(--il-allow)', short: 'api ok · v0.9.2 · 127.0.0.1:8787', down: false };
     const recMode = P.receipts || 'configured', receiptsMissing = recMode === 'not configured';

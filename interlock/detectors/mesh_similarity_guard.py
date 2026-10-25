@@ -33,7 +33,8 @@ POLICY_ID = "mesh_similarity"
 
 def mesh_similarity_guard(fingerprints: Iterable[str], alpha: float = 1.5,
                           actions: Optional[Iterable[str]] = None, verdict: str = "escalate",
-                          max_distance: Optional[int] = None) -> Rule:
+                          max_distance: Optional[int] = None,
+                          review_margin: Optional[int] = None) -> Rule:
     """Build a Rule that escalates (or blocks) a call whose arguments are
     similar to a published fingerprint.
 
@@ -41,6 +42,12 @@ def mesh_similarity_guard(fingerprints: Iterable[str], alpha: float = 1.5,
     *alpha* is the privacy budget they were made with, which sets the match
     threshold unless *max_distance* overrides it. *actions* scopes the rule to
     those tool names. *verdict* is ``"escalate"`` (default) or ``"block"``.
+
+    *review_margin* widens the match into a review band: a distance just past
+    the threshold - a one-character edit can land one bit beyond it - is
+    escalated for a human instead of silently allowed, even when the pack asks
+    for a block. It defaults to a tenth of the sketch size; 0 disables the
+    band, and a negative value is treated as 0.
     """
     from ..mesh import fingerprint as fp
 
@@ -56,6 +63,10 @@ def mesh_similarity_guard(fingerprints: Iterable[str], alpha: float = 1.5,
         limit = int(max_distance) if max_distance is not None else fp.threshold(float(alpha))
     except (TypeError, ValueError):
         limit = fp.threshold(fp.DEFAULT_ALPHA)
+    try:
+        margin = max(0, int(review_margin)) if review_margin is not None else fp.DIM // 10
+    except (TypeError, ValueError):
+        margin = fp.DIM // 10
     scoped = canonical_actions(actions) if actions is not None else None
     block = verdict == "block"
 
@@ -75,8 +86,12 @@ def mesh_similarity_guard(fingerprints: Iterable[str], alpha: float = 1.5,
             best = min(fp.hamming(live, candidate) for candidate in published)
         except Exception:
             return None
-        if best > limit:
+        if best > limit + margin:
             return None
+        if best > limit:
+            return Decision.escalate(
+                "mesh_similarity: arguments are just outside the match threshold "
+                "(distance {}, threshold {}); a human should look".format(best, limit), POLICY_ID)
         reason = "mesh_similarity: arguments resemble an attack other deployments blocked (distance {})".format(best)
         if block:
             return Decision.block(reason, POLICY_ID)

@@ -159,6 +159,7 @@ export class ConsoleStore {
       void this.loadDoctor();
       void this.loadOps();
     }
+    if (path === "mesh") void this.loadMesh();
   }
 
   private hashFor(path: string) {
@@ -431,6 +432,14 @@ export class ConsoleStore {
       }
     } catch {
       /* the editors stay empty */
+    }
+  }
+
+  private async loadMesh() {
+    try {
+      this.data({ mesh: await api.fetchMesh(), meshErr: null });
+    } catch (e) {
+      this.data({ meshErr: errText(e) });
     }
   }
 
@@ -892,6 +901,7 @@ export class ConsoleStore {
     },
     resolveScope: () => void this.resolveScope(),
     loadRealCalls: () => void this.loadRealCalls(),
+    refreshMesh: () => void this.loadMesh(),
     setRealFilter: (f) => {
       this.set({ rcQ: f.q ?? this.S.rcQ, rcTool: f.tool ?? this.S.rcTool });
       this.realCallsSoon();

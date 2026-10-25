@@ -89,6 +89,40 @@ export interface Session {
 }
 
 export const fetchSession = () => call<Session>("/api/session");
+
+// --- mesh ---------------------------------------------------------------------
+
+/** The node's mesh state, as `interlock mesh status --json` reports it. */
+export interface MeshStatus {
+  dir: string;
+  configured: boolean;
+  report: {
+    enabled_at: number | null;
+    layers: string[];
+    alpha: number;
+    sample_rules: string[];
+    attestation: { at?: number; warranty?: string } | null;
+  };
+  mirrors?: string[];
+  ring?: string;
+  monitor_days?: number;
+  last_sync?: number | null;
+  last_error?: string | null;
+  subscriptions?: Record<string, unknown>;
+  next_transition?: Record<string, unknown>;
+  split_views?: unknown[];
+  log?: Record<string, unknown> | null;
+  grants?: Record<string, unknown>;
+  capped?: number;
+  root_version?: number;
+  timestamp_expires?: string | null;
+  timestamp_expired?: boolean;
+  packs?: Record<string, Record<string, unknown>>;
+  cache_error?: string;
+  shadow?: Record<string, unknown>;
+}
+
+export const fetchMesh = () => call<MeshStatus>("/api/mesh");
 export const unlock = (code: string) => call<{ token: string }>("/api/unlock", { method: "POST", body: { code } });
 export const lock = () => call<{ locked: boolean }>("/api/lock", { method: "POST", body: {} });
 

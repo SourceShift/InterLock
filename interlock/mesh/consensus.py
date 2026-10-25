@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Set
 
 from ._util import atomic_write, read_bounded
 from .report import ReportError, check_attestation, verify_report
@@ -95,6 +95,25 @@ class ConsensusEngine:
         self.samples: Dict[str, List[Dict[str, Any]]] = {}  # policy_id -> redacted samples
         self.rejected = 0
         self._dropped_samples: Dict[str, int] = {}        # digest -> unattested copies load() left on disk
+
+    def reconfigure(self, config: Mapping[str, Any]) -> None:
+        """Apply operator flags over a config loaded from persisted state.
+
+        A collector restarted with ``--require-credential`` must start
+        enforcing; otherwise the flags on a persisted engine would be
+        decoration. Only the keys the caller passes are replaced, so a restart
+        that says nothing about issuers keeps the ones in the state file.
+        """
+        if not config:
+            return
+        with self._lock:
+            self.config.update(dict(config))
+
+    def set_revocations(self, ids: Iterable[str]) -> None:
+        """Replace the revocation list, normally from the issuer's published file."""
+        clean = sorted({str(value) for value in ids if isinstance(value, str)})
+        with self._lock:
+            self.config["revoked"] = clean
 
     # --- maintainer inputs ------------------------------------------------------
 

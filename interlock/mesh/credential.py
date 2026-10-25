@@ -36,11 +36,13 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 from . import ed25519
 from ._util import atomic_write, canonical, read_bounded
 
-__all__ = ["EPOCH_SECONDS", "epoch_of", "Issuer", "verify_certificate", "CredentialError", "Revocations"]
+__all__ = ["EPOCH_SECONDS", "epoch_of", "Issuer", "verify_certificate", "CredentialError", "Revocations",
+           "load_revocations"]
 
 EPOCH_SECONDS = 7 * 86400
 CERT_VERSION = 1
 LEDGER_MAX = 64 * 1024 * 1024
+REVOCATIONS_MAX = 1024 * 1024
 
 
 class CredentialError(ValueError):
@@ -124,6 +126,23 @@ class Revocations:
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "Revocations":
         return cls(x for x in raw.get("revoked", []) if isinstance(x, str))
+
+
+def load_revocations(path: str) -> Revocations:
+    """Read the issuer's published revocation document.
+
+    The file is the one ``credential revoke`` writes: ``{"version": 1,
+    "revoked": [certificate ids]}``. A missing or malformed file raises; a
+    caller that wants fail-closed behaviour decides what that means, because
+    silently treating it as an empty list would un-revoke every member.
+    """
+    raw = json.loads(read_bounded(path, REVOCATIONS_MAX).decode("utf-8"))
+    if not isinstance(raw, Mapping):
+        raise CredentialError("{}: a revocation list must be an object".format(path))
+    entries = raw.get("revoked")
+    if not isinstance(entries, list) or not all(isinstance(x, str) for x in entries):
+        raise CredentialError("{}: 'revoked' must be a list of certificate ids".format(path))
+    return Revocations(entries)
 
 
 def verify_certificate(cert: Any, issuer_keyids: Mapping[str, bytes], *, now: Optional[float] = None,

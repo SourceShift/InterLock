@@ -68,6 +68,13 @@ interlock mesh resolve mesh:coding-agent@early   # the exact document this node 
 interlock doctor               # warns when the timestamp has expired, a sync failed, or the root is due
 ```
 
+The console's **Mesh** page shows the same state read-only: whether a commons
+is configured, the pinned root and ring, the verified packs with their status,
+the timestamp's expiry, mirror count and any split view, and which reporting
+consent layers are on. It reads `GET /api/mesh` from this node's cache, so
+point the console at a non-default directory with
+`interlock console --mesh-dir <dir>`.
+
 ### Grant a block
 
 A grant is the operator's consent for community blocks to block on this node.
@@ -301,6 +308,12 @@ interlock mesh serve --role consensus --bind 127.0.0.1:7949 --state consensus.js
 interlock mesh serve --role aggregator --bind 127.0.0.1:7950 --state agg.json
 ```
 
+Flags passed to `serve` win over values persisted in `--state`: a restarted
+consensus server picks up the CLI's `--min-orgs`, `--token`, `--issuer`,
+`--require-credential` and `--revoked` even when the state file remembers older
+ones. That keeps the state file a record of decisions, not a second, hidden
+configuration.
+
 The consensus engine turns reports into decisions the way every crowdsourced
 defence that works does:
 
@@ -440,7 +453,8 @@ fetch a key.
 interlock mesh report enable                                  # counts consent, once
 interlock mesh report build --receipts ~/.interlock/receipts.jsonl \
     --since 24h --out report.json                            # envelope + report.json.counts.json
-interlock mesh dap submit --report report.json --task /srv/dap/task.json
+interlock mesh dap submit --report report.json --task /srv/dap/task.json \
+    --keys /srv/dap/leader.json
 interlock mesh dap collect --task /srv/dap/task.json \
     --keys /srv/dap/collector.json --start 20743 --json
 ```
@@ -448,7 +462,12 @@ interlock mesh dap collect --task /srv/dap/task.json \
 `submit` maps the counts to the bucket vector, refuses a count outside one
 batch or over the bucket ceiling, shards it with Prio3, encrypts one share to
 each aggregator and posts the report. It prints the report id and whether the
-leader accepted it; a refusal exits 2 and names the wire error.
+leader accepted it; a refusal exits 2 and names the wire error, including the
+collector's own reason when it sends one.
+
+The leader's collector token can come from `--token`, or from the role key file
+with `--keys`; the latter reads the `leader` token the task names, so the flow
+matches `dap collect`:
 
 `--start` is a DAP **Time**: POSIX seconds divided by the task's
 `time_precision`, which is also the batch index. With `--batch-hours 24`, batch
@@ -537,6 +556,21 @@ using the `mesh_similarity_guard` detector: a node that installs it
 fingerprints each call's arguments the same way (without the noise) and
 **escalates** a call within Hamming distance of a published fingerprint.
 Similarity is evidence, not proof, so the default is to ask a human.
+
+A match boundary is never a cliff. The detector blocks at or below the
+threshold and, up to one review margin beyond it (76 bits by default, a tenth
+of the 768 dimensions; `review_margin` on the detector), escalates a near miss
+instead of allowing it. A variant one bit outside the line still reaches a
+human, and the margin can be widened or set to `0` to restore the hard edge.
+The campaign export is available directly:
+
+```bash
+interlock mesh consensus export --state consensus.json --similarity
+```
+
+writes the similarity pack (fingerprints and campaign metadata) that a
+subscriber installs; `--stats` remains the public dashboard export, and asking
+for both is refused.
 
 A **sample** is the redacted text itself, kept only for rules you name, capped,
 and carrying the argument names it came from. Samples exist for the forge, and
@@ -730,3 +764,17 @@ so misbehaviour has an owner and a revocation list. One certificate per
 member per epoch is the Sybil bound. The stated upgrade is an anonymous
 credential or a zero-knowledge membership proof, which would remove the
 issuer's own linkability without changing what verifiers see.
+
+Revocation is enforced, not just recorded. A collector serves the list with
+`--revoked revocations.json` (rewritten by `credential revoke`), re-reads it
+before every consensus report so a revocation lands without a restart, and
+keeps the last good list if a read fails. A verifier checks one certificate
+against the same file:
+
+```bash
+interlock mesh credential verify acme-week.json --revoked revocations.json
+```
+
+An id on that list is refused; without `--revoked` the command checks only the
+signature and epoch, which is why a revocation dead-end was possible before
+the flag existed.

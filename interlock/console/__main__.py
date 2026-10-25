@@ -126,6 +126,12 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         help="the guard daemon's loopback admin address, for its stats and config",
     )
     parser.add_argument(
+        "--mesh-dir",
+        default=None,
+        metavar="DIR",
+        help="the mesh state to show (default: $INTERLOCK_MESH_DIR or ~/.interlock/mesh)",
+    )
+    parser.add_argument(
         "--transcripts",
         default=None,
         metavar="DIR",
@@ -196,6 +202,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sidecar_admin=args.sidecar_admin,
         key_file=args.key_file,
         transcripts=args.transcripts,
+        mesh_dir=args.mesh_dir,
     )
     # The unlock link goes to this terminal and nowhere else (see session.py).
     sys.stderr.write("unlock writes: http://{}:{}/#/unlock/{}\n".format(

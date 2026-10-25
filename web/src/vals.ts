@@ -79,6 +79,7 @@ export interface Actions {
   toggleRealCall(callId: string): void;
   addRealCalls(replace: boolean): void;
   openInPlayground(o: { calls: { call_id: string; session?: string | null; ts?: number }[]; module?: string; factory?: string }): void;
+  refreshMesh(): void;
   runBacktest(): void;
   runSweep(): void;
 }
@@ -181,7 +182,7 @@ export function computeVals(S: State, D: Data, A: Actions) {
   const home = D.session?.home;
   const narrow = S.w < 760;
   const wide = !narrow;
-  const known = ["activity", "reviews", "audit", "policy", "playground", "catalog", "inspector", "ops"] as const;
+  const known = ["activity", "reviews", "audit", "policy", "playground", "catalog", "inspector", "ops", "mesh"] as const;
   const is = {
     activity: path === "activity",
     reviews: path === "reviews",
@@ -191,16 +192,18 @@ export function computeVals(S: State, D: Data, A: Actions) {
     catalog: path === "catalog",
     inspector: path === "inspector",
     ops: path === "ops",
+    mesh: path === "mesh",
     notfound: !(known as readonly string[]).includes(path) && path !== "unlock",
   };
   const navOf = (k: string) => ({ c: path === k ? "var(--il-fg)" : "var(--il-fg2)", bg: path === k ? "var(--il-sel)" : "transparent" });
   const nav = {
     activity: navOf("activity"), reviews: navOf("reviews"), audit: navOf("audit"), policy: navOf("policy"),
     playground: navOf("playground"), catalog: navOf("catalog"), inspector: navOf("inspector"), ops: navOf("ops"),
+    mesh: navOf("mesh"),
   };
   const titles: Record<string, string> = {
     activity: "Activity", reviews: "Reviews", audit: "Audit log", policy: "Policy", playground: "Playground",
-    catalog: "Detectors", inspector: "Scopes & sandbox", ops: "Ops", unlock: "Activity",
+    catalog: "Detectors", inspector: "Scopes & sandbox", ops: "Ops", mesh: "Mesh", unlock: "Activity",
   };
   const baseUrl = window.location.origin;
   const connDown = D.connDown;
@@ -277,6 +280,7 @@ export function computeVals(S: State, D: Data, A: Actions) {
     ["inspector", "#/inspector", "Scopes & sandbox"],
     { group: true, l: "Operate" },
     ["ops", "#/ops", "Ops"],
+    ["mesh", "#/mesh", "Mesh"],
   ].map((d) =>
     Array.isArray(d)
       ? { link: true, group: false, href: d[1], l: d[2], badge: d[3] || "", c: path === d[0] ? "var(--il-fg)" : "var(--il-fg2)", bg: path === d[0] ? "var(--il-sel)" : "transparent" }
@@ -291,6 +295,7 @@ export function computeVals(S: State, D: Data, A: Actions) {
     catalog: D.catalog ? D.catalog.count + " detectors · " + D.catalog.categories.length + " categories" : "",
     inspector: "computes the plan, never runs it",
     ops: "doctor · hooks · MCP · sidecar",
+    mesh: D.mesh?.configured ? (D.mesh.root_version ? "root v" + D.mesh.root_version : "configured") : "not configured",
   };
 
   return {

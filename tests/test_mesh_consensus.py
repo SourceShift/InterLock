@@ -309,3 +309,18 @@ def test_consensus_forget_cli_erases_a_sample_from_an_older_state(engine, tmp_pa
     assert digest not in text and personal not in text
     assert json.loads(text)["samples"] == {}  # the save drops every unattested sample
     assert main(["mesh", "consensus", "forget", "--state", str(path), "--sample", digest]) == 2
+
+
+def test_consensus_export_similarity_from_the_cli(tmp_path, capsys):
+    from interlock.cli import main
+
+    engine = ConsensusEngine()
+    path = tmp_path / "consensus.json"
+    engine.save(str(path))
+    assert main(["mesh", "consensus", "export", "--state", str(path), "--similarity"]) == 0
+    pack = json.loads(capsys.readouterr().out)
+    assert pack["license"] == "CC0-1.0"
+    assert pack["rules"][0]["detector"] == "mesh_similarity_guard.mesh_similarity_guard"
+    assert main(["mesh", "consensus", "export", "--state", str(path),
+                 "--similarity", "--stats"]) == 64
+    assert "--stats and --similarity" in capsys.readouterr().err
