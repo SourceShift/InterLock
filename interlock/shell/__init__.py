@@ -13,6 +13,7 @@ from .intents import (
     analyze,
     first_match,
     intents_in,
+    invocation_bases,
     is_critical_path,
     read_command,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "parse",
     "analyze",
     "read_command",
+    "invocation_bases",
     "intents_in",
     "first_match",
     "is_critical_path",

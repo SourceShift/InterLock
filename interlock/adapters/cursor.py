@@ -16,9 +16,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
+from ..actions import _scalar_text
 from ..enforce import Verdict
 from .base import (
     Adapter,
@@ -53,8 +55,16 @@ class CursorAdapter(Adapter):
         cwd = payload.get("cwd") or (roots[0] if roots else None)
         tool, tool_input = "", {}  # type: str, Dict[str, Any]
         can_ask = True
+        shell_mcp = False
         if event == "beforeShellExecution":
-            tool, tool_input = "Bash", {"command": str(payload.get("command", ""))}
+            raw_command = payload.get("command", "")
+            if isinstance(raw_command, (list, tuple)):
+                # An argv list is the same shell call, not the Python repr
+                # ``str(list)`` would make of it (which no detector parses).
+                command = shlex.join([_scalar_text(c) for c in raw_command])
+            else:
+                command = str(raw_command)
+            tool, tool_input = "Bash", {"command": command}
         elif event == "beforeReadFile":
             tool, tool_input = "Read", {"file_path": str(payload.get("file_path", ""))}
             can_ask = False
@@ -69,6 +79,7 @@ class CursorAdapter(Adapter):
                 tool_input = parsed if isinstance(parsed, dict) else {"raw": parsed}
             elif isinstance(raw, dict):
                 tool_input = raw
+            shell_mcp = _is_shell_tool(tool)
         call = HookCall(agent=self.name, kind="pre" if tool else "ignore", event_name=event,
                         tool_name=tool, tool_input=normalize_args(tool_input, cwd),
                         session_id=session, cwd=cwd, can_ask=can_ask, can_rewrite=False,
@@ -77,6 +88,14 @@ class CursorAdapter(Adapter):
         if tool:
             call.events = call_events(self.name, tool, tool_input, session_id=session,
                                       call_id=call.call_id, cwd=cwd)
+        if shell_mcp:
+            # An MCP server exposing a shell is still the shell the call-side
+            # pack rules are scoped to. Judge the call twice - once under its
+            # MCP name, so rules and receipts keep that identity, and once as
+            # ``Bash``, so a namespace cannot hide the command from them.
+            call.events += call_events(self.name, "Bash", tool_input,
+                                       session_id=session, call_id=call.call_id,
+                                       cwd=cwd)
         return call
 
     def render(self, call: HookCall, outcome: HookOutcome) -> Rendered:
@@ -147,6 +166,20 @@ def mcp_tool_name(payload: Dict[str, Any]) -> str:
     elif payload.get("url"):
         server = urlparse(str(payload["url"])).hostname or ""
     return "mcp__{}__{}".format(_component(server or "unknown"), _component(name or "unknown"))
+
+
+#: Final components of MCP tool names that run a shell command. Kept narrow:
+#: a tool merely called ``run`` or ``command`` is not assumed to be a shell.
+_SHELL_TOOL_NAMES = frozenset({
+    "bash", "sh", "zsh", "dash", "ksh", "fish", "shell", "shell_exec",
+    "exec_shell", "run_shell", "execute_shell", "run_bash", "bash_exec",
+    "execute_command", "run_command", "shell_command", "terminal",
+})
+
+
+def _is_shell_tool(tool: str) -> bool:
+    """Whether an ``mcp__<server>__<tool>`` name's tool is a shell runner."""
+    return tool.rsplit("__", 1)[-1].lower() in _SHELL_TOOL_NAMES
 
 
 def _component(value: str) -> str:

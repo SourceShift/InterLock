@@ -191,16 +191,33 @@ def _disk_case(path: str) -> str:
 
 
 def patch_targets(patch: str, cwd: Optional[str]) -> List[str]:
-    """Files an ``apply_patch`` body touches, from its ``*** ... File:`` lines."""
+    """Files an ``apply_patch`` body touches, from its ``*** ... File:`` lines.
+
+    A header may arrive indented (a payload wrapped in a code block, a leading
+    space): the structural ``***`` marker is what identifies it, so leading
+    whitespace is ignored outside a hunk. Inside a hunk a ``+``, ``-`` or
+    leading space is content, and a ``***`` line that starts on a hunk marker
+    is not read as a header unless it begins at column zero.
+    """
     targets: List[str] = []
+    in_hunk = False
     for line in patch.splitlines():
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if in_hunk and line[:1] in ("+", "-", " "):
+            if not line.startswith(PATCH_PREFIXES):
+                continue
+        stripped = line.lstrip()
         for prefix in PATCH_PREFIXES:
-            if line.startswith(prefix):
-                target = line[len(prefix):].strip()
+            if stripped.startswith(prefix):
+                target = stripped[len(prefix):].strip()
                 if target:
                     path = normalize_path(target, cwd)
                     if path not in targets:
                         targets.append(path)
+                in_hunk = False
+                break
     return targets
 
 
@@ -225,6 +242,18 @@ def call_events(agent: str, tool_name: str, args: Dict[str, Any], *,
     that knows a trust fact sets it on :attr:`SensorEvent.labels` instead.
     """
     args = strip_trust_labels(args)
+    # Glob carries its path in ``pattern`` (its ``path`` is only a base
+    # directory). Rules that compare a path prefix must see the resolved
+    # search pattern, not the raw ``~``/relative spelling.
+    if tool_name == "Glob" and isinstance(args.get("pattern"), str) and args["pattern"]:
+        args = dict(args)
+        # ``pattern`` is resolved against the search root (``path``), which is
+        # itself optional and may be ``~``/relative. Resolving against ``cwd``
+        # alone let ``{path: ~, pattern: .interlock/*}`` read the protected
+        # directory while looking like a project-relative glob.
+        root = args.get("path")
+        root = normalize_path(root, cwd) if isinstance(root, str) and root else cwd
+        args["pattern"] = normalize_path(args["pattern"], root)
     common = dict(principal=agent, span_id=session_id, call_id=call_id, cwd=cwd)
     if tool_name == "apply_patch" and isinstance(args.get("command"), str):
         targets = patch_targets(args["command"], cwd)
@@ -291,7 +320,7 @@ def run_hook(adapter: Adapter, payload: Dict[str, Any], engine: Any, *,
         return adapter.render_lifecycle(call, summary)
     if call.kind == "failure":
         _record_failure(call, engine)
-        return "", "", 0
+        return _decide_failure(adapter, call, engine, enforcement)
     if call.kind == "post":
         return _decide_result(adapter, call, engine, enforcement)
     return _decide_call(adapter, call, engine, enforcement, reviews, review_mode)
@@ -430,6 +459,51 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
 
 
 _DENIED_SIGNS = ("operation not permitted", "permission denied", "eperm", "eacces")
+
+
+def _decide_failure(adapter: Adapter, call: HookCall, engine: Any,
+                    enforcement: str) -> Rendered:
+    """Judge a failed call's error text as model-visible output.
+
+    A tool failure is shown to the agent as text, so it is the same indirect
+    injection channel as a successful result. The outcome receipt is already
+    written; this only withholds that text when a result-phase rule blocks it.
+    """
+    if not call.error:
+        return "", "", 0
+    event = SensorEvent(action=call.tool_name,
+                        args={"error": call.error},
+                        principal=call.agent, span_id=call.session_id,
+                        call_id=call.call_id, phase="result", cwd=call.cwd)
+    started = time.perf_counter()
+    decision = engine.evaluate(event)
+    elapsed = int((time.perf_counter() - started) * 1_000_000)
+    epoch = epoch_of(engine, event)
+    policy = decision.verdict if decision.verdict in tuple(Verdict) else Verdict.BLOCK
+    able = {Verdict.BLOCK: call.can_block_result,
+            Verdict.ESCALATE: call.can_block_result,
+            Verdict.MODIFY: call.can_rewrite_result}.get(policy, call.can_block_result)
+    if policy == Verdict.ALLOW or enforcement == "monitor" or not able:
+        if policy != Verdict.ALLOW:
+            emit_receipt(event, decision, observed=True, policy_epoch=epoch,
+                         elapsed_us=elapsed)
+        return "", "", 0
+    verdict = Verdict.BLOCK if policy == Verdict.ESCALATE else policy
+    emit_receipt(event, replace(decision, verdict=verdict), policy_epoch=epoch,
+                 elapsed_us=elapsed,
+                 policy_verdict=policy.name if verdict != policy else None)
+    # ``_render_post`` is the result-withholding shape; the call is presented
+    # as a post event so the adapter renders the withhold it already knows. A
+    # MODIFY here rewrites the error the model would read: the rule saw
+    # ``{"error": text}``, so the replacement is that text, not the wrapper
+    # dict (which the adapter would otherwise render as its repr).
+    replacement = decision.modified_result
+    if isinstance(replacement, dict):
+        text = replacement.get("error")
+        replacement = text if isinstance(text, str) else replacement
+    return adapter.render(replace(call, kind="post"),
+                          HookOutcome(verdict, decision.reason, decision.policy_id,
+                                      policy, modified_result=replacement))
 
 
 def _record_failure(call: HookCall, engine: Any) -> None:

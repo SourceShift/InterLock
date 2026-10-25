@@ -27,6 +27,7 @@ import re
 import shlex
 from typing import Any, Dict, Optional, Tuple
 
+from ..actions import _scalar_text
 from ..enforce import Verdict
 from .base import (
     Adapter,
@@ -65,8 +66,11 @@ class CodexAdapter(Adapter):
         raw_input = payload.get("tool_input")
         tool_input = dict(raw_input) if isinstance(raw_input, dict) else {}
         command = tool_input.get("command")
-        if isinstance(command, list) and all(isinstance(c, str) for c in command):
-            tool_input["command"] = shlex.join(command)
+        if isinstance(command, (list, tuple)):
+            # An argv list is one command. Every element is rendered the way a
+            # JS runtime stringifies it, so a mixed-type list (a number among
+            # the words) cannot leave the whole invocation unread.
+            tool_input["command"] = shlex.join([_scalar_text(c) for c in command])
         call = HookCall(agent=self.name, kind="ignore", event_name=event, tool_name=tool,
                         tool_input=normalize_args(tool_input, cwd), session_id=session,
                         cwd=cwd, can_ask=False, can_rewrite=False,

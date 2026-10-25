@@ -88,6 +88,7 @@ import threading
 import time
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from ..actions import canonical_action, canonical_actions, command_values
 from ..enforce import Decision, Verdict
 from ..event import SensorEvent
 from .engine import PolicyEngine, Rule
@@ -1029,11 +1030,15 @@ def _actions_in(parts: List[Any]) -> Optional[FrozenSet[str]]:
 
 
 def _action_condition(value: Any, where: str) -> Condition:
+    # Action names are canonicalised on both sides, as every detector already
+    # does: ``bash`` and ``Bash`` are the same shell, so a rule scoped to the
+    # tool must not be skipped merely because the caller spelled it lower-case.
     if isinstance(value, str):
-        return lambda event: Hit() if event.action == value else False
+        names = canonical_actions(value)
+        return lambda event: Hit() if canonical_action(event.action) in names else False
     if isinstance(value, list) and value and all(isinstance(v, str) for v in value):
-        names = frozenset(value)
-        return lambda event: Hit() if event.action in names else False
+        names = canonical_actions(value)
+        return lambda event: Hit() if canonical_action(event.action) in names else False
     if isinstance(value, dict) and set(value) == {"glob"} and isinstance(value["glob"], str):
         pattern = value["glob"]
         return lambda event: Hit() if fnmatch.fnmatchcase(event.action, pattern) else False
@@ -1071,7 +1076,16 @@ def _intent_condition(selector: Any, arg: Any, where: str,
 
     def condition(event: SensorEvent) -> Any:
         args = event.args if isinstance(event.args, dict) else {}
-        items = [(arg, _lookup(args, arg))] if arg else list(args.items())
+        # Judge the invocation the call will run, not only the literal value:
+        # a split ``command`` + ``args`` pair is joined exactly as the
+        # detector rules join it, so ``{"command": "interlock", "args":
+        # ["trust", home]}`` carries its intent too.
+        if arg and "." in arg:
+            items = [(arg, _lookup(args, arg))]
+        elif arg:
+            items = command_values(args, {arg})
+        else:
+            items = command_values(args)
         for name, value in items:
             if not isinstance(value, str):
                 continue

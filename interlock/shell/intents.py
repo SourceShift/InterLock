@@ -110,6 +110,22 @@ def analyze(command: Union[str, ParsedCommand], cwd: Optional[str] = None) -> Tu
     return tuple(unique)
 
 
+def invocation_bases(parsed: ParsedCommand,
+                     cwd: Optional[str] = None) -> List[Optional[str]]:
+    """The directory each invocation of ``parsed`` runs from, in order.
+
+    A literal ``cd`` earlier in the string moves the base for the invocations
+    after it. Exposed so a path-based detector can resolve a relative word the
+    same way :func:`analyze` resolves an intent's target.
+    """
+    bases: List[Optional[str]] = []
+    base = cwd
+    for inv in parsed.invocations:
+        bases.append(base)
+        base = _cd(inv, base)
+    return bases
+
+
 def read_command(command: Union[str, ParsedCommand],
                  cwd: Optional[str] = None) -> Tuple[Tuple[Intent, ...], bool]:
     """:func:`analyze`'s intents, and whether the command was only partly read.

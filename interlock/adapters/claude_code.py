@@ -78,6 +78,9 @@ class ClaudeCodeAdapter(Adapter):
         elif event == "PostToolUseFailure":
             call.kind = "failure"
             call.error = str(payload.get("error") or "")
+            # The error text reaches the model as output, so keep it in the
+            # result slot too: a result-phase rule can withhold it.
+            call.result = {"error": call.error}
         elif event == "SessionStart":
             call.kind = "lifecycle"
         return call

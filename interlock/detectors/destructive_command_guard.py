@@ -40,7 +40,7 @@ from ..enforce import Decision
 from ..event import SensorEvent
 from ..masking import _LinearMatch, _is_word
 from ..policy.engine import Rule
-from ..shell import read_command
+from ..shell import parse, read_command
 
 POLICY_ID = "destructive_command"
 
@@ -74,6 +74,11 @@ _NON_DD_PATTERN = re.compile(
 _DEVICE_PATTERN = re.compile(
     r"(?:r?disk\d|sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|md\d|dm-\d|mapper/|loop\d)"
 )
+#: The one raw shape the parser does not model: a fork bomb. Every other
+#: alternative names a program or redirect the parser classifies, so for a
+#: fully read value a match that the parser did not confirm is inert argument
+#: data (``echo rm -rf /``), not a command.
+_RAW_STRUCTURAL = re.compile(r":\(\)\s*\{\s*:\|:")
 
 
 class _DestructiveScanner:
@@ -178,11 +183,22 @@ def destructive_command_guard(
             if joined_is_judged and name == "command" and value == joined:
                 critical, partial = False, False
                 if parse:
-                    critical, partial = _scan(value)
+                    critical, partial, _ = _scan(value)
             else:
-                critical, partial = bool(PATTERN.search(value)), False
-                if not critical and parse:
-                    critical, partial = _scan(value)
+                raw = bool(PATTERN.search(value))
+                critical, partial = raw, False
+                if parse:
+                    intent_critical, partial, has_invocations = _scan(value)
+                    # A complete parse that recovers no destructive act shows
+                    # the raw phrase was argument data (``echo rm -rf /``,
+                    # ``grep rm -rf / notes``). It is kept when the parser
+                    # could not read the value (it may hide the act), when it
+                    # recovered no invocation at all to attribute the words to
+                    # (``> /dev/sda`` is only a redirect), or for the fork
+                    # bomb, which the parser does not model.
+                    critical = intent_critical or (
+                        raw and (partial or not has_invocations
+                                 or bool(_RAW_STRUCTURAL.search(value))))
             if critical:
                 return Decision.block(
                     reason="destructive_command: {}".format(name),
@@ -203,10 +219,12 @@ def destructive_command_guard(
     return rule
 
 
-def _scan(value: str) -> Tuple[bool, bool]:
-    """Whether ``value`` carries a critical intent, and whether it was partly read."""
+def _scan(value: str) -> Tuple[bool, bool, bool]:
+    """Critical intent found, whether it was partly read, whether any command."""
     try:
         intents, partial = read_command(value)
+        invocations = bool(parse(value).invocations)
     except Exception:  # a parser bug is a value it could not read
-        return False, True
-    return any(i.critical and i.kind in CRITICAL_KINDS for i in intents), partial
+        return False, True, True
+    return (any(i.critical and i.kind in CRITICAL_KINDS for i in intents),
+            partial, invocations)

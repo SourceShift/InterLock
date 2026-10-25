@@ -77,7 +77,13 @@ def _path_under(prefixes: List[str], exact: List[str] = (),  # type: ignore[assi
 
 
 def coding_agent() -> Dict[str, Any]:
-    home = os.path.expanduser("~")
+    # Spell the protected prefixes the way the adapters spell an event's
+    # paths: ``normalize_path`` resolves symlinks and disk case before a rule
+    # sees a path, so a home reached through a symlink (``/var`` ->
+    # ``/private/var`` on macOS) must be spelled the same way here or the
+    # prefix test silently fails open.
+    from ..adapters.base import normalize_path
+    home = normalize_path(os.path.expanduser("~"), None)
     own = os.path.join(home, ".interlock")
     secret_dirs = [os.path.join(home, d) + "/" for d in (
         ".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", ".azure", ".password-store",
@@ -98,7 +104,8 @@ def coding_agent() -> Dict[str, Any]:
              "on": FILE_TOOLS + SEARCH_TOOLS,
              "reason": "interlock's home - its signing key, receipt log, review queue "
                        "and policy - is off limits to the agent, to read or to write",
-             "when": _path_under([own + "/"], [own], ("file_path", "notebook_path", "path"))},
+             "when": _path_under([own + "/"], [own],
+                                 ("file_path", "notebook_path", "path", "pattern"))},
             {"id": "self-protect-commands", "locked": True, "verdict": "block",
              "on": "Bash",
              "reason": "the agent may not change interlock's trust or hooks, or touch its "
@@ -138,11 +145,12 @@ def coding_agent() -> Dict[str, Any]:
             {"id": "privilege", "verdict": "escalate", "on": "Bash",
              "reason": "running a command as another user (sudo, doas, su)",
              "when": {"intent": "priv.escalate", "arg": "command"}},
-            {"id": "git-credentials", "on": "Bash", "detector": "git_credential_guard"},
+            {"id": "git-credentials", "on": "Bash", "detector": "git_credential_guard",
+             "with": {"keys": ["command"]}},
             {"id": "secret-files", "verdict": "block", "on": FILE_TOOLS + SEARCH_TOOLS,
              "reason": "credential stores (ssh, cloud, gpg, registry tokens) are off limits",
              "when": _path_under(secret_dirs, secret_files,
-                                 ("file_path", "notebook_path", "path"))},
+                                 ("file_path", "notebook_path", "path", "pattern"))},
             {"id": "secret-file-commands", "on": "Bash",
              "detector": "secret_path_command_guard",
              "with": {"prefixes": secret_dirs, "exact": secret_files,

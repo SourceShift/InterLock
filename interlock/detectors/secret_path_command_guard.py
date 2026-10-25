@@ -23,24 +23,35 @@ instead of blocking, which lets one detector serve a pack's ``block`` and
 from __future__ import annotations
 
 import os
-from typing import Iterable, List, Optional, Sequence, Set
+import posixpath
+from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 from ..actions import command_values
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
-from ..shell import ParsedCommand, parse
+from ..shell import ParsedCommand, invocation_bases, parse
+from ..shell.intents import _brace_variants
 
 POLICY_ID = "secret_path_command"
 
 
 def _prepare(path: str) -> str:
-    """A configured path in the same form candidates are compared in."""
-    return os.path.normpath(os.path.expanduser(path)).casefold()
+    """A configured path in the same form candidates are compared in.
+
+    ``realpath`` matches the adapters' ``normalize_path``: a configured prefix
+    under a symlinked home must compare equal to the same file reached through
+    the command word, not one spelling apart.
+    """
+    return os.path.realpath(os.path.normpath(os.path.expanduser(path))).casefold()
 
 
-def _resolve(word: str) -> Optional[str]:
-    """Expand ``~``/``$HOME`` in a command word and collapse its dot segments."""
+def _resolve(word: str, base: Optional[str] = None) -> Optional[str]:
+    """Expand ``~``/``$HOME`` in a command word and collapse its dot segments.
+
+    A relative word is joined to ``base`` - the session cwd, or the directory an
+    earlier literal ``cd`` moved to - because that is where the shell opens it.
+    """
     word = word.strip("\"'")
     if not word:
         return None
@@ -53,17 +64,23 @@ def _resolve(word: str) -> Optional[str]:
         word = home + word[len("$HOME"):]
     elif word.startswith("${HOME}"):
         word = home + word[len("${HOME}"):]
-    return os.path.normpath(word)
+    if not os.path.isabs(word):
+        if not base:
+            return os.path.realpath(os.path.normpath(word))
+        word = posixpath.join(base, word)
+    return os.path.realpath(os.path.normpath(word))
 
 
-def _words(parsed: ParsedCommand) -> Iterable[str]:
-    """Every word of every invocation: program, arguments, redirect targets."""
-    for inv in parsed.invocations:
-        yield inv.binary
+def _words(parsed: ParsedCommand, bases: Optional[Sequence[Optional[str]]] = None
+           ) -> Iterable[Tuple[str, Optional[str]]]:
+    """Every ``(word, base)`` of every invocation: program, args, redirects."""
+    for index, inv in enumerate(parsed.invocations):
+        base = bases[index] if bases is not None and index < len(bases) else None
+        yield inv.binary, base
         for arg in inv.args:
-            yield arg
+            yield arg, base
         for target in inv.redirects:
-            yield target
+            yield target, base
 
 
 def _under(candidate: str, prefix: str) -> bool:
@@ -99,18 +116,22 @@ def secret_path_command_guard(
             return None
         for name, value in command_values(args, key_set):
             parsed = parse(value)
-            for word in _words(parsed):
-                candidate = _resolve(word)
-                if candidate is None:
-                    continue
-                candidate = candidate.casefold()
-                if candidate in exact_paths or any(
-                        _under(candidate, prefix) for prefix in prefix_paths):
-                    return make(
-                        reason="secret_path_command: {}".format(name),
-                        policy_id=POLICY_ID,
-                        attributed_to=name,
-                    )
+            bases = invocation_bases(parsed, getattr(event, "cwd", None))
+            for word, base in _words(parsed, bases):
+                # The shell expands braces before it opens a path, so
+                # ``~/.{ssh,aws}/id_rsa`` is the same read as ``~/.ssh/id_rsa``.
+                for variant in _brace_variants(word):
+                    candidate = _resolve(variant, base)
+                    if candidate is None:
+                        continue
+                    candidate = candidate.casefold()
+                    if candidate in exact_paths or any(
+                            _under(candidate, prefix) for prefix in prefix_paths):
+                        return make(
+                            reason="secret_path_command: {}".format(name),
+                            policy_id=POLICY_ID,
+                            attributed_to=name,
+                        )
         return None
 
     return rule
