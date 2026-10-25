@@ -369,6 +369,7 @@ breaking changes land.
 
 ### Fixed
 
+- `scripts/check_site.py` reads the Zensical TOML on Python 3.9 and 3.10 too: `tomllib` is 3.11+, so it falls back to `tomli`, now a dev extra, instead of failing the two site-config tests on the oldest interpreter CI runs.
 - Claude Code results are checked where the text actually is: a `Read` result's
   file content is now scanned for injected instructions and masked in place, and
   an `Edit`/`Write` result no longer blocks on the agent's own content echoed back.

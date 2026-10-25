@@ -23,9 +23,13 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import tomllib
 from pathlib import Path
 from typing import List
+
+try:                                       # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:                # 3.9 and 3.10, via the dev extra
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 MANUAL_CONFIG = ROOT / "zensical.toml"

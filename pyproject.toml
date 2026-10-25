@@ -46,7 +46,9 @@ mcp = ["wrapt>=1.15"]
 langchain = ["langchain-core>=0.3,<0.4"]
 # ruff is pinned here too: CI pins it (an unpinned linter turns a green repo red
 # on a release schedule), and a contributor should run the same version as CI.
-dev = ["pytest>=7", "langchain-core>=0.3,<0.4", "ruff==0.16.9"]
+dev = ["pytest>=7", "langchain-core>=0.3,<0.4", "ruff==0.16.9",
+       # scripts/check_site.py reads the Zensical TOML; tomllib is 3.11+
+       "tomli>=1.1; python_version < '3.11'"]
 
 [project.scripts]
 interlock = "interlock.cli:main"
