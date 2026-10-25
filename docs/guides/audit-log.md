@@ -198,6 +198,26 @@ from interlock.sink import verify_file
 verify_file("audit.jsonl", key=KEY, head=head)
 ```
 
+From the command line, `interlock anchor` records that head for you. Run it
+from a scheduled job, with `--out` on storage the log's writer cannot reach:
+
+```bash
+interlock anchor /var/log/agent/audit.jsonl --key-file ~/.interlock/receipts.key \
+  --out /mnt/worm/audit.anchor          # verify the chain, then record the head
+interlock anchor /var/log/agent/audit.jsonl --key-file ~/.interlock/receipts.key \
+  --out /mnt/worm/audit.anchor --check  # cron this; exit 2 means the tail is gone
+```
+
+The anchor is a small signed JSON file: the receipt count, the head, the log
+path and a timestamp. Recorded with the same key as the chain, so editing it
+fails unless the attacker also holds the key. Recording refuses to move
+backwards - the log must still contain the anchored receipt at the same
+position, and cannot be shorter than the anchored count - so a rolled-back log
+cannot re-anchor itself and be blessed. `--check` makes the same comparison
+without writing and accepts a log that has grown since, reporting how many
+receipts arrived after the anchor. Exit codes: 0 it still reaches the anchor,
+2 the chain or the anchor is broken, 3 a file could not be read.
+
 ## Choose and keep a key
 
 The default key is random and generated fresh for each process. Without your
@@ -387,9 +407,10 @@ local chain.
 ## Limits
 
 - **A cut tail needs a recorded head.** Deleting the last receipts leaves a
-  valid, shorter chain. `verify(head=...)` catches it only if you kept the head
-  somewhere the agent's host can't change. Shipping receipts off the host as
-  they're written does the same job.
+  valid, shorter chain. `verify(head=...)`, or `interlock anchor --check` from
+  a scheduled job, catches it only if you kept the head somewhere the agent's
+  host can't change. Shipping receipts off the host as they're written does
+  the same job.
 - **One writer per file.** Restarts continue the chain; two writers open at the
   same time fork it, and `verify()` reports the fork.
 - **HMAC proves integrity, not authorship.** Anyone with the key can write

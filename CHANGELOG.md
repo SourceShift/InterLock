@@ -36,6 +36,13 @@ breaking changes land.
   registered. `esm.named-import` moves from `uncovered` to `covered` when the
   loader is installed; the synchronous and handle-returning shapes remain
   reported.
+- Receipt tail anchoring: `interlock anchor LOG --key-file KEY` verifies a
+  receipt chain and records its head and receipt count in a small signed file
+  outside the log (`<log>.anchor`, `--out` to place it on storage the log's
+  writer cannot reach). Recording refuses to move backwards - the log must
+  still contain the anchored receipt at the same index - so a log with its tail
+  cut off cannot re-anchor and bless itself. `--check` re-tests a log against
+  its anchor (exit 2 when the tail is missing) and accepts growth.
 - Review-queue rollback detection: every state change now advances a signed
   high-water mark (`<key>.head` by default; `head_path=` or
   `interlock reviews --head` to relocate it), and opening a database that is

@@ -233,7 +233,7 @@ somewhere other than a checkout? Pass `--static /path/to/web/dist`.
 | Detectors | 121 ready-made rules, grouped by attack | [Using detectors](docs/guides/detectors.md) · [catalog](docs/reference/detectors.md) |
 | MCP trust | Allowlist servers, pin tool schemas, catch changed tool listings, time-limited grants | [MCP](docs/guides/mcp.md) |
 | Scopes | Per-tenant and per-agent policies; sub-agents can't exceed their parent | [Scopes](docs/guides/scopes.md) |
-| Audit log | Chained, signed receipts of every decision; arguments hashed, not stored; `interlock report` summarizes them | [Audit log](docs/guides/audit-log.md) |
+| Audit log | Chained, signed receipts of every decision; arguments hashed, not stored; `interlock report` summarizes them; `interlock anchor` records the head so a cut tail is caught | [Audit log](docs/guides/audit-log.md) |
 | Doctor and metrics | `attest()` / `require()` in-process, `interlock doctor` from a shell, Prometheus metrics and a loopback admin endpoint | [Production checklist](docs/guides/production.md) |
 | BRACE sandbox | Runs subprocesses under bubblewrap (Linux) or Seatbelt (macOS), built from your policy | [Sandbox](docs/guides/sandbox.md) |
 | Node.js client | Guards JS agents with the same Python policy through a local daemon | [js/README.md](js/README.md) |

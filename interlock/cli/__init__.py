@@ -4,8 +4,9 @@ Each subcommand lives in its own module and registers itself through
 :data:`COMMANDS`: ``doctor`` (is protection on?), ``report`` (what did the
 guard do?), ``hook`` and ``install-hook`` (coding-agent adapters), ``mcp``
 (MCP inventory), ``policy`` (declarative policy files), ``trust``
-(project-overlay trust), ``drift`` (diff a live surface against a corpus)
-and ``learn`` (draft a policy from observed receipts).
+(project-overlay trust), ``drift`` (diff a live surface against a corpus),
+``learn`` (draft a policy from observed receipts) and ``anchor`` (record a
+receipt log's head outside it, to catch a cut tail).
 
 Exit codes are per command and documented in each one's ``--help``; 64 means
 the command line itself was wrong.
@@ -32,6 +33,8 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("mcp", "inventory the MCP servers configured on this machine", "mcp"),
     ("reviews", "decide pending reviews; serve their status to agents", "reviews"),
     ("drift", "diff a live surface's tool listing against a recorded corpus", "drift"),
+    ("anchor", "record a receipt log's head outside it, or check it still reaches it",
+     "anchor"),
     ("mesh", "subscribe to community policy packs, or publish a commons", "mesh"),
 ]
 

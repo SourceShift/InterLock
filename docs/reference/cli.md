@@ -20,6 +20,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`mcp`](#interlock-mcp) | inventory the MCP servers configured on this machine |
 | [`reviews`](#interlock-reviews) | decide pending reviews; serve their status to agents |
 | [`drift`](#interlock-drift) | diff a live surface's tool listing against a recorded corpus |
+| [`anchor`](#interlock-anchor) | record a receipt log's head outside it, or check it still reaches it |
 | [`mesh`](#interlock-mesh) | subscribe to community policy packs, or publish a commons |
 
 ## `interlock doctor`
@@ -310,8 +311,10 @@ Exit codes: 0 done, 1 the review can't be changed (wrong state, self-approval,
 unknown id), 64 bad arguments.
 
 ```text
-usage: interlock reviews [-h] [--db FILE] [--json] ACTION ...
+usage: interlock reviews [-h] [--db FILE] [--key FILE] [--head FILE] [--json] ACTION ...
   --db                       review queue (default ~/.interlock/reviews.db)
+  --key                      HMAC key that signs rows and the high-water mark (default: next to --db, reviews.key)
+  --head                     rollback high-water mark (default: <key>.head). Point it at storage your database backups do not restore
   --json                     machine-readable output
 usage: interlock reviews list [-h] [--status {pending,approved,rejected,revoked,expired,executed}]
                               [--limit LIMIT]
@@ -351,6 +354,40 @@ usage: interlock drift [-h] [--corpus FILE] [--live CMD] [--surface NAME] [--jso
   --corpus                   the recorded corpus to diff against
   --live                     a shell command whose stdout is the live tool listing
   --surface                  which corpus surface the live command describes (default: the corpus's only surface)
+  --json                     machine-readable output
+```
+
+## `interlock anchor`
+
+Record a receipt log's head outside it, and verify the log still reaches it.
+
+```bash
+interlock anchor audit.jsonl --key-file audit.key            # verify, then record
+interlock anchor audit.jsonl --key-file audit.key --check    # is it still there?
+interlock anchor audit.jsonl --key-file audit.key --out /mnt/worm/audit.anchor --json
+```
+
+A hash chain catches edits, deletions and reordering inside a log, but a log
+with its last receipts removed is still a valid, shorter chain. The anchor
+closes that: it records the last mac and the receipt count in a small signed
+file *outside* the log, on storage the log's writer cannot reach (a WORM
+volume, another host, a committed git repository).
+
+`record` verifies the chain first, then refuses to move backwards - the log
+must still contain the receipt the existing anchor names at the same position,
+and must not be shorter than the anchored count. So a rolled-back log cannot
+bless itself by re-anchoring. `--check` is the same comparison without
+writing, and accepts a log that has grown since the anchor.
+
+Exit codes: 0 the log reaches its anchor, 2 the chain or the anchor is broken,
+3 a file could not be read, 64 bad arguments.
+
+```text
+usage: interlock anchor [-h] --key-file FILE [--out FILE] [--check] [--json] file
+  file                       a receipt log written by FileSink
+  --key-file                 the MAC key that signed the log (and this anchor)
+  --out                      where to keep the anchor (default: <log>.anchor). Put it on storage the log's writer cannot reach
+  --check                    verify against the recorded anchor instead of writing a new one
   --json                     machine-readable output
 ```
 

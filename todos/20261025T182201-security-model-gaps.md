@@ -25,7 +25,7 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 | 11 | `setsid()` descendant survives timeout kill | **partial** | bwrap `--unshare-pid` + `--die-with-parent`; Windows `taskkill /T /F` walks the tree (T10); a reparented process can still escape |
 | 12 | Write confinement differs by backend | **open (accurate)** | `sandbox.py:155-191`; the scratch exception is now documented in `python-api.md` (T03) |
 | 13 | CPU/memory reported only by `soft` | **closed** | every backend claims `rlimit` when a ceiling is set (T11); the token matrix carries an escape row for each |
-| 14 | Truncated tail needs an outside record | **open** | `head=` exists (`sink.py:89-108`); no automatic anchor |
+| 14 | Truncated tail needs an outside record | **closed** | `head=` exists (`sink.py:89-108`) and `interlock anchor` records it outside the log, refusing to move backwards (T20) |
 | 15 | Receipts prove integrity, not authorship | **closed** | `interlock/receipt_ed25519.py` ships signer + verifier, and the audit guide documents key distribution (T08, `e366c5c`) |
 | 16 | Node.js unguardable shapes | **mitigated for ESM named imports; sync/handle openers accepted** | opt-in `registerEsmInterceptors` loader + `--import interlock-guard/esm-hook` preload close named/namespace imports and move `esm.named-import` to `covered`; the synchronous and handle-returning shapes stay in `installInterceptors().uncovered` (T13, `9d163a7`) |
 | 17 | Node.js depends on a sidecar | **open (by design)** | `deny` default; `degraded`/`allow` are documented weakenings |
@@ -499,3 +499,32 @@ have no class seam; compatibility contract + import monitor shipped
     crash gap heals, foreign/malformed mark refused, reads do not advance the
     mark, each state change advances it once, expiry counts, relocated mark is
     0600, CLI flags.
+
+## T20 — Anchor the receipt tail outside the log
+
+**Status:** done (2026-10-25)
+
+- **A command that records the head**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `interlock/cli/anchor.py` (registered as `interlock
+    anchor`) verifies the chain, then writes `<log>.anchor` (or `--out FILE`):
+    version, log path, receipt count, head, timestamp and an HMAC under the
+    receipt key, atomically with mode 0600.
+- **Refuse to move backwards**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — a re-anchor requires the log to still contain the
+    anchored receipt at the same index, and to be no shorter than the anchored
+    count; otherwise it exits 2. `--check` makes the same comparison without
+    writing and accepts a grown log, reporting receipts since the anchor.
+- **Surface it**
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — the "Catch receipts cut from the end" section of
+    `docs/guides/audit-log.md`, the security-model bullet, the README table and
+    `CHANGELOG.md`.
+  - tests: `tests/test_cli_anchor.py` — record then check, growth accepted,
+    truncation refused (check and re-record), same-length rewrite refused,
+    edited/unreadable anchor refused, wrong log refused, check without an
+    anchor fails, a broken chain is never anchored, JSON output.

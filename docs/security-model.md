@@ -245,7 +245,9 @@ What the DAP path does and does not assume:
 - **Cutting the end off an audit log needs an outside record to catch.** The
   chain shows edits, deletions, and reordering inside the log, but a log with its
   last receipts removed is still a valid, shorter chain. Record `sink.head`
-  somewhere the writer can't reach and pass it to `verify(head=...)`
+  somewhere the writer can't reach and pass it to `verify(head=...)`, or keep it
+  with `interlock anchor` and cron `interlock anchor --check`; a re-anchor
+  refuses to move backwards, so a rolled-back log cannot bless itself
   ([audit log](guides/audit-log.md)).
 - **Receipts prove integrity, not authorship, by default.** The HMAC signature
   shows a log wasn't changed by someone without the key; it doesn't show which
