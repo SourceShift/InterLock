@@ -2,9 +2,9 @@
 
 **For:** a product designer
 **From:** engineering
-**Scope:** the landing page at `https://interlock.sourceshift.ai/`, and the design
+**Scope:** the landing page at `https://interlock.sourceshift.ai/docs/`, and the design
 tokens that cascade from it into the docs
-**Status:** updated. The **structure is built and live** — a landing page at `/`
+**Status:** updated. The **structure is built and live** — a landing page at `/docs/`
 with the docs behind it. What we need from you now is the layer on top of it:
 identity, tokens, and assets. See §9 for exactly which parts are code and which
 are design.

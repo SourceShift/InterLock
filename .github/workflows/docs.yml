@@ -1,6 +1,6 @@
 name: Docs
 
-# Publishes the Markdown under docs/ to https://interlock.sourceshift.ai/
+# Publishes the Markdown under docs/ to https://interlock.sourceshift.ai/docs/
 #
 # The site is built by Zensical -- the successor to Material for MkDocs -- and
 # deployed to Cloudflare Pages as a directory of static files. There is no
@@ -13,18 +13,26 @@ name: Docs
 # Pinned to an exact Zensical version on purpose. It is 0.0.x and its output
 # is the deployed artefact, so an unreviewed upgrade should be a commit someone
 # made, not something that happens on a Tuesday because CI resolved `latest`.
+#
+# The manual is served under /docs/, not at the host root. Zensical builds it
+# into site/docs/ (site_dir in zensical.toml) and the deploy step publishes
+# site/, so the deployed directory and the local build have the same shape.
 
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
+      - "overrides/**"
       - "zensical.toml"
+      - "cloudflare/_redirects"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
+      - "overrides/**"
       - "zensical.toml"
+      - "cloudflare/_redirects"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -56,6 +64,26 @@ jobs:
       - name: Build the site
         run: zensical build --clean --strict
 
+      # Zensical wrote the manual to site/docs/. Two files belong at the root
+      # of site/, which is what Pages serves:
+      #
+      #   * _redirects -- Pages reads it only from the root. It sends / and the
+      #     pre-/docs/ page URLs into the manual; see cloudflare/_redirects.
+      #   * 404.html -- Pages serves the closest 404.html walking up from the
+      #     requested path, so site/docs/404.html already covers /docs/... and
+      #     this copy covers everything else. Its asset links are absolute
+      #     (/docs/assets/...), so it renders the same from either place.
+      #
+      # The first test is the base-path guard: if site_dir ever drifts back
+      # to site/, the manual would deploy at the root and / would redirect
+      # into a 404, so fail here instead.
+      - name: Assemble the Pages root
+        run: |
+          test -f site/docs/index.html
+          test ! -e site/index.html
+          cp cloudflare/_redirects site/_redirects
+          cp site/docs/404.html site/404.html
+
       - name: Upload the built site
         uses: actions/upload-artifact@v4
         with:
@@ -72,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: docs
-      url: https://interlock.sourceshift.ai/
+      url: https://interlock.sourceshift.ai/docs/
     steps:
       - uses: actions/download-artifact@v5
         with:
@@ -85,3 +113,18 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy site --project-name=interlock-docs --branch=main
+
+      # The deploy is live within seconds, but the custom domain can lag the
+      # pages.dev URL by a little, hence the retries. This is the check that
+      # the manual is really at /docs/ and that the root still points there.
+      - name: Smoke the live site
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://interlock.sourceshift.ai/docs/)
+            [ "$code" = "200" ] && break
+            echo "attempt $attempt: /docs/ returned $code, retrying"
+            sleep 10
+          done
+          test "$code" = "200"
+          test "$(curl -s -o /dev/null -w '%{http_code}' https://interlock.sourceshift.ai/docs/getting-started/)" = "200"
+          test "$(curl -s -o /dev/null -w '%{redirect_url}' https://interlock.sourceshift.ai/)" = "https://interlock.sourceshift.ai/docs/"

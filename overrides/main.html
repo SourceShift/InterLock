@@ -1,5 +1,5 @@
 {#-
-  The landing page for interlock.sourceshift.ai.
+  The landing page for interlock.sourceshift.ai/docs/.
 
   Everything below is gated on `page.url == ''` -- the empty url is the site
   root, which is docs/index.md. For every other page this file behaves exactly
@@ -51,6 +51,11 @@
   {# The favicon is not set here: it comes from `favicon` in zensical.toml, so
      the theme emits exactly one <link rel="icon"> on every page. It points at
      the same file the nav lockup below renders. #}
+  {# Zoom and fullscreen for the Mermaid diagrams, on every page. Loading it
+     globally is safe where the two token sheets below are not: it defines no
+     --il-* tokens and reads only the theme's --md-* variables. The script half
+     is extra_javascript in zensical.toml. #}
+  <link rel="stylesheet" href="{{ 'assets/stylesheets/diagram.css' | url }}" />
   {% if page.url == '' %}
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

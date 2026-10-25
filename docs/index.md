@@ -5,7 +5,7 @@ hide:
 ---
 
 <!--
-  The landing page at https://interlock.sourceshift.ai/
+  The landing page at https://interlock.sourceshift.ai/docs/
 
   This file holds the four prose sections and nothing else. The chrome around
   them -- the header, the hero with its console panel and stats strip, and the

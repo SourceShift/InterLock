@@ -35,7 +35,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://interlock.sourceshift.ai/"
-Documentation = "https://interlock.sourceshift.ai/"
+Documentation = "https://interlock.sourceshift.ai/docs/"
 Repository = "https://github.com/SourceShift/InterLock"
 Issues = "https://github.com/SourceShift/InterLock/issues"
 Changelog = "https://github.com/SourceShift/InterLock/blob/main/CHANGELOG.md"

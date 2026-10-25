@@ -1,18 +1,31 @@
-# Site configuration for interlock.sourceshift.ai
+# Site configuration for interlock.sourceshift.ai/docs/
 #
 # Built by Zensical (https://zensical.org), the successor to Material for
 # MkDocs. The Markdown under docs/ is the same source that renders on GitHub --
 # nothing here rewrites it, so a page must read correctly in both places.
 #
-#   zensical serve      # preview at http://localhost:8000
-#   zensical build      # write site/
+#   zensical serve      # preview at http://localhost:8000/docs/
+#   zensical build      # write site/docs/
+#
+# The manual lives under /docs/, not at the host's root. `site_url` carries
+# that path and `site_dir` mirrors it, so the local site/ tree has the same
+# shape as the deployed host: site/ is what Cloudflare Pages serves, and
+# site/docs/ is this manual. The host root and the pre-move page URLs
+# redirect into /docs/ via cloudflare/_redirects.
 #
 # CI builds this and deploys site/ to Cloudflare Pages; see
 # .github/workflows/docs.yml.
 
 [project]
 site_name = "interlock"
-site_url = "https://interlock.sourceshift.ai/"
+# The manual's base path. Page links are relative and unaffected, but the
+# canonical URL, the sitemap and the 404 page's absolute asset paths all
+# derive from this, so it ends in /docs/ with the trailing slash.
+site_url = "https://interlock.sourceshift.ai/docs/"
+# Mirrors the path in site_url. `zensical build --clean` empties only this
+# directory; the docs workflow then adds _redirects and a root 404.html
+# beside it before deploying site/.
+site_dir = "site/docs"
 site_description = "In-process guardrails for AI agents: block or rewrite a tool, MCP, or model call before it runs."
 site_author = "SourceShift"
 copyright = "Apache-2.0 &middot; SourceShift"
@@ -42,6 +55,11 @@ edit_uri = "edit/main/docs/"
 # Keep this list empty. Adding a sheet here makes it global and reintroduces
 # exactly that collision.
 extra_css = []
+
+# Zoom and fullscreen for the Mermaid diagrams: a toolbar, Ctrl/Cmd-wheel and
+# pinch zoom, drag to pan, and a fullscreen view. Dependency-free. Its
+# stylesheet is linked from overrides/main.html; see the note there.
+extra_javascript = ["assets/javascripts/diagram.js"]
 
 nav = [
   # The landing page. Its hero and proof block live in overrides/main.html,
