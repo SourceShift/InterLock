@@ -62,7 +62,7 @@ worse at both jobs.
 | R8 | BRACE escape-resistance suite + unprivileged egress | `shipped` | M | T7 |
 | R9 | Flow-typed policy dimension | `not started` | L | T6 · a constraint on R10 |
 | R10 | Declarative YAML/JSON policies | `shipped` | L | carried from M0 → M2 · agentjail review |
-| R11 | Automatic interception (import hooks) | `not started` | L | carried from M0 → M1/M3 |
+| R11 | Automatic interception (import hooks) | `partial` | L | carried from M0 → M1/M3 · MCP attached at import |
 | R12 | Overhead benchmark suite, with methodology | `not started` | S | carried from M0 |
 | R13 | Node.js sensor | `shipped` | L | carried from M0 |
 | R14 | Parsed shell commands and intents | `shipped` | M | agentjail review |
@@ -813,8 +813,14 @@ Depends on the R9 design decision; blocks nothing else.
 
 ## R11 · Automatic interception (import hooks)
 
-**Status:** `not started` — MCP is wrapped explicitly and `@guard` is opt-in
-(carried from M0 → M1/M3).
+**Status:** `partial` (2026-10-25) — `attach()` guards MCP client sessions at
+``ClientSession.call_tool`` on import (or immediately if already imported),
+idempotently and reversibly, and `uncovered()` reports what is still unguarded.
+The model SDKs stay adapter-guarded deliberately: they return a tool-call
+request and the application dispatches it, so there is no library method to
+wrap that would not also wrap the application's code. The import **monitor**
+(dependency tamper detection) and the explicit compatibility contract are not
+built.
 **Size:** L
 **Pull:** internal. The decorator docstring: "Automatic interception (import
 hooks for MCP and the model SDKs) lands in M1 and M3; this decorator is what

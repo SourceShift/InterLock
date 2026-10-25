@@ -116,9 +116,15 @@ What the DAP path does and does not assume:
 
 ## Known gaps
 
-- **Python import-time hooks don't exist yet.** You wrap each session, tool list,
-  or function explicitly. Automatic interception of MCP clients and model SDKs is
-  on the [roadmap](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md).
+- **Only MCP can be attached at import time.** `attach()` patches
+  `mcp.client.session.ClientSession.call_tool` once, so every session created
+  afterwards is guarded on its first call; `detach()` removes the hook. The
+  model SDKs (OpenAI, Anthropic, LangChain, LiteLLM, CrewAI, Google ADK) do not
+  execute tools - they return a call request and your own dispatcher runs it -
+  so there is no library method to wrap that would not also wrap your code.
+  Guard the dispatcher with the matching `guard_*` adapter, and call
+  `uncovered()` to see, per process, which surfaces are still unguarded
+  ([Python API](reference/python-api.md)).
 - **MCP trust labels come from your adapter, not the model.** Reserved `__*__`
   keys in model-produced arguments (`__origin__`, `__schema__`, `__attestation__`,
   `__tools__`) are stripped at every boundary before an event is built, so a

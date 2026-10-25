@@ -10,9 +10,9 @@ each section says which one.
 
 - [Setup](#setup): `install`, `get_engine`, `set_engine`
 - [Guarding calls](#guarding-calls): `guard`, `monitor`, `guard_mcp_session`,
-  `guard_langchain_tools`, `guard_tool_loop`, `guard_litellm_tool_loop`,
-  `guard_crewai_tool_loop`, `guard_adk_tool_loop`, `enforce_tool_call`,
-  `enforce_tool_result`
+  `attach`, `detach`, `uncovered`, `guard_langchain_tools`,
+  `guard_tool_loop`, `guard_litellm_tool_loop`, `guard_crewai_tool_loop`,
+  `guard_adk_tool_loop`, `enforce_tool_call`, `enforce_tool_result`
 - [Rules and engines](#rules-and-engines): `Rule`, `PolicyEngine`, `deny_tool`,
   `deny_when`
 - [Decisions](#decisions): `Verdict`, `Decision`, `Blocked`
@@ -217,8 +217,13 @@ is ever blocked or rewritten.
 
 ```python
 guard_mcp_session(session, *, engine=None, enforcement="blocking", principal=None,
-                  origin=None, schemas=None) -> Any
+                  origin=None, schemas=None, original=None) -> Any
 ```
+
+`original` is the unguarded `call_tool` to delegate to; it exists for
+`attach()`, which patches the session class and would otherwise recurse. A
+session whose `call_tool` already carries the guard marker is returned
+unchanged, so wrapping twice cannot enforce twice.
 
 Replaces `session.call_tool` with a guarded version and returns the same session
 object. Works whether `call_tool` is sync or async, and never imports the MCP SDK:
@@ -265,6 +270,65 @@ sampling are not intercepted. The MCP trust detectors that act on those events
 need you to send them yourself (see the [MCP guide](../guides/mcp.md)).
 `mcp_capability_lease` never refuses a `tools/list` listing event, so it can share
 an engine with `mcp_surface_baseline`.
+
+### `attach`
+
+```python
+attach(attachments=None) -> AttachReport
+```
+
+Opt-in import hook. Patches `mcp.client.session.ClientSession.call_tool` at the
+class, immediately if the SDK is already imported and through a `sys.meta_path`
+finder if it is imported later. Every `ClientSession` created after the call is
+guarded on its first `call_tool`, with the same policy the per-session wrapper
+applies - no per-session wiring, no decorator. Call it before you build a
+client, typically right after `install()`:
+
+```python
+import interlock
+
+interlock.install(rules=[...])
+report = interlock.attach()
+# report.guarded == ["mcp-session"]; report.missed lists anything not attached,
+# with the reason ("the module is not installed here", "install failed: ...")
+```
+
+Idempotent: a second call adds no second hook and wraps no class twice.
+`AttachReport` is truthy when nothing was missed and has `to_dict()` for
+logging. A failing `install` never breaks the user's import - the failure lands
+in `report.missed` instead.
+
+`attachments=` replaces the default list with `Attachment` objects
+(`site`, `module`, `install(module) -> bool`, optional `uninstall()`), for a
+test double or a surface interlock does not ship.
+
+Only MCP has a class-level seam. The model SDKs return a tool-call request and
+your dispatcher runs it, so the dispatcher is what to guard (see the
+`guard_*_tool_loop` adapters below).
+
+### `detach`
+
+```python
+detach() -> None
+```
+
+Removes the finder from `sys.meta_path` and restores every class method
+`attach()` patched. Sessions already wrapped keep their per-instance guard;
+sessions created afterwards are unguarded until the next `attach()`.
+
+### `uncovered`
+
+```python
+uncovered() -> list[dict]
+```
+
+The known interception points that are not guarded in this process right now:
+`site`, `module`, `attachable`, `available` (is the package installed here),
+and `how` (the explicit call that guards it). Use it at startup or in a test to
+make a missing guard visible instead of assumed. An attached MCP session
+surface disappears from the list; `openai`, `anthropic`, `langchain`,
+`litellm`, `crewai` and `google-adk` always appear, because they are guarded by
+the dispatcher adapter rather than by a hook.
 
 ### `guard_langchain_tools`
 

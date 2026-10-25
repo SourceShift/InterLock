@@ -185,6 +185,7 @@ def guard_mcp_session(
     principal: Optional[str] = None,
     origin: Optional[str] = None,
     schemas: Optional[Mapping[str, str]] = None,
+    original: Optional[Callable[..., Any]] = None,
 ) -> Any:
     """Wrap an MCP client session so every ``call_tool`` is guarded in-process.
 
@@ -196,6 +197,14 @@ def guard_mcp_session(
 
     ``engine`` defaults to the process engine set by :func:`interlock.install`.
 
+    ``original`` is the unguarded ``call_tool`` to delegate to. It exists for
+    :func:`interlock.attach`, which patches the session *class*: the class
+    method is then the wrapper itself, so ``session.call_tool`` would recurse
+    into it. Passing the bound original to the instance wrapper breaks that
+    cycle. A call with a session whose ``call_tool`` already carries this
+    guard's marker returns it unchanged - wrapping twice would enforce twice
+    and write two receipts for one call.
+
     ``origin`` names the server this session talks to, and ``schemas`` maps a
     tool name to the schema string that server declared for it. They become the
     ``__origin__`` and ``__schema__`` entries of the event's trusted
@@ -206,7 +215,11 @@ def guard_mcp_session(
     model, and a label it wrote would let it claim to be a trusted server.
     Labels are added only for the policy check and are never sent to the server.
     """
-    original: Callable[..., Any] = session.call_tool
+    if getattr(session.call_tool, "__interlock_guarded__", False):
+        return session
+    # A fresh local after the None check: both wrappers capture it, and a
+    # captured Optional is not narrowed inside a closure.
+    delegate: Callable[..., Any] = original if original is not None else session.call_tool
     schema_map: Dict[str, str] = dict(schemas or {})
     from .decorator import register_mode  # local: decorator imports this module
     register_mode("mcp_session:{}".format(origin or type(session).__name__), enforcement)
@@ -238,13 +251,13 @@ def guard_mcp_session(
             exc, engine=engine or get_engine(),
         )
 
-    @functools.wraps(original)
+    @functools.wraps(delegate)
     async def async_wrapper(name: str, arguments: Optional[Dict[str, Any]] = None,
                             *rest: Any, **kw: Any) -> Any:
         call_id = new_call_id()
         safe = check(name, arguments, call_id)
         try:
-            out = await original(name, safe, *rest, **kw)
+            out = await delegate(name, safe, *rest, **kw)
         except Exception as exc:
             failed(name, arguments, call_id, exc)
             raise
@@ -254,13 +267,13 @@ def guard_mcp_session(
             labels=labels_for(name),
         )
 
-    @functools.wraps(original)
+    @functools.wraps(delegate)
     def sync_wrapper(name: str, arguments: Optional[Dict[str, Any]] = None,
                      *rest: Any, **kw: Any) -> Any:
         call_id = new_call_id()
         safe = check(name, arguments, call_id)
         try:
-            out = original(name, safe, *rest, **kw)
+            out = delegate(name, safe, *rest, **kw)
         except Exception as exc:
             failed(name, arguments, call_id, exc)
             raise
@@ -270,7 +283,7 @@ def guard_mcp_session(
             labels=labels_for(name),
         )
 
-    session.call_tool = (
-        async_wrapper if asyncio.iscoroutinefunction(original) else sync_wrapper
-    )
+    wrapper = async_wrapper if asyncio.iscoroutinefunction(delegate) else sync_wrapper
+    wrapper.__interlock_guarded__ = True  # type: ignore[attr-defined]
+    session.call_tool = wrapper
     return session

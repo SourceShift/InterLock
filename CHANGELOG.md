@@ -11,6 +11,17 @@ breaking changes land.
 
 ### Added
 
+- `interlock.attach()` / `detach()` / `uncovered()`: the opt-in import hook
+  (ROADMAP R11). `attach()` patches
+  `mcp.client.session.ClientSession.call_tool` at the class - immediately when
+  the SDK is already imported, through a `sys.meta_path` finder when it is
+  imported later - so every session created afterwards is guarded on its first
+  call with no per-session wiring. It is idempotent (the class is never wrapped
+  twice), `detach()` restores the original method, and a failing hook never
+  breaks the user's import. `uncovered()` reports the surfaces this process has
+  not guarded, with the explicit adapter that guards each; the model SDKs stay
+  adapter-guarded because they return tool-call requests rather than executing
+  tools.
 - The mesh, phase 0 (`interlock mesh`, `interlock.mesh`): subscribe to
   community policy packs with `"extends": "mesh:<pack>@<ring>"`. A node pins a
   root and syncs a commons through TUF-shaped metadata (root, targets,

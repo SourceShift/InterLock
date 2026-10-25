@@ -12,19 +12,19 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 
 | # | Gap (short) | Verdict | Evidence |
 |---|---|---|---|
-| 1 | Python import-time hooks | **open** | no `sys.meta_path`/`sitecustomize`; `ROADMAP.md:65` R11 not started |
+| 1 | Python import-time hooks | **partial** | MCP attached at import (`interlock/attach.py`, T12); model SDKs stay adapter-guarded — no class seam to wrap |
 | 2 | MCP trust labels depend on adapter | **closed** | `92eeced` — labels ride `SensorEvent.labels`; reserved keys stripped at every boundary |
 | 3 | Approvals run in the agent's process | **partial** | in-process `set_approver` unchanged; review queue + console approval shipped |
-| 4 | Review queue trusts its file | **partial** | still unsigned SQLite; `0o700/0o600` + path guard added |
+| 4 | Review queue trusts its file | **closed for forgery** | rows HMAC-signed with a key beside the DB (T09, `1547afc`); rollback replay until `approval_ttl` remains |
 | 5 | Shell parsing best-effort | **partial** | ANSI-C `$'\x..'` now decoded; base64 + staged download still pass; "add-only" claim is false |
 | 6 | SQL analysis + masking best-effort | **open** | `interlock/sql/lexer.py`, no AST dep; `interlock/masking.py:35` |
 | 7 | Coding-agent hooks cooperative | **open** | `interlock/adapters/base.py:25-27` capability matrix |
 | 8 | No measured false-positive rate | **partial** | closed for the default pack by T07 (committed corpus, 0/70, CI gate); other policies still unmeasured |
 | 9 | Per-host egress needs root | **open** | no backend exists between bwrap all-or-none and root nftables |
 | 10 | macOS can't confine reads / visibility / memory | **open** | `sandbox_exec.py:109,122`; `limits.py:59-67` |
-| 11 | `setsid()` descendant survives timeout kill | **partial** | bwrap `--unshare-pid` + `--die-with-parent` reclaims it; Windows still direct child only |
+| 11 | `setsid()` descendant survives timeout kill | **partial** | bwrap `--unshare-pid` + `--die-with-parent`; Windows `taskkill /T /F` walks the tree (T10); a reparented process can still escape |
 | 12 | Write confinement differs by backend | **open (accurate)** | `sandbox.py:155-191`; `python-api.md:1036` contradicts the scratch exception |
-| 13 | CPU/memory reported only by `soft` | **open** | `tests/test_brace_limits.py:73-79` pins the absence |
+| 13 | CPU/memory reported only by `soft` | **closed** | every backend claims `rlimit` when a ceiling is set (T11); the token matrix carries an escape row for each |
 | 14 | Truncated tail needs an outside record | **open** | `head=` exists (`sink.py:89-108`); no automatic anchor |
 | 15 | Receipts prove integrity, not authorship | **open** | `verifier=` seam exists; no bundled public-key signer for receipts |
 | 16 | Node.js unguardable shapes | **open** | `js/src/install.ts:43-81` still lists `*Sync`, stream openers, `spawn` |
@@ -254,18 +254,32 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 
 ## T12 — Python import-time hooks (ROADMAP R11)
 
-**Status:** not started — large
+**Status:** done (2026-10-25) — MCP attached at import; model SDKs confirmed to
+have no class seam
 
-- **Design the import hook surface**
-  - status: not started
-  - last worked on: —
-  - remaining: `ROADMAP.md:811-839` carries the design (one attach point for
-    MCP clients and model SDKs). No `sys.meta_path` finder, no
-    `sitecustomize`, no SDK monkey-patch exists; `interlock/__init__.py:102`
-    is a placeholder and the `wrapt` extra is never imported.
-  - Remaining parts: opt-in activation, double-wrap protection, an
-    `uncovered` report like the Node client's, tests proving the same decision
-    reaches a wrapped vs. hook-intercepted call.
+- **Ship the opt-in import hook**
+  - status: done
+  - last worked on: 2026-10-25
+  - `interlock/attach.py`: `attach()` patches
+    `mcp.client.session.ClientSession.call_tool` at the class, immediately if
+    the SDK is already imported and through a `sys.meta_path` finder + wrapping
+    loader if it is imported later. The class wrapper hands the *bound
+    original* to `guard_mcp_session(original=...)` on the first call per
+    session, which is what breaks the class-patch recursion; the
+    `__interlock_guarded__` marker is the double-wrap guard on both paths.
+  - `detach()` restores every patched method and removes the finder.
+  - `uncovered()` lists every known surface with `attachable`, `available` and
+    the explicit call that guards it — the Python counterpart of the Node
+    client's report.
+  - `tests/test_attach.py` (13 tests): already-imported and import-later
+    paths, block before effect, allowed call reaches the server once, second
+    attach wraps nothing twice, detach restores, sync sessions, a failing
+    install does not break the import, and the same verdict from
+    `guard_mcp_session(session)` and from the attached class.
+  - Not shipped, and now recorded in `ROADMAP.md` R11: the model SDKs are
+    adapter-guarded by design (they never execute tools — the application's
+    dispatcher does), and the import **monitor** / compatibility contract are
+    still open.
 
 ## T13 — Node.js: report ESM named imports as uncovered
 

@@ -82,6 +82,30 @@ async with stdio_client(server_params) as (read, write):
 tools, reading resources, and sampling are not checked unless you check them
 yourself, which the rest of this page shows how to do.
 
+### Guard every session at once
+
+Wrapping each session by hand is easy to forget in the one script nobody
+reviewed. `interlock.attach()` patches `ClientSession.call_tool` at the class,
+so every session created after it is guarded on its first call:
+
+```python
+import interlock
+
+interlock.install(rules=[...])
+interlock.attach()                 # or: report = interlock.attach(); assert report
+
+# ... anywhere later, with no per-session wiring:
+async with ClientSession(read, write) as session:
+    await session.call_tool("read_file", {"path": "/etc/passwd"})   # Blocked
+```
+
+The hook is opt-in, idempotent and reversible (`interlock.detach()` restores
+the original method). A session you wrapped yourself is not wrapped twice.
+`interlock.uncovered()` lists the surfaces this process has not guarded and the
+adapter that guards each; the model SDKs are on that list by design, because
+they do not execute tools - your dispatcher does, and the `guard_*_tool_loop`
+adapters guard it.
+
 ## Results from the official SDK
 
 The official SDK doesn't return a string. It returns a `CallToolResult` object

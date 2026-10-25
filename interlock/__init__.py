@@ -1,9 +1,11 @@
 """interlock: in-process guardrails for AI agents.
 
 Hook an agent's tool / MCP / model calls inside its own process, and block or
-modify a bad action before it runs. M0 ships the opt-in @guard decorator and a
-Python-rule policy engine; automatic import-hook interception (MCP, model SDKs)
-and a native fast-path land in later milestones.
+modify a bad action before it runs. The seams are explicit - ``@guard``, the
+``guard_*_tool_loop`` adapters, ``guard_mcp_session`` - and ``attach()`` is the
+one opt-in import hook: it guards MCP client sessions at the class, so a
+session is covered from birth without per-session wiring. ``uncovered()``
+reports the surfaces that still need an explicit adapter.
 """
 from __future__ import annotations
 
@@ -20,6 +22,7 @@ from .approval import (
     approve_once,
     set_approver,
 )
+from .attach import attach, detach, uncovered
 from .brace import Sandbox, SandboxProfile, compile_profile
 from .context import (
     current_parent_principal,
@@ -50,6 +53,9 @@ __all__ = [
     "guard",
     "monitor",
     "guard_mcp_session",
+    "attach",
+    "detach",
+    "uncovered",
     "enforce_tool_call",
     "enforce_tool_result",
     "guard_langchain_tools",
@@ -99,7 +105,8 @@ def install(
     """Wire the guard runtime and return the active engine.
 
     Pass rules to build an engine from scratch, or pass your own engine.
-    Later milestones also turn on the automatic import/MCP/LLM hooks here.
+    Import-time interception is separate and opt-in: call :func:`attach` to
+    guard MCP client sessions at the class.
 
     ``sink`` optionally installs a receipt sink (e.g. ``interlock.sink.FileSink``),
     the explicit opt-in that turns decision receipts on; without one no
