@@ -12,6 +12,9 @@
 > `github.com/...@commit` references); both are complete, see §6. The tree facts
 > in §0 were re-checked by the operator and hold. The decisions here supersede
 > §11 of `mesh-shared-policy-network.md`; each "Implementation" list is an epic.
+> **Status 2026-10-25:** all five implementation lists shipped (see `ROADMAP.md`,
+> "M0–M3 · The mesh"); the DAP/Prio3 client (R2 step 3) and the operational
+> recruitment of keyholders and an aggregator operator remain.
 
 
 - **Run:** `run-1792920000-93111` · 2026-10-25 · target checkout at `36fbfae`.

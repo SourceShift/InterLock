@@ -1436,9 +1436,17 @@ Each phase shipped on its own and is usable without the next; usage is in
 
 The five governance questions (root-key custody, aggregator operators, default
 reporting posture, data licence, `block` by default) were decided on 2026-10-25 in
-[`research/mesh-decisions.md`](research/mesh-decisions.md); its implementation lists
-are the M4 epics (counts leave only as shares; block needs a grant; offline root;
-reporting off and local by default; data licence and warranty). Known upgrades the
+[`research/mesh-decisions.md`](research/mesh-decisions.md), and its implementation
+lists shipped as five epics on 2026-10-25, each through mini-ork's `framework-edit`
+recipe with an Opus review and a hand ship: counts leave a node only as secret
+shares with an aggregator batch floor (`83d5b5d`); a community `block` needs an
+operator grant, ungranted blocks escalate or run as shadow (`67c9f1e`); the root
+stays offline and rotates in a detached-signature ceremony, with `GOVERNANCE.md`
+(`4e59446`); reporting is off, local and never retroactive by default (`9cd0545`);
+packs are Apache-2.0 and data is CC0-1.0 under `LICENSE-DATA` with a DCO data
+warranty (`7e0ce33`, `c8ea610`). What stays open is operational, not code: recruit
+the two non-maintainer root keyholders and an independent DAP operator, and build
+the DAP/Prio3 client the record names as R2 step 3. Known upgrades the
 modules leave room for: range proofs on secret-shared counts (Prio3 / DAP), a
 semantic embedder behind the fingerprint API, and zero-knowledge membership in
 place of issuer-linkable certificates.
