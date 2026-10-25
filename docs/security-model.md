@@ -120,10 +120,15 @@ Each of these is sometimes the right choice. Make it on purpose.
   follow its documentation and are worth confirming on your version
   ([coding agents](guides/coding-agents.md)). **Accepted:** a hook adapter is
   cooperative by construction; only an OS boundary confines an agent.
-- **No published false-positive rate.** `interlock mesh harness` measures a
-  policy's false-positive rate, latency and recall against a benign corpus you
-  supply, but the repository ships no benign agent-traffic corpus and publishes
-  no per-detector number, so there is nothing to compare your policy against.
+- **The published false-positive rate covers one pack, on one machine.**
+  `benchmarks/fp/benign.jsonl` holds 70 ordinary coding-agent calls, and
+  `scripts/fp_baseline.py` measures `builtin:coding-agent` against them:
+  **0 false positives, p95 ≈ 2 ms** on 2026-10-25 (`benchmarks/fp/README.md`).
+  `tests/test_fp_baseline.py` re-runs it in CI, so a rule that starts firing on
+  a routine `git status` breaks the build. That is a regression gate, not a
+  guarantee: zero events out of 70 leaves a 95% upper bound near 4%, the corpus
+  is one developer's traffic, and no per-detector number ships for other
+  policies. `interlock mesh harness` measures yours against your own corpus.
   An attacker who can *trigger* blocks can use a fail-closed guard to stop your
   agent working.
 - **OS-level per-host egress needs root.** Between bubblewrap's "all network or

@@ -19,7 +19,7 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 | 5 | Shell parsing best-effort | **partial** | ANSI-C `$'\x..'` now decoded; base64 + staged download still pass; "add-only" claim is false |
 | 6 | SQL analysis + masking best-effort | **open** | `interlock/sql/lexer.py`, no AST dep; `interlock/masking.py:35` |
 | 7 | Coding-agent hooks cooperative | **open** | `interlock/adapters/base.py:25-27` capability matrix |
-| 8 | No measured false-positive rate | **partial** | `interlock mesh harness` shipped (`68fbb69`); no corpus, no published numbers, no CI gate |
+| 8 | No measured false-positive rate | **partial** | closed for the default pack by T07 (committed corpus, 0/70, CI gate); other policies still unmeasured |
 | 9 | Per-host egress needs root | **open** | no backend exists between bwrap all-or-none and root nftables |
 | 10 | macOS can't confine reads / visibility / memory | **open** | `sandbox_exec.py:109,122`; `limits.py:59-67` |
 | 11 | `setsid()` descendant survives timeout kill | **partial** | bwrap `--unshare-pid` + `--die-with-parent` reclaims it; Windows still direct child only |
@@ -150,24 +150,28 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
 
 ## T07 — Publish a false-positive number and gate it
 
-**Status:** not started
+**Status:** done (2026-10-25)
 
 - **Commit a benign agent-traffic corpus**
-  - status: not started
-  - last worked on: —
-  - remaining: JSONL of realistic benign calls per rule family; no such file
-    exists (`benchmarks/` holds only `scope_memory.py`).
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `benchmarks/fp/benign.jsonl`, 70 events across file,
+    git, build/test, search, fetch and MCP tools, call and result phases.
 - **Publish per-detector FP + latency**
-  - status: not started
-  - last worked on: —
-  - remaining: `gate()` defaults to `DEFAULT_MAX_FP_RATE = 0.001`
-    (`interlock/mesh/harness.py:131-145`); record a result table in
-    `docs/` and drop it in `docs/security-model.md`.
+  - status: done (pack-level, not per-detector)
+  - last worked on: 2026-10-25
+  - remaining: none for the default pack — `scripts/fp_baseline.py` measures
+    `builtin:coding-agent` at 0 false positives / 70 events, p95 ~2 ms; the
+    table and its limits are in `benchmarks/fp/README.md` and the
+    false-positive bullet of `docs/security-model.md`. Per-detector numbers for
+    *other* policies are still not published; the harness measures them on
+    demand.
 - **Add a CI regression gate**
-  - status: not started
-  - last worked on: —
-  - remaining: `.github/workflows/ci.yml` runs pytest only; add a harness step
-    over the committed corpus with a threshold.
+  - status: done
+  - last worked on: 2026-10-25
+  - remaining: none — `tests/test_fp_baseline.py` asserts zero false positives
+    and runs the harness gate, so the existing pytest CI job enforces it. The
+    latency bound is widened 5x there to keep a slow runner from flaking.
 
 ## T08 — Bundle a public-key receipt signer
 
@@ -268,3 +272,20 @@ stale or a mitigation shipped), **closed** (no longer true — doc fix only).
     `docs/security-model.md` so future audits do not re-open them. The
     coding-agent-hook cooperativeness gap is likewise inherent — the hooks
     are an in-agent adapter by definition.
+
+## T15 — Memoize intent analysis per event (found during T07)
+
+**Status:** not started
+
+- **Stop re-parsing one Bash command once per intent rule**
+  - status: not started
+  - last worked on: 2026-10-25
+  - remaining: `BuiltinEngine.evaluate` runs each rule in turn, and every rule
+    with an `intent` condition calls `intents.analyze(event)`, which calls
+    `parse()` again (`interlock/policy/declarative.py:1034` →
+    `interlock/shell/intents.py:81`). A Bash event pays for ~12 parses; that is
+    1.26 ms p50 versus 0.04 ms for a file tool, measured in
+    `benchmarks/fp/README.md`. Cache `analyze(command, cwd)` for the length of
+    one `evaluate()` call (an `lru_cache` keyed on both, or a per-engine
+    memo cleared at entry). Near-zero behavioural risk if `cwd` is part of the
+    key; expected to cut Bash cost by an order of magnitude.
