@@ -195,6 +195,13 @@ python -m interlock.console --receipts /tmp/il-demo/receipts.jsonl &
 npm --prefix web run dev
 ```
 
+`make dev` is that pair with a watcher on `interlock/`: every Python change
+restarts the server, and Vite reloads the page for every `web/src` change.
+Pass extra console flags through `CONSOLE_ARGS`, and run it on another port
+with `PORT` (only if you also change the proxy target in
+`web/vite.config.ts`). A restart issues a new unlock code, so an already
+unlocked tab goes read-only until you paste the new link.
+
 The screens' markup in `web/src/design/` is generated from the designer's file,
 `design/console/Interlock Console.dc.html`, by
 `scripts/console_design/convert.py`; don't edit it by hand. What the screens

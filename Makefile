@@ -11,13 +11,41 @@ RUFF ?= ruff
 # Zensical is pinned in .github/workflows/docs.yml; without an install, run
 # `make docs ZENSICAL='uvx --from zensical==0.0.70 zensical'`.
 ZENSICAL ?= zensical
+# The console port the Vite dev server proxies /api to (web/vite.config.ts).
+PORT ?= 7878
+# Extra console flags, e.g. make dev CONSOLE_ARGS='--receipts audit.jsonl'
+CONSOLE_ARGS ?=
 
 .DEFAULT_GOAL := help
-.PHONY: help check check-python check-js check-web check-rust check-all docs docs-serve
+.PHONY: help dev check check-python check-js check-web check-rust check-all docs docs-serve
 
 help: ## Show the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
+
+# Both halves of the console, side by side: the Python server restarted by a
+# watcher on every change under interlock/, and Vite with HMR for the UI. Open
+# the Vite address; its /api proxy reaches the console, which must stay on
+# PORT because the proxy target is hard-coded. Ctrl-C stops both.
+#
+# A restart reissues this launch's unlock code, so writes in an already
+# unlocked tab start failing until the link below is pasted again.
+dev: ## Run the console (auto-restart) and the Vite dev server together
+	@command -v watchfiles >/dev/null || { \
+		echo "make dev needs watchfiles: $(PY) -m pip install watchfiles" >&2; exit 1; }
+	@test -x web/node_modules/.bin/vite || { \
+		echo "make dev needs the web dependencies: $(NPM) --prefix web ci" >&2; exit 1; }
+	@$(PY) -c 'import socket, sys; s = socket.socket(); s.settimeout(0.2); \
+		sys.exit(0 if s.connect_ex(("127.0.0.1", $(PORT))) else 1)' || { \
+		echo "port $(PORT) is already in use; stop it, or pass PORT=... and update the" >&2; \
+		echo "proxy target in web/vite.config.ts to match" >&2; exit 1; }
+	@echo "api  http://127.0.0.1:$(PORT)   (the unlock link prints below)"
+	@echo "web  Vite prints its own address below — open that one"
+	@trap 'kill 0' EXIT INT TERM; \
+	watchfiles --filter python \
+		"$(PY) -m interlock.console --port $(PORT) $(CONSOLE_ARGS)" interlock/ & \
+	$(NPM) --prefix web run dev & \
+	wait
 
 check: check-python ## The gate for a Python change (lint, catalog, full suite)
 
