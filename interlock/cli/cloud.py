@@ -52,7 +52,10 @@ instead.
 Receipts leave the host without ever touching a verdict: the connector tails
 the host receipt log from a durable byte offset, batches only complete lines,
 and advances the offset only after the plane answers 2xx, so uploads are
-at-least-once and the plane deduplicates by mac. `status` reports that
+at-least-once and the plane deduplicates by mac. `enroll` writes
+`receipt_log` as `receipts.jsonl` beside the connector home - the file the
+hook writes when its key exists - and removing that field from `cloud.json`
+stops receipt upload for the host. `status` reports that
 offset, its line number, the pending bytes and the last framing error;
 `status --reset-offset LINE --yes` is operator recovery only, for a log that
 was rotated under the connector. A receipt whose `prev` does not continue

@@ -153,8 +153,11 @@ class Connector:
         """The tailer for the configured receipt log, or ``None``.
 
         The offset lives beside the connector state unless ``receipt_offset``
-        names another path. Configuring no ``receipt_log`` disables receipt
-        upload entirely - the connector never guesses a host log path.
+        names another path. ``enroll`` writes ``receipt_log`` as
+        ``receipts.jsonl`` beside the connector home, the file the hook writes
+        when its key exists; removing the field disables receipt upload -
+        whatever the config names is what is tailed, and the connector never
+        guesses a host log path.
         """
         config = self.config or {}
         log = config.get("receipt_log")
@@ -344,6 +347,12 @@ class Connector:
             "plane_public_keys": dict(payload.get("plane_public_keys") or {}),
             "spool_dir": "spool",
             "state_dir": "state",
+            # FR-032: a cloud-enrolled host streams its receipt log by
+            # default. Writing the field here - rather than defaulting it in
+            # the connector - keeps ``receipt_tailer`` honest: whatever the
+            # config names is what is tailed, and deleting the field is how an
+            # operator opts out of receipt upload.
+            "receipt_log": str(self.home.root / "receipts.jsonl"),
         }
         try:
             self.home.save(document)

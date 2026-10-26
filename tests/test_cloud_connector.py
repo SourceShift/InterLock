@@ -148,6 +148,10 @@ def test_enroll_writes_a_0600_config_and_the_local_seed_once(tmp_path):
     assert sent["host_public_key"] == public_key_hex(home.load_seed())
     assert sent["host_key_id"] == key_id(sent["host_public_key"])
     assert home.load()["agent_key"] == response["agent_key"]
+    # FR-032: enrollment points the connector at the host receipt log, so a
+    # freshly enrolled host streams receipts instead of silently shipping none.
+    assert home.load()["receipt_log"] == str(home.root / "receipts.jsonl")
+    assert connector.receipt_tailer() is not None
     assert home.config_path.stat().st_mode & 0o077 == 0
     assert home.seed_path.stat().st_mode & 0o077 == 0
 
