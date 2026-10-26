@@ -22,6 +22,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`drift`](#interlock-drift) | diff a live surface's tool listing against a recorded corpus |
 | [`anchor`](#interlock-anchor) | record a receipt log's head outside it, or check it still reaches it |
 | [`mesh`](#interlock-mesh) | subscribe to community policy packs, or publish a commons |
+| [`cloud`](#interlock-cloud) | Enroll hosts and run the cloud connector |
 
 ## `interlock doctor`
 
@@ -144,16 +145,15 @@ Exit codes: 0 done, 1 an agent could not be configured, 64 bad arguments.
 ```text
 usage: interlock install-hook [-h] --for {claude-code,codex,cursor,all} [--settings FILE]
                               [--policy FILE] [--sidecar PATH] [--receipts FILE] [--key-file FILE]
-                              [--reviews {fallback,always,off}] [--review-db FILE]
-                              [--monitor] [--dry-run] [--uninstall]
+                              [--reviews {fallback,always,off}] [--review-db FILE] [--monitor]
+                              [--dry-run] [--uninstall]
   --for                      
   --settings                 the agent's settings file (default: its usual path)
   --policy                   pin this policy file in the hook
   --sidecar                  decide through this sidecar
   --receipts                 receipt log path
   --key-file                 receipt key path
-  --reviews                  settle escalations through the review queue: when the agent
-                             can't ask (default), always - Claude Code too - or never
+  --reviews                  settle escalations through the review queue: when the agent can't ask (default), always - Claude Code too - or never
   --review-db                review queue path
   --monitor                  install in monitor mode
   --dry-run                  print the change only
@@ -490,4 +490,32 @@ usage: interlock mesh harness [-h] --policy FILE --benign FILE [--samples FILE] 
 usage: interlock mesh forge [-h] --state FILE --benign FILE --out DIR [--samples FILE]
                             [--max-fp-rate RATE] [--min-recall RATE]
 usage: interlock mesh consensus [-h] ACTION ...
+```
+
+## `interlock cloud`
+
+Enroll this host with an interlock cloud plane, and run the connector.
+
+```bash
+interlock cloud enroll --url https://cloud.example --token TOKEN
+interlock cloud run --once
+interlock cloud status --json
+```
+
+The connector is outbound-only: it polls the plane for reviews, grants and
+policy manifests, and the plane cannot dial this host. Every action is a stub
+in this release - it prints a notice and exits 3; the transport follows in its
+own milestone.
+
+Exit codes: 0 ok, 3 the action is not implemented yet, 64 the command line was
+wrong (no action, or one that does not exist).
+
+```text
+usage: interlock cloud [-h] ACTION ...
+usage: interlock cloud enroll [-h] [--url URL] [--token TOKEN]
+usage: interlock cloud run [-h] [--once] [--url URL]
+usage: interlock cloud status [-h] [--json]
+usage: interlock cloud leave [-h] [--url URL]
+usage: interlock cloud policy [-h] [--policy FILE]
+usage: interlock cloud keys [-h] [--json]
 ```

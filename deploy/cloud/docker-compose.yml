@@ -1,0 +1,45 @@
+# Development stack for the interlock cloud control plane.
+#
+#   IL_CLOUD_DB_PASSWORD=... docker compose -f deploy/cloud/docker-compose.yml up -d --wait
+#   python3 -m interlock.cloud.migrate --dsn "$IL_CLOUD_DSN"
+#
+# The password default below is dev-only and deliberately obvious. Override it
+# with IL_CLOUD_DB_PASSWORD, and never commit a real secret to this file.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: interlock
+      POSTGRES_USER: interlock
+      POSTGRES_PASSWORD: ${IL_CLOUD_DB_PASSWORD:-dev-only-password}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - interlock-cloud-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interlock -d interlock"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # The plane itself. Uncomment after building an image (or mount the checkout)
+  # and supplying deploy/cloud/cloud.env with IL_CLOUD_DSN and
+  # IL_CLOUD_SESSION_SECRET (32+ characters).
+  #
+  # cloud:
+  #   image: python:3.12-slim
+  #   working_dir: /app
+  #   volumes:
+  #     - ../..:/app
+  #   env_file:
+  #     - cloud.env
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   command: >
+  #     sh -c "pip install -e '.[cloud]' &&
+  #            python3 -m interlock.cloud.migrate --dsn $$IL_CLOUD_DSN &&
+  #            python3 -m interlock.cloud"
+
+volumes:
+  interlock-cloud-pgdata:

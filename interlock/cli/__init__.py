@@ -36,6 +36,7 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("anchor", "record a receipt log's head outside it, or check it still reaches it",
      "anchor"),
     ("mesh", "subscribe to community policy packs, or publish a commons", "mesh"),
+    ("cloud", "Enroll hosts and run the cloud connector", "cloud"),
 ]
 
 
