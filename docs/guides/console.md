@@ -90,6 +90,25 @@ agent's `curl` to them is blocked before it runs.
 | `--sidecar-admin` | none | The daemon's loopback admin address (`interlock-sidecar --admin HOST:PORT`), for its stats and config. |
 | `--transcripts` | `~/.claude/projects` | Claude Code transcripts, for the real-data features below. Only ever read. |
 
+### Started without a receipt log
+
+Started without `--receipts`, Activity and the audit log show an empty state
+rather than failing: there is no log to read, so every count is zero and the
+chain reads "unverified". To fix it:
+
+1. `interlock install-hook --for claude-code` (or `codex`, `cursor`, `all`)
+   creates `~/.interlock/receipts.key`; the hooks then write
+   `~/.interlock/receipts.jsonl` by default.
+2. Let the agent make one guarded call — the first receipt creates the file.
+3. Restart the console with `--receipts ~/.interlock/receipts.jsonl
+   --key-file ~/.interlock/receipts.key`, pointing `--receipts` at wherever
+   your hook writes. `--key-file` is optional and only verifies the chain;
+   `--receipts-head` is optional too, and is what catches a truncated log.
+
+`scripts/console_traffic.py /tmp/il-demo` writes a real scratch log, queue and
+policy if you want to try the console before installing anything; point
+`--receipts` at `/tmp/il-demo/receipts.jsonl`.
+
 ## Testing on your real calls
 
 Receipts store a fingerprint of each call's arguments, never the arguments.

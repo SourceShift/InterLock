@@ -11,17 +11,121 @@ export function ActivityScreen({ v }: { v: Vals }) {
           <>
             <div style={{ background: "var(--il-panel)", border: "1px solid var(--il-rule)", borderRadius: "12px", padding: "36px", display: "flex", flexDirection: "column", gap: "12px", alignItems: "flex-start", maxWidth: "680px" }}>
               <span style={{ fontFamily: "'Martian Mono',monospace", fontSize: "10px", letterSpacing: ".06em", textTransform: "uppercase", color: "var(--il-dim)" }}>
-                No receipt log
+                No receipt log · started without --receipts
               </span>
               <h2 style={{ margin: "0", fontSize: "22px", fontWeight: "600", letterSpacing: "-.02em" }}>
                 Point the console at a receipt log
               </h2>
               <p style={{ margin: "0", color: "var(--il-fg2)", textWrap: "pretty" }}>
-                Every decision interlock makes is written to a receipt log: one signed line per call. Activity, the audit log and chain verification all read from it. This console was started without one.
+                Every decision interlock makes is written to a receipt log: one signed line per call. Activity, the audit log and chain verification all read from it. This console was started without one, so it has nothing to read.
               </p>
-              <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11.5px", padding: "10px 12px", borderRadius: "7px", background: "var(--il-sunken)", border: "1px solid var(--il-rule)", color: "var(--il-fg)", overflowWrap: "anywhere" }}>
-                python3 -m interlock.console --receipts ~/.interlock/receipts.jsonl --key-file ~/.interlock/receipts.key
-              </code>
+              <ol style={{ margin: "0", paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "16px", color: "var(--il-fg2)", fontSize: "13px", lineHeight: "1.55" }}>
+                <li style={{ paddingLeft: "2px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <span>
+                      <strong style={{ color: "var(--il-fg)" }}>
+                        Install the guard, once.
+                      </strong>
+                      {" It creates "}
+                      <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                        ~/.interlock/receipts.key
+                      </code>
+                      {"; from then on the agent hooks write "}
+                      <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                        ~/.interlock/receipts.jsonl
+                      </code>
+                      {" by default."}
+                    </span>
+                    <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11.5px", padding: "9px 12px", borderRadius: "7px", background: "var(--il-sunken)", border: "1px solid var(--il-rule)", color: "var(--il-fg)", overflowWrap: "anywhere" }}>
+                      interlock install-hook --for claude-code # or: codex, cursor, all
+                    </code>
+                    <span>
+                      {"Already installed? "}
+                      <a href="#/ops" style={{ color: "var(--il-acc)", textDecoration: "none", borderBottom: "1px dashed color-mix(in oklch,var(--il-acc) 55%,transparent)" }}>
+                        Ops
+                      </a>
+                      {" shows the hook state for each agent."}
+                    </span>
+                  </div>
+                </li>
+                <li style={{ paddingLeft: "2px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <span>
+                      <strong style={{ color: "var(--il-fg)" }}>
+                        Let the agent make one guarded call.
+                      </strong>
+                      {" The log file is created by the first decision — until then there is nothing to point at. Any tool call the agent makes from now on appends its line."}
+                    </span>
+                  </div>
+                </li>
+                <li style={{ paddingLeft: "2px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <span>
+                      <strong style={{ color: "var(--il-fg)" }}>
+                        Restart the console with that log and its key.
+                      </strong>
+                      {" Stop this process, then:"}
+                    </span>
+                    <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11.5px", padding: "9px 12px", borderRadius: "7px", background: "var(--il-sunken)", border: "1px solid var(--il-rule)", color: "var(--il-fg)", overflowWrap: "anywhere" }}>
+                      python3 -m interlock.console --receipts ~/.interlock/receipts.jsonl --key-file ~/.interlock/receipts.key
+                    </code>
+                    <span>
+                      {"Flags in short: "}
+                      <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                        --receipts
+                      </code>
+                      {" is the log to read (the hook has its own "}
+                      <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                        --receipts
+                      </code>
+                      {" — point both at the same file). "}
+                      <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                        --key-file
+                      </code>
+                      {" only verifies the chain; without it the badge reads "}
+                      <em>
+                        unverified
+                      </em>
+                      {". Once you have run "}
+                      <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                        interlock anchor
+                      </code>
+                      {", add "}
+                      <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                        --receipts-head MAC
+                      </code>
+                      {" so a truncated log reads "}
+                      <em>
+                        broken
+                      </em>
+                      {" instead of "}
+                      <em>
+                        intact
+                      </em>
+                      .
+                    </span>
+                  </div>
+                </li>
+              </ol>
+              <p style={{ margin: "0", color: "var(--il-fg2)", fontSize: "12.5px", textWrap: "pretty" }}>
+                {"Trying it without touching your agent? "}
+                <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                  scripts/console_traffic.py /tmp/il-demo
+                </code>
+                {" writes a real scratch log, queue and policy, then point "}
+                <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                  --receipts
+                </code>
+                {" at "}
+                <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                  /tmp/il-demo/receipts.jsonl
+                </code>
+                {". Full walkthrough: "}
+                <a href="https://interlock.sourceshift.ai/docs/guides/console/" style={{ color: "var(--il-acc)", textDecoration: "none", borderBottom: "1px dashed color-mix(in oklch,var(--il-acc) 55%,transparent)" }}>
+                  console guide
+                </a>
+                .
+              </p>
             </div>
           </>
         ) : null}

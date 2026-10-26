@@ -96,6 +96,22 @@ export function AuditScreen({ v }: { v: Vals }) {
                         </code>
                         {" to verify the chain)."}
                       </span>
+                      <span style={{ color: "var(--il-fg2)", fontSize: "13px", textWrap: "pretty" }}>
+                        {"No log exists yet? Run "}
+                        <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                          interlock install-hook --for claude-code
+                        </code>
+                        {", let the agent make one guarded call (the first receipt creates "}
+                        <code style={{ fontFamily: "'Martian Mono',monospace", fontSize: "11px" }}>
+                          ~/.interlock/receipts.jsonl
+                        </code>
+                        ), then restart the console pointing at it.
+                      </span>
+                      <span style={{ fontSize: "12.5px" }}>
+                        <a href="#/activity" style={{ color: "var(--il-acc)", textDecoration: "none", borderBottom: "1px dashed color-mix(in oklch,var(--il-acc) 55%,transparent)" }}>
+                          Full setup steps on Activity
+                        </a>
+                      </span>
                     </div>
                   </>
                 ) : null}
