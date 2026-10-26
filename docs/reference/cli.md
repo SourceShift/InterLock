@@ -144,6 +144,7 @@ Exit codes: 0 done, 1 an agent could not be configured, 64 bad arguments.
 ```text
 usage: interlock install-hook [-h] --for {claude-code,codex,cursor,all} [--settings FILE]
                               [--policy FILE] [--sidecar PATH] [--receipts FILE] [--key-file FILE]
+                              [--reviews {fallback,always,off}] [--review-db FILE]
                               [--monitor] [--dry-run] [--uninstall]
   --for                      
   --settings                 the agent's settings file (default: its usual path)
@@ -151,6 +152,9 @@ usage: interlock install-hook [-h] --for {claude-code,codex,cursor,all} [--setti
   --sidecar                  decide through this sidecar
   --receipts                 receipt log path
   --key-file                 receipt key path
+  --reviews                  settle escalations through the review queue: when the agent
+                             can't ask (default), always - Claude Code too - or never
+  --review-db                review queue path
   --monitor                  install in monitor mode
   --dry-run                  print the change only
   --uninstall                remove interlock's hooks

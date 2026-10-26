@@ -23,7 +23,8 @@ COLLIDING = "raise SystemExit('imported from the working directory')\n"
 
 
 def flags(**values):
-    base = dict(policy=None, sidecar=None, receipts=None, key_file=None, monitor=False)
+    base = dict(policy=None, sidecar=None, receipts=None, key_file=None, monitor=False,
+                reviews=None, review_db=None)
     base.update(values)
     return argparse.Namespace(**base)
 
@@ -125,6 +126,15 @@ def test_flags_stay_quoted_and_the_sidecar_is_not_rewritten(tmp_path):
         "--agent", "codex", "--policy", str(spaced / "p.json"), "--sidecar", "run/il.sock",
         "--receipts", os.path.abspath("r.jsonl"), "--key-file", str(spaced / "k"), "--monitor"]
     assert is_ours(command) and os.path.isabs(argv[0])
+
+
+def test_the_review_mode_and_queue_reach_the_hook(tmp_path):
+    command = hook_command("claude-code", flags(reviews="always",
+                                                review_db=str(tmp_path / "reviews.db")))
+    argv = shlex.split(command)
+    assert argv[argv.index("--review-db"):] == [
+        "--review-db", str(tmp_path / "reviews.db"), "--reviews", "always"]
+    assert "--reviews" not in hook_command("codex", flags())
 
 
 def test_guard_knows_every_adapter():

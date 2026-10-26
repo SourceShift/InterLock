@@ -50,8 +50,10 @@ callers that can afford to wait.
 
 The hooks use the queue automatically when an agent can't ask: Codex, and
 Cursor file reads. Without it they could only refuse. Claude Code keeps its
-native permission prompt; install with `--reviews always` to send its
-escalations through the queue too, or `--reviews off` to disable the queue.
+native permission prompt - "Yes / No" in the session, nothing filed, so nothing
+on the console's Reviews screen; `interlock install-hook --reviews always`
+sends its escalations through the queue too, and `--reviews off` disables the
+queue.
 
 ## Deciding
 
@@ -66,12 +68,65 @@ interlock reviews revoke r-1a2b3c4d          # withdraw an approval not yet used
 A rejected call that is retried unchanged gets the rejection back. It doesn't
 file a new review and ask you again.
 
+## Notify Slack or a webhook
+
+Nothing tells you a review is waiting by default: `interlock reviews` and the
+console are pull-only, on purpose - the queue never accepts a decision over a
+network. To get a ping, point the hook at an incoming webhook:
+
+```bash
+export INTERLOCK_REVIEW_WEBHOOK=https://hooks.slack.com/services/...
+export INTERLOCK_REVIEW_WEBHOOK_FORMAT=slack        # or json; default slack
+export INTERLOCK_REVIEW_CONSOLE_URL=http://127.0.0.1:7878   # link in the message
+interlock install-hook --for claude-code --reviews always
+```
+
+The hook posts one message per **filed** review: a pending review that is
+asked about again, and a rejected call retried unchanged, notify nobody.
+
+What leaves the machine is deliberately narrow: the review id, the tool, the
+one argument that says what the call acts on (command, file or URL), the
+principal, the rule, the reason and a console link - each passed through the
+guard's own secret redactor first, because a rule's reason can quote an
+argument. The call's full arguments never leave: they stay in the review
+database for the console and `interlock reviews show`.
+
+`slack` posts `{"text": ...}`. `json` posts
+`{"event": "interlock.review.filed", "review_id", "action", "target",
+"principal", "rule", "reason", "min_approvals", "pending_until",
+"console_url"}`. A slow, failing or redirecting receiver never blocks or
+changes a decision - you may simply get no ping. A malformed setting warns once
+and disables the ping; it does not fail the hook.
+
+The webhook URL is a credential: keep it in the environment or a secret store,
+not in a policy file, and note that interlock never logs it.
+
+From your own code, pass a notifier instead of setting the environment:
+
+```python
+from interlock.notify import ReviewNotifier
+from interlock.reviews import ReviewQueue, queue_approver
+
+queue = ReviewQueue(on_file=ReviewNotifier("https://hooks.slack.com/services/..."))
+interlock.install(approver=queue_approver(queue))
+```
+
+The webhook is one-way: it announces, it never decides. Approval stays
+`interlock reviews approve` (yourself, outside the agent) or the console. The
+message is posted once; for a reminder, have cron post the pending count:
+
+```bash
+n=$(interlock reviews --json list --status pending | jq length)
+[ "$n" -gt 0 ] && curl -s -X POST -H 'Content-type: application/json' \
+  --data "{\"text\":\"$n interlock review(s) still pending\"}" "$INTERLOCK_REVIEW_WEBHOOK"
+```
+
 ## Settings
 
 ```python
 ReviewQueue(path=None, pending_ttl=3600, approval_ttl=900,
             min_approvals=1, allow_self_approval=True,
-            key=None, key_path=None)
+            key=None, key_path=None, on_file=None)
 ```
 
 | Setting | Meaning |
@@ -80,6 +135,7 @@ ReviewQueue(path=None, pending_ttl=3600, approval_ttl=900,
 | `approval_ttl` | Seconds to *use* an approval, counted from when it was granted |
 | `min_approvals` | Distinct approvers needed (four-eyes: `2`) |
 | `allow_self_approval` | `False` refuses an approval by the account that filed the review |
+| `on_file` | Called once, after commit, when a new review is filed; a `ReviewNotifier` posts it to a webhook. Reusing a pending review does not call it, and an exception is logged without changing the decision |
 
 Each review row stores the `allow_self_approval`, `min_approvals` and
 `approval_ttl` in force when it was filed. The database also records the

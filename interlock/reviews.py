@@ -52,15 +52,18 @@ import getpass
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from .approval import ApprovalRequest, Declined, approve_once
+
+_log = logging.getLogger(__name__)
 
 STATUSES = ("pending", "approved", "rejected", "revoked", "expired", "executed")
 
@@ -243,7 +246,8 @@ class ReviewQueue:
     def __init__(self, path: Optional[str] = None, *, pending_ttl: float = 3600.0,
                  approval_ttl: float = 900.0, min_approvals: int = 1,
                  allow_self_approval: bool = True, key: Optional[bytes] = None,
-                 key_path: Optional[str] = None, head_path: Optional[str] = None) -> None:
+                 key_path: Optional[str] = None, head_path: Optional[str] = None,
+                 on_file: Optional[Callable[[Review], Any]] = None) -> None:
         if pending_ttl <= 0 or approval_ttl <= 0:
             raise ValueError("pending_ttl and approval_ttl must be positive")
         if min_approvals < 1:
@@ -255,6 +259,11 @@ class ReviewQueue:
         self.approval_ttl = float(approval_ttl)
         self.min_approvals = int(min_approvals)
         self.allow_self_approval = allow_self_approval
+        #: Called once, after commit, when a *new* review is filed (reusing a
+        #: pending review or reading a rejection does not call it). Exceptions
+        #: are logged and swallowed: notifying is best-effort, the decision is
+        #: not.
+        self.on_file = on_file
         directory = os.path.dirname(os.path.abspath(self.path))
         os.makedirs(directory, mode=0o700, exist_ok=True)
         self.key_path = key_path or default_key_path(self.path)
@@ -514,7 +523,18 @@ class ReviewQueue:
             review = self._review(db, row)
         if seq is not None:
             self._advance(seq)
+        if created:
+            self._announce(review)
         return review
+
+    def _announce(self, review: Review) -> None:
+        callback = self.on_file
+        if callback is None:
+            return
+        try:
+            callback(review)
+        except Exception as exc:  # a notifier must never change the outcome
+            _log.warning("interlock: review notifier failed for %s: %s", review.id, exc)
 
     def claim(self, review_id: str, *, now: Optional[float] = None) -> bool:
         """Use an approval, once. True for exactly one caller."""

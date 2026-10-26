@@ -38,6 +38,10 @@ def add_arguments(parser) -> None:
     parser.add_argument("--sidecar", metavar="PATH", help="decide through this sidecar")
     parser.add_argument("--receipts", metavar="FILE", help="receipt log path")
     parser.add_argument("--key-file", metavar="FILE", help="receipt key path")
+    parser.add_argument("--reviews", choices=("fallback", "always", "off"), default=None,
+                        help="settle escalations through the review queue: when the agent "
+                             "can't ask (default), always - Claude Code too - or never")
+    parser.add_argument("--review-db", metavar="FILE", help="review queue path")
     parser.add_argument("--monitor", action="store_true", help="install in monitor mode")
     parser.add_argument("--dry-run", action="store_true", help="print the change only")
     parser.add_argument("--uninstall", action="store_true", help="remove interlock's hooks")
@@ -134,9 +138,13 @@ def hook_command(agent: str, args) -> str:
              shlex.quote("exec({})".format(json.dumps(source))),
              "interlock", "hook", "--agent", shlex.quote(agent)]
     for flag, value in (("--policy", args.policy), ("--sidecar", args.sidecar),
-                        ("--receipts", args.receipts), ("--key-file", args.key_file)):
+                        ("--receipts", args.receipts), ("--key-file", args.key_file),
+                        ("--review-db", getattr(args, "review_db", None))):
         if value:
             parts += [flag, shlex.quote(os.path.abspath(value) if flag != "--sidecar" else value)]
+    reviews = getattr(args, "reviews", None)
+    if reviews:
+        parts += ["--reviews", shlex.quote(reviews)]
     if args.monitor:
         parts.append("--monitor")
     return " ".join(parts)

@@ -63,8 +63,12 @@ def run(args) -> int:
         _install_sink(args)
         queue = None
         if args.reviews != "off":
+            from ..notify import from_env
             from ..reviews import ReviewQueue
-            queue = ReviewQueue(args.review_db)
+            # INTERLOCK_REVIEW_WEBHOOK, when set: one outbound ping per filed
+            # review. A malformed setting warns and notifies nothing; it never
+            # changes the decision.
+            queue = ReviewQueue(args.review_db, on_file=from_env())
         stdout, stderr, code = run_hook(adapter, payload, engine,
                                         enforcement="monitor" if args.monitor else "blocking",
                                         reviews=queue, review_mode=args.reviews)

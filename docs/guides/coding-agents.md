@@ -69,9 +69,11 @@ For an escalation the agent can't ask about (Codex, Cursor file reads), the
 hook files a review in the [review queue](reviews.md) and refuses with its id:
 "review r-1a2b3c4d is pending; a human must run `interlock reviews approve
 r-1a2b3c4d`, then retry this identical call". After you approve, the agent's
-identical retry runs once. `--reviews always` sends Claude Code's escalations
-through the queue as well, instead of its native prompt; `--reviews off`
-disables the queue. The receipt records both verdicts: `policy_verdict` is what your
+identical retry runs once. `interlock install-hook --reviews always` sends
+Claude Code's escalations through the queue as well, instead of its native
+prompt (which answers inline and files nothing); `--reviews off` disables the
+queue. A filed review can also ping a Slack incoming webhook or any JSON
+endpoint - see [notify](reviews.md#notify-slack-or-a-webhook). The receipt records both verdicts: `policy_verdict` is what your
 policy said and `verdict` is what was enforced.
 
 An allow never auto-approves. The hook only adds restrictions on top of the

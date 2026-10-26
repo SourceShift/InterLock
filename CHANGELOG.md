@@ -30,6 +30,19 @@ breaking changes land.
 
 ### Added
 
+- A filed review can now send one outbound ping: set
+  `INTERLOCK_REVIEW_WEBHOOK` (plus `INTERLOCK_REVIEW_WEBHOOK_FORMAT=slack|json`
+  and `INTERLOCK_REVIEW_CONSOLE_URL`) and the hook posts the review id, tool,
+  the call's target, principal, rule, reason and a console link to a Slack
+  incoming webhook or any JSON endpoint. Every field is passed through the
+  guard's secret redactor; the call's full arguments never leave the review
+  database. The post is best-effort: a slow, failing or redirecting receiver
+  never blocks or changes a decision. From Python, `ReviewQueue(on_file=...)`
+  takes a `ReviewNotifier`.
+- `interlock install-hook` accepts `--reviews {fallback,always,off}` and
+  `--review-db FILE`, so Claude Code's escalations can be sent through the
+  review queue (and therefore appear on the console's Reviews screen and in a
+  webhook ping) without editing the installed hook command by hand.
 - Scoped clients (ROADMAP R29): `RemoteEngine` now pins the scope document a
   daemon serves. `RemoteEngine(path, scope=PATH, scope_key=KEY)` in Python and
   `new RemoteEngine(path, { scopeFile, scopeKey })` in Node.js read the daemon's
