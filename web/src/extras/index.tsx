@@ -104,6 +104,13 @@ function ReceiptCall({ S, D, A }: { S: State; D: Data; A: Actions }) {
 // root it trusts and verifies every byte.
 const PROJECT_MIRROR = "https://mesh.sourceshift.ai";
 
+// Joining is two commands, not one: `mesh init` pins a root that must already
+// be on disk, so the panel prints the fetch as well. A prefill that omitted it
+// failed on a clean node with "cannot read root.json".
+const INIT_STEPS =
+  "curl -fsS " + PROJECT_MIRROR + "/metadata/root.json -o root.json\n" +
+  "interlock mesh init --root root.json --mirror " + PROJECT_MIRROR + " --ring canary";
+
 function MeshPanel({ D, A }: { D: Data; A: Actions }) {
   const m = D.mesh;
   if (D.meshErr) {
@@ -147,7 +154,12 @@ function MeshPanel({ D, A }: { D: Data; A: Actions }) {
             </a>
             {" "}— 1-of-1 root, preview only.
           </span>
-          <code style={code}>interlock mesh init --root root.json --mirror {PROJECT_MIRROR}</code>
+          <code style={code}>{INIT_STEPS}</code>
+          <span style={dim}>
+            Then <code style={{ fontFamily: mono }}>interlock mesh sync</code>: it fills the cache, and a
+            policy that <code style={{ fontFamily: mono }}>extends</code> mesh:coding-agent@canary is what
+            installs a pack.
+          </span>
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "1px", background: "var(--il-rule)", border: "1px solid var(--il-rule)", borderRadius: "8px", overflow: "hidden" }}>
@@ -214,11 +226,7 @@ function MeshPanel({ D, A }: { D: Data; A: Actions }) {
         )}
       </div>
 
-      <code style={code}>
-        {m.configured
-          ? "interlock mesh sync\ninterlock mesh status"
-          : "interlock mesh init --root root.json --mirror " + PROJECT_MIRROR}
-      </code>
+      {m.configured ? <code style={code}>interlock mesh sync{"\n"}interlock mesh status</code> : null}
     </section>
   );
 }

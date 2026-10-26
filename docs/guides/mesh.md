@@ -58,6 +58,12 @@ interlock mesh init --root root.json --mirror https://mesh.sourceshift.ai --ring
 interlock mesh sync
 ```
 
+`init` pins a root that is already on disk — it does not fetch one, so the
+`curl` is part of the recipe. `sync` only fills the cache; a pack enforces
+nothing until your own policy file extends it
+(`"extends": "mesh:coding-agent@canary"`), the same step as for any other
+commons.
+
 Fetch the root over TLS and, if you have a second channel to a maintainer,
 compare its hash there before pinning it. Start on the `canary` ring: it sees
 every change first, while `stable` sees a rule only after the maintainers
