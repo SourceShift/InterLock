@@ -242,6 +242,26 @@ Applied and ignored overlays are recorded as `policy.overlay` receipts.
 processes for the same files, it changes when they change, and it's stamped on
 every receipt. Approvals are bound to it, so a policy change invalidates them.
 
+## Native evaluation (opt-in)
+
+When the optional [`rust/`](https://github.com/SourceShift/InterLock/blob/main/rust/README.md)
+module is installed and `INTERLOCK_NATIVE=1` is set, a policy that the native
+planner can express **in full** is evaluated in Rust instead of CPython. The
+decision is the same, including `policy_id`, `reason`, and `attributed_to`; the
+native path exists to lower per-call cost, not to change policy.
+
+A policy is either fully native or fully Python. Any detector, `modify`/`set`
+rule, `on`/`when` form outside the plain condition language, overlay, `disable`
+list, shadow rule, or mesh ceiling makes the planner decline the whole policy,
+so the two engines can never disagree about which rule applies. A failure
+during native evaluation also falls back to the Python engine for that event.
+Policies below eight rules (override with `INTERLOCK_NATIVE_MIN_RULES`) stay on
+the Python engine because crossing the JSON boundary would cost more than the
+evaluation it saves.
+
+The same engine has a C ABI (`il_eval_plan`) for non-Python processes; see the
+Rust README. It is not needed for normal use.
+
 ## Safety of the evaluator
 
 Policy files are data, and the evaluator treats them as untrusted:

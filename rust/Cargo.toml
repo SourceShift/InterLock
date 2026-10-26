@@ -11,6 +11,9 @@ name = "interlock_scopes"
 # cdylib is required to produce a shared library Python can import.
 crate-type = ["cdylib"]
 
+[dependencies]
+interlock_engine = { path = "engine" }
+
 [dependencies.pyo3]
 version = "0.24"
 # abi3-py39 builds against the stable ABI, minimum Python 3.9, matching the

@@ -272,6 +272,21 @@ class DeclarativeEngine(PolicyEngine):
         #: Wall-clock time after which the policy should be reloaded even if no
         #: file changed: the moment a shadow rule's monitor window ends.
         self.reload_at: Optional[float] = None
+        #: The compiled native plan, when this policy is fully expressible and
+        #: the operator opted in; see :mod:`interlock.policy.native`.
+        self._native_plan: Optional[Any] = None
+        self._attach_native()
+
+    def _attach_native(self) -> None:
+        """Rebuild the native plan for the current rules, if opted in.
+
+        Cheap to call and safe to miss: an unsupported policy, a missing
+        accelerator or a malformed plan all leave ``_native_plan`` None, and
+        evaluation stays on the Python engine.
+        """
+        from . import native as native_policy
+
+        self._native_plan = native_policy.build(self) if native_policy.enabled() else None
 
     @property
     def epoch(self) -> str:  # type: ignore[override]
@@ -310,6 +325,7 @@ class DeclarativeEngine(PolicyEngine):
         if fresh.shadow_sink is not None:
             self.shadow_sink = fresh.shadow_sink
         self.last_error = None
+        self._attach_native()
         return True
 
     @property
@@ -327,6 +343,18 @@ class DeclarativeEngine(PolicyEngine):
                 due = self.reload_at is not None and time.time() >= self.reload_at
                 if due or _stamps(self._files) != self._stamps:
                     self.reload()
+        if self._native_plan is not None:
+            from . import native as native_policy
+
+            try:
+                return native_policy.decide(self._native_plan, event)
+            except Exception as exc:
+                # A native failure must never change the answer: the Python
+                # engine evaluates the same policy, and the plan was only
+                # built because every rule was expressible in it.
+                _log.warning(
+                    "interlock: native evaluation failed (%s); using the Python engine", exc
+                )
         # The shadow pass judges the same event, so it shares the memo the
         # rule loop opens (a nested block reuses the outer table).
         with memoized_analysis():

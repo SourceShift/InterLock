@@ -426,8 +426,12 @@ fn union_keys(
     Ok(set)
 }
 
+mod native;
+
 #[pymodule]
 fn interlock_scopes(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ScopeTree>()?;
+    native::register(m)?;
+    m.add("ENGINE_ABI", native::ABI_VERSION)?;
     Ok(())
 }

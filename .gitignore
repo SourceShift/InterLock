@@ -29,7 +29,7 @@ dist-test/
 # note: js/dist/ is already covered by the generic dist/ above
 
 # --- rust (optional native accelerator) ---
-rust/target/
+rust/**/target/
 # a locally built extension dropped on the import path for development
 # (the canonical build is `cd rust && maturin develop`)
 *.so

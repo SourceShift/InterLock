@@ -108,6 +108,13 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip install maturin
 
+      - name: Test the engine crate on its own
+        # interlock_engine has no PyO3 dependency, so its unit tests need no
+        # Python. The extension crate is deliberately left out: it is built
+        # with extension-module, which does not link under `cargo test`.
+        run: cargo test --manifest-path engine/Cargo.toml
+        working-directory: rust
+
       - name: Build and install the native accelerator
         run: |
           maturin build --release --out /tmp/wheels

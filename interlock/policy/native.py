@@ -1,0 +1,292 @@
+"""Native policy evaluation (R31): a Rust fast path over a compiled plan.
+
+The Python engine is the policy source of truth. This module translates a
+declarative policy into a plan the native evaluator can run, but **only when
+it can translate everything**: the planner returns ``None`` the moment it
+meets a detector, a rewrite, an overlay, a disabled or quarantined rule, a
+shadow rule, or a mesh ceiling. A policy is therefore either fully native or
+fully Python, which is what makes the two paths impossible to disagree by
+construction rather than by test only.
+
+The plan format mirrors the condition language in
+:mod:`interlock.policy.declarative` exactly; :mod:`interlock_engine` is the
+Rust side and documents the semantics it copies. The evaluator is opt-in
+(``INTERLOCK_NATIVE=1``) until the parity suite has run for a release, and a
+failure at any point falls back to the Python engine for that event.
+
+Two front ends sit on the same Rust engine: a PyO3 class (used here) and a C
+ABI (``il_eval_plan``) for processes that do not embed CPython. Both are in
+``rust/``; neither is required - without the wheel, this module reports no
+native path and everything runs as before.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import Any, List, Mapping, Optional
+
+from ..enforce import Decision, Verdict
+
+_log = logging.getLogger(__name__)
+
+#: Set to a truthy value to let an eligible policy use the native evaluator.
+ENV_FLAG = "INTERLOCK_NATIVE"
+
+#: Below this many rules the JSON boundary costs more than the evaluation it
+#: saves; the planner declines and the Python engine runs. Override for
+#: benchmarking with INTERLOCK_NATIVE_MIN_RULES.
+DEFAULT_MIN_RULES = 8
+
+#: Event fields the Rust side accepts in a ``{"field": ...}`` test.
+FIELDS = frozenset(
+    {"action", "principal", "phase", "span_id", "parent_principal", "call_id"}
+)
+
+OPS = frozenset(
+    {"eq", "ne", "in", "not_in", "gt", "ge", "lt", "le", "contains",
+     "startswith", "endswith", "exists", "glob", "matches"}
+)
+
+#: Longest regex the native evaluator accepts (mirrors MAX_PATTERN).
+MAX_PATTERN = 512
+
+
+def enabled() -> bool:
+    """Whether the operator asked for the native path."""
+    return os.environ.get(ENV_FLAG, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _plan_class() -> Optional[Any]:
+    """The compiled-plan class from the optional accelerator, or None."""
+    try:
+        import interlock_scopes  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover - the accelerator is optional
+        return None
+    return getattr(interlock_scopes, "NativePlan", None)
+
+
+def min_rules() -> int:
+    raw = os.environ.get("INTERLOCK_NATIVE_MIN_RULES")
+    if raw is None:
+        return DEFAULT_MIN_RULES
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_MIN_RULES
+
+
+def plan_for(engine: Any) -> Optional[str]:
+    """A compiled plan for ``engine``, or None if any part is unsupported.
+
+    Reads ``engine.documents`` - the effective policy documents, in the order
+    their rules were compiled - rather than the compiled callables, because a
+    callable no longer carries the condition it was built from.
+    """
+    if getattr(engine, "quarantined", None):
+        return None
+    if getattr(engine, "overlays", None):
+        return None
+    if getattr(engine, "_shadow", None):
+        return None
+    if getattr(engine, "_code_rules", None):
+        return None
+    documents = getattr(engine, "documents", None)
+    if not documents:
+        return None
+    rules: List[Mapping[str, Any]] = []
+    for document in documents:
+        if not isinstance(document, Mapping):
+            return None
+        # An overlay document is applied by prepending its widened rules, which
+        # documents do not record; a mesh parent carries ceilings; a `disable`
+        # list removes rules that the documents still contain.
+        if document.get("overlay") or document.get("extends") or document.get("disable"):
+            return None
+        raw_rules = document.get("rules", [])
+        if not isinstance(raw_rules, list):
+            return None
+        for raw in raw_rules:
+            rule = _rule(raw)
+            if rule is None:
+                return None
+            rules.append(rule)
+    if len(rules) < min_rules():
+        return None
+    return json.dumps({"version": 1, "rules": rules}, sort_keys=True)
+
+
+def _rule(raw: Any) -> Optional[Mapping[str, Any]]:
+    if not isinstance(raw, Mapping):
+        return None
+    rule_id = raw.get("id")
+    if not isinstance(rule_id, str) or not rule_id:
+        return None
+    # Detectors decide at evaluation time, rewrites change the event the
+    # remaining rules judge, shadow rules never decide, and a ceiling can turn
+    # a block into an escalation: none of that is in the plan.
+    if "detector" in raw or "set" in raw:
+        return None
+    if raw.get("mode", "enforce") != "enforce":
+        return None
+    if raw.get("ceiling") is not None or raw.get("origin") is not None:
+        return None
+    verdict = raw.get("verdict")
+    if verdict not in ("block", "escalate"):
+        return None
+    phase = raw.get("phase", "call")
+    if phase not in ("call", "result"):
+        return None
+    reason = raw.get("reason", rule_id)
+    if not isinstance(reason, str):
+        return None
+    if "when" not in raw:
+        return None
+    when = _condition(raw["when"])
+    if when is None:
+        return None
+    if "on" in raw:
+        scope = _action(raw["on"])
+        if scope is None:
+            return None
+        when = {"all": [scope, when]}
+    return {
+        "id": rule_id,
+        "verdict": 1 if verdict == "block" else 3,
+        "reason": reason,
+        "phase": phase,
+        "when": when,
+    }
+
+
+def _action(raw: Any) -> Optional[Mapping[str, Any]]:
+    if isinstance(raw, str):
+        return {"action": raw} if raw else None
+    if isinstance(raw, list) and raw and all(isinstance(v, str) and v for v in raw):
+        return {"action": list(raw)}
+    if (
+        isinstance(raw, Mapping)
+        and set(raw) == {"glob"}
+        and isinstance(raw["glob"], str)
+        and raw["glob"]
+    ):
+        return {"action": {"glob": raw["glob"]}}
+    return None
+
+
+def _condition(raw: Any) -> Optional[Mapping[str, Any]]:
+    if not isinstance(raw, Mapping) or not raw:
+        return None
+    if "all" in raw or "any" in raw:
+        key = "all" if "all" in raw else "any"
+        if set(raw) != {key}:
+            return None
+        parts = raw[key]
+        if not isinstance(parts, list) or not parts:
+            return None
+        subs = [_condition(part) for part in parts]
+        if any(sub is None for sub in subs):
+            return None
+        return {key: subs}
+    if "not" in raw:
+        if set(raw) != {"not"}:
+            return None
+        inner = _condition(raw["not"])
+        return None if inner is None else {"not": inner}
+    if "action" in raw and "field" not in raw and "arg" not in raw:
+        if set(raw) != {"action"}:
+            return None
+        action = _action(raw["action"])
+        return None if action is None else action
+    if "field" in raw and "arg" not in raw:
+        return _test(raw, "field", raw["field"])
+    if "arg" in raw and "field" not in raw:
+        return _test(raw, "arg", raw["arg"])
+    return None
+
+
+def _test(raw: Mapping[str, Any], subject: str, name: Any) -> Optional[Mapping[str, Any]]:
+    if not isinstance(name, str) or not name:
+        return None
+    if subject == "field" and name not in FIELDS:
+        return None
+    operators = [key for key in raw if key != subject]
+    if len(operators) != 1 or operators[0] not in OPS:
+        return None
+    op = operators[0]
+    value = raw[op]
+    if op == "exists" and not isinstance(value, bool):
+        return None
+    if op in ("gt", "ge", "lt", "le") and (
+        isinstance(value, bool) or not isinstance(value, (int, float))
+    ):
+        return None
+    if op in ("contains", "startswith", "endswith", "glob", "matches") and not isinstance(
+        value, str
+    ):
+        return None
+    if op == "matches" and isinstance(value, str) and len(value) > MAX_PATTERN:
+        return None
+    if op in ("in", "not_in") and not isinstance(value, list):
+        return None
+    # The plan keeps the condition language's own shape: the operator is the
+    # key, exactly as in a policy document. A separate {"op", "value"} pair
+    # would be a second schema to keep in sync.
+    return {subject: name, op: value}
+
+
+def build(engine: Any) -> Optional[Any]:
+    """Compile ``engine``'s policy into a native plan, or None.
+
+    A plan the Rust side rejects (a regex it cannot compile, a malformed
+    document) is treated as ineligible, never as an error: the Python engine
+    is always the fallback.
+    """
+    plan_class = _plan_class()
+    if plan_class is None:
+        return None
+    text = plan_for(engine)
+    if text is None:
+        return None
+    try:
+        return plan_class(text)
+    except Exception as exc:  # pragma: no cover - depends on the wheel
+        _log.info("interlock: policy not eligible for the native engine: %s", exc)
+        return None
+
+
+def payload(event: Any) -> str:
+    """The event as the native side reads it.
+
+    ``allow_nan=False`` matters: serde_json has no NaN literal, and silently
+    turning NaN into a string would change what a ``gt`` test sees. Raising
+    instead hands the event to the Python engine, which compares the value the
+    caller actually passed.
+    """
+    return json.dumps(
+        {
+            "action": getattr(event, "action", ""),
+            "args": getattr(event, "args", {}) or {},
+            "principal": getattr(event, "principal", None),
+            "span_id": getattr(event, "span_id", None),
+            "parent_principal": getattr(event, "parent_principal", None),
+            "call_id": getattr(event, "call_id", None),
+            "phase": getattr(event, "phase", "call") or "call",
+        },
+        allow_nan=False,
+    )
+
+
+def decide(plan: Any, event: Any) -> Decision:
+    """Evaluate one event natively. Raises on anything the native side rejects."""
+    verdict, policy_id, reason, attributed = plan.evaluate(payload(event))
+    if verdict == int(Verdict.ALLOW):
+        return Decision.allow()
+    if verdict == int(Verdict.BLOCK):
+        return Decision.block(reason, policy_id, attributed_to=attributed)
+    if verdict == int(Verdict.ESCALATE):
+        return Decision.escalate(reason, policy_id, attributed_to=attributed)
+    # A verdict the planner does not emit: treat it as a block, like every
+    # other unknown verdict in the package.
+    return Decision.block(reason or "unknown native verdict", policy_id,
+                          attributed_to=attributed)

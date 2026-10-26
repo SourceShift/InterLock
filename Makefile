@@ -83,8 +83,9 @@ check-rust: ## Build the native scope store and run its parity suite
 	# This installs the native module into the current environment, so every
 	# later `make check` runs the suite against the Rust backend. That is the
 	# point, but it is why this target is not part of check-all.
+	cargo test --manifest-path rust/engine/Cargo.toml
 	cd rust && maturin develop --release
-	$(PY) -m pytest -q tests/test_scope_backend.py tests/test_scopes.py
+	$(PY) -m pytest -q tests/test_scope_backend.py tests/test_scopes.py tests/test_native_engine.py
 
 check-all: check check-js check-web ## Everything except the optional Rust build
 

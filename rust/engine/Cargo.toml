@@ -1,0 +1,15 @@
+[package]
+name = "interlock_engine"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+description = "Pure-Rust evaluator for interlock policies compiled to a plan."
+
+# Deliberately free of PyO3: this crate is the engine, and the cdylib beside it
+# is one of two front ends (the other being the C ABI). Keeping it Python-free
+# is what lets `cargo test` run it without linking libpython.
+
+[dependencies]
+glob = "0.3"
+regex = "1"
+serde_json = "1"

@@ -59,6 +59,41 @@ reference.
 To compare memory and lookup time, run `python benchmarks/scope_memory.py` once
 without the module and once with it.
 
+## Native policy evaluator (opt-in)
+
+The same wheel also carries the R31 evaluator, `interlock_engine`: the
+declarative policy rule subset compiled to a Rust plan and evaluated without
+CPython. It is off unless `INTERLOCK_NATIVE=1`.
+
+The plan is all-or-nothing per policy. `interlock/policy/native.py` translates a
+policy only when every rule is a plain `when` over `action`/`field`/`arg` with a
+built-in operator; a detector, a `modify`, an overlay, a `disable` list, a
+shadow rule, or a mesh ceiling keeps the whole policy on the Python engine. That
+is what makes the two paths agree by construction. Below
+`INTERLOCK_NATIVE_MIN_RULES` rules (default 8) the JSON boundary costs more than
+it saves and the planner declines.
+
+The crate on its own needs no Python:
+
+```bash
+cargo test --manifest-path rust/engine/Cargo.toml
+```
+
+Two front ends share `Plan::evaluate`:
+
+- **PyO3:** `interlock_scopes.NativePlan(plan_json).evaluate(event_json)` returns
+  `(verdict, policy_id, reason, attributed_to)`; `interlock_scopes.ENGINE_ABI`
+  is the schema version.
+- **C ABI:** `il_eval_plan(...)` and `il_abi_version()` in `rust/src/native.rs`,
+  for a Node or Go process that should not embed CPython. The call is
+  string-in, buffer-out: `0` means success and writes a NUL-terminated policy
+  id and reason into caller buffers; `-1` means any error and writes nothing, so
+  a caller must fail closed.
+
+`tests/test_native_engine.py` runs both engines over the same events and
+compares verdict, `policy_id`, `reason`, and `attributed_to`, then calls the C
+ABI through `ctypes`. It skips when the module is absent.
+
 ## Notes
 
 - Built with PyO3 0.24 against the stable ABI (`abi3-py39`), so one build loads

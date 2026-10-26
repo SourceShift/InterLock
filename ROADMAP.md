@@ -83,7 +83,7 @@ worse at both jobs.
 | R28 | A2A policy dimension | `shipped` | M | operational review |
 | R29 | MCP transport controls and scoped engine over the sidecar | `partial` | M | operational review · no client sends a scope |
 | R30 | Upstream-drift detector | `shipped` | M | operational review |
-| R31 | Native policy engine (Rust fast path over a compiled plan) | `not started` | L | `Verdict` out-param contract |
+| R31 | Native policy engine (Rust fast path over a compiled plan) | `partial` | L | engine crate + C ABI shipped; opt-in planner and parity suite |
 
 ---
 
@@ -1481,9 +1481,13 @@ threshold.
 
 ## R31 · Native policy engine (Rust fast path over a compiled plan)
 
-**Status:** `not started` — `rust/` holds the `ScopeTree` store and no
-evaluator. The `evaluate(event) -> Decision` seam and the `0/1/2/3` verdict
-values are already the contract it will implement.
+**Status:** `partial` — `rust/engine/` holds the evaluator, `rust/src/native.rs`
+its PyO3 and C-ABI fronts, `interlock/policy/native.py` the all-or-nothing
+planner, and `tests/test_native_engine.py` the parity suite. The path is opt-in
+(`INTERLOCK_NATIVE=1`) and falls back to Python on its own. Missing: the
+`bench_overhead.py` native-vs-Python comparison the acceptance asks for, a
+non-Python caller exercising `il_eval_plan` in-tree, and detectors (still
+Python-only, so detector-heavy policies stay on the Python path).
 **Size:** L
 
 ### Problem
