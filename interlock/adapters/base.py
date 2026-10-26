@@ -369,7 +369,18 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
             binding_hash(request, bind_epoch=bool(getattr(engine, "epoch_is_stable", False))),
             request)
         if review.status == "approved" and reviews.claim(review.id):
-            note = "approved:review " + review.id
+            # A remote approval is stamped with the grant that released it;
+            # a local approval keeps today's review-note shape. The lookup is
+            # best-effort: an older queue without cloud_grants still runs.
+            grant_id = None
+            try:
+                getter = getattr(reviews, "grant_for", None)
+                if callable(getter):
+                    grant_id = getter(review.id)
+            except Exception:
+                grant_id = None
+            note = ("cloud:" + grant_id) if grant_id \
+                else "approved:review " + review.id
             if decision.modified_args:
                 # The human saw and approved the rewritten call. Run that
                 # rewrite - never the pre-rewrite arguments - or refuse.

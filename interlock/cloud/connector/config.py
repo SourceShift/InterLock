@@ -40,6 +40,10 @@ REQUIRED_FIELDS = (
 STRING_FIELDS = tuple(field for field in REQUIRED_FIELDS
                       if field != "plane_public_keys")
 
+#: Optional C3 fields. ``share_usernames`` (default false) lets a deployment
+#: upload the plain requester instead of the host-keyed HMAC label.
+OPTIONAL_FIELDS = ("share_usernames",)
+
 #: Loopback hosts may use plain http; everything else must be https.
 LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
 
@@ -145,7 +149,7 @@ class CloudHome:
         """Return a normalised copy, or raise :class:`HomeError`."""
         if not isinstance(doc, Mapping):
             raise HomeError("cloud.json must contain a JSON object")
-        unknown = sorted(set(doc) - set(REQUIRED_FIELDS))
+        unknown = sorted(set(doc) - set(REQUIRED_FIELDS) - set(OPTIONAL_FIELDS))
         if unknown:
             raise HomeError("unsupported field: {}".format(unknown[0]))
         missing = [field for field in REQUIRED_FIELDS if field not in doc]
@@ -156,10 +160,14 @@ class CloudHome:
                 raise HomeError("{} must be a non-empty string".format(field))
         if not isinstance(doc["plane_public_keys"], Mapping):
             raise HomeError("plane_public_keys must be an object")
+        if "share_usernames" in doc and not isinstance(doc["share_usernames"], bool):
+            raise HomeError("share_usernames must be a boolean")
         if parse_agent_key(doc["agent_key"]) is None:
             raise HomeError("agent_key is not an ilk_ key")
         CloudHome._validate_url(str(doc["url"]))
-        return dict(doc)
+        normal = dict(doc)
+        normal.setdefault("share_usernames", False)
+        return normal
 
     @staticmethod
     def _validate_url(url: str) -> None:

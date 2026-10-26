@@ -345,10 +345,13 @@ def test_oversized_declared_body_is_413_payload_too_large():
 
 # -- migrations ---------------------------------------------------------
 
-def test_available_lists_the_init_migration():
+def test_available_lists_the_migrations_in_order():
     from interlock.cloud.migrate import available
 
-    assert available() == [(1, "001_init.sql")]
+    assert available() == [
+        (1, "001_init.sql"),
+        (2, "002_c3_reviews_grants.sql"),
+    ]
 
 
 def test_parse_versions_sorts_by_number():

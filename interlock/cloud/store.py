@@ -41,6 +41,18 @@ class NotFound(Exception):
     """A record does not exist or is not visible to the calling org."""
 
 
+class ReviewConflict(Exception):
+    """A review id was reused for a different binding (``409 review_conflict``)."""
+
+
+class ReviewNotPending(Exception):
+    """A decision arrived for a review that is no longer pending."""
+
+    def __init__(self, status: str, message: Optional[str] = None) -> None:
+        super().__init__(message or "review is {}".format(status))
+        self.status = status
+
+
 def _org_id(value: Union[str, "Org", None]) -> Optional[str]:
     """Accept either an Org (as the smoke passes) or its id."""
     if value is None:
@@ -213,6 +225,97 @@ class AgentKey:
         }
 
 
+PLANE_REVIEW_STATUSES = (
+    "pending", "approved", "rejected", "revoked", "expired",
+)
+
+
+@dataclass
+class ReviewRecord:
+    """One uploaded review as the plane stores it (preview is ciphertext)."""
+
+    org_id: str
+    host_id: str
+    id: str
+    binding: str
+    status: str
+    action: str
+    phase: str
+    principal: Optional[str]
+    requester: Optional[str]
+    policy_id: Optional[str]
+    reason: Optional[str]
+    args_digest: Optional[str]
+    preview_enc: Optional[bytes]
+    mask_counts: Dict[str, int]
+    metadata: Dict[str, Any]
+    created: float
+    pending_until: Optional[float]
+    decided: Optional[float] = None
+    decided_by: Optional[str] = None
+    approval_until: Optional[float] = None
+    approvers: List[str] = field(default_factory=list)
+    min_approvals: int = 1
+    allow_self_approval: bool = True
+    approval_ttl: float = 900.0
+
+    def public(self) -> Dict[str, Any]:
+        """The list view: no preview and no ciphertext ever leaves here."""
+        return {
+            "id": self.id,
+            "host_id": self.host_id,
+            "status": self.status,
+            "action": self.action,
+            "phase": self.phase,
+            "principal": self.principal,
+            "requester": self.requester,
+            "policy_id": self.policy_id,
+            "reason": self.reason,
+            "args_digest": self.args_digest,
+            "mask_counts": dict(self.mask_counts),
+            "created": _now_iso(self.created),
+            "pending_until": _now_iso(self.pending_until),
+            "decided": _now_iso(self.decided),
+            "decided_by": self.decided_by,
+            "approval_until": _now_iso(self.approval_until),
+            "approvers": list(self.approvers),
+            "min_approvals": self.min_approvals,
+            "allow_self_approval": self.allow_self_approval,
+            "approval_ttl": self.approval_ttl,
+        }
+
+
+@dataclass
+class DecisionRecord:
+    """One reviewer's decision on a review."""
+
+    org_id: str
+    id: str
+    review_id: str
+    reviewer: str
+    step_up_method: str
+    step_up_at: float
+    decision: str
+    grant_id: Optional[str] = None
+    grant_seq: Optional[int] = None
+    approve_anyway: bool = False
+    reason: Optional[str] = None
+
+
+@dataclass
+class GrantRecord:
+    """A signed grant stored for delivery to one host."""
+
+    org_id: str
+    host_id: str
+    id: str
+    review_id: str
+    seq: int
+    envelope: Dict[str, Any]
+    delivered_at: Optional[float] = None
+    acked_at: Optional[float] = None
+
+
 def keys_version(keys: List[AgentKey]) -> int:
     """A monotonic per-host key generation, derived without a new column.
 
@@ -245,6 +348,13 @@ class MemoryStore:
         self.hosts: Dict[Tuple[str, str], Host] = {}
         self.agent_keys: Dict[Tuple[str, str], AgentKey] = {}
         self._domains: Dict[Tuple[str, str], bool] = {}
+        #: (org_id, host_id, review_id) -> ReviewRecord.
+        self.reviews: Dict[Tuple[str, str, str], ReviewRecord] = {}
+        self.decisions: List[DecisionRecord] = []
+        #: (org_id, grant_id) -> GrantRecord (plane-side delivery state).
+        self.grants: Dict[Tuple[str, str], GrantRecord] = {}
+        #: (org_id, host_id) -> (last_seq, last_sig).
+        self.grant_heads: Dict[Tuple[str, str], Tuple[int, str]] = {}
 
     # -- orgs -----------------------------------------------------------
     def create_org(self, slug: str, name: str, *, id: Optional[str] = None,
@@ -722,6 +832,204 @@ class MemoryStore:
                     key.revoked_at = at
                     count += 1
             return count
+
+    # -- reviews and grants (C3) ----------------------------------------
+    def upsert_review(self, org_id: Union[str, Org], host_id: str,
+                      review_id: str, *, binding: str, action: str,
+                      phase: str, principal: Optional[str] = None,
+                      requester: Optional[str] = None,
+                      policy_id: Optional[str] = None,
+                      reason: Optional[str] = None,
+                      args_digest: Optional[str] = None,
+                      preview_enc: Optional[bytes] = None,
+                      mask_counts: Optional[Dict[str, int]] = None,
+                      metadata: Optional[Dict[str, Any]] = None,
+                      created: Optional[float] = None,
+                      pending_until: Optional[float] = None,
+                      min_approvals: int = 1,
+                      allow_self_approval: bool = True,
+                      approval_ttl: float = 900.0) -> ReviewRecord:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            if (oid, host_id) not in self.hosts:
+                if self._other_org_host(oid, host_id) is not None:
+                    raise CrossOrgAccess("host belongs to another org")
+                raise NotFound("host not found")
+            key = (oid, host_id, review_id)
+            existing = self.reviews.get(key)
+            if existing is not None:
+                if existing.binding != binding:
+                    raise ReviewConflict(
+                        "review {} already exists with another binding".format(
+                            review_id))
+                return existing
+            record = ReviewRecord(
+                org_id=oid, host_id=host_id, id=review_id,
+                binding=binding, status="pending", action=action, phase=phase,
+                principal=principal, requester=requester,
+                policy_id=policy_id, reason=reason, args_digest=args_digest,
+                preview_enc=preview_enc, mask_counts=dict(mask_counts or {}),
+                metadata=dict(metadata or {}),
+                created=_epoch() if created is None else float(created),
+                pending_until=None if pending_until is None else float(pending_until),
+                min_approvals=int(min_approvals),
+                allow_self_approval=bool(allow_self_approval),
+                approval_ttl=float(approval_ttl),
+            )
+            self.reviews[key] = record
+            return record
+
+    def _other_org_review(self, org_id: str, review_id: str) -> Optional[ReviewRecord]:
+        for (other_org, _host, other_id), record in self.reviews.items():
+            if other_id == review_id and other_org != org_id:
+                return record
+        return None
+
+    def review_by_id(self, org_id: str, review_id: str,
+                     host_id: Optional[str] = None) -> Optional[ReviewRecord]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            if host_id is not None:
+                record = self.reviews.get((oid, host_id, review_id))
+                if record is not None:
+                    return record
+            else:
+                for (record_org, _host, record_id), record in self.reviews.items():
+                    if record_org == oid and record_id == review_id:
+                        return record
+            if self._other_org_review(oid, review_id) is not None:
+                raise CrossOrgAccess(
+                    "review {!r} belongs to another org".format(review_id))
+            return None
+
+    def list_reviews(self, org_id: str, *, status: Optional[str] = None,
+                     host_id: Optional[str] = None, cursor: int = 0,
+                     limit: int = 50) -> Tuple[List[ReviewRecord], Optional[int]]:
+        oid = _org_id(org_id) or ""
+        if (status is not None and status not in PLANE_REVIEW_STATUSES) or limit < 1:
+            raise ValueError("invalid review filter")
+        with self._lock:
+            rows = [record for record in self.reviews.values()
+                    if record.org_id == oid
+                    and (status is None or record.status == status)
+                    and (host_id is None or record.host_id == host_id)]
+        rows.sort(key=lambda record: (-record.created, record.id))
+        start = max(0, int(cursor))
+        page = rows[start:start + int(limit)]
+        next_cursor = start + len(page) if start + len(page) < len(rows) else None
+        return page, next_cursor
+
+    def record_decision(self, org_id: str, review_id: str, *, reviewer: str,
+                        step_up_method: str, step_up_at: float,
+                        decision: str, grant_id: Optional[str] = None,
+                        grant_seq: Optional[int] = None,
+                        approve_anyway: bool = False,
+                        reason: Optional[str] = None,
+                        status: Optional[str] = None,
+                        decided_by: Optional[str] = None,
+                        approval_until: Optional[float] = None,
+                        now: Optional[float] = None) -> DecisionRecord:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            record = None
+            for (record_org, _host, record_id), candidate in self.reviews.items():
+                if record_org == oid and record_id == review_id:
+                    record = candidate
+                    break
+            if record is None:
+                raise NotFound("review not found")
+            if reviewer not in record.approvers:
+                record.approvers.append(reviewer)
+            if status is not None:
+                record.status = status
+                record.decided = at
+                record.decided_by = decided_by or reviewer
+                if approval_until is not None:
+                    record.approval_until = float(approval_until)
+            entry = DecisionRecord(
+                org_id=oid, id="dec_" + secrets.token_hex(8),
+                review_id=review_id, reviewer=reviewer,
+                step_up_method=step_up_method, step_up_at=float(step_up_at),
+                decision=decision, grant_id=grant_id, grant_seq=grant_seq,
+                approve_anyway=bool(approve_anyway), reason=reason,
+            )
+            self.decisions.append(entry)
+            return entry
+
+    def pending_decisions(self, org_id: str, review_id: str) -> List[str]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            return sorted({entry.reviewer for entry in self.decisions
+                           if entry.org_id == oid and entry.review_id == review_id
+                           and entry.decision == "approve"})
+
+    def grant_head(self, org_id: str, host_id: str) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            seq, sig = self.grant_heads.get((oid, host_id), (0, "GENESIS"))
+            return {"seq": int(seq), "sig": sig}
+
+    def next_grant_seq(self, org_id: str, host_id: str) -> Tuple[int, str]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            seq, sig = self.grant_heads.get((oid, host_id), (0, "GENESIS"))
+            return int(seq) + 1, sig
+
+    def add_grant(self, org_id: str, host_id: str, *, grant_id: str,
+                  review_id: str, seq: int, envelope: Dict[str, Any],
+                  now: Optional[float] = None) -> GrantRecord:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            existing = self.grants.get((oid, grant_id))
+            if existing is not None:
+                return existing
+            record = GrantRecord(
+                org_id=oid, host_id=host_id, id=grant_id, review_id=review_id,
+                seq=int(seq), envelope=dict(envelope), delivered_at=at,
+            )
+            self.grants[(oid, grant_id)] = record
+            current, _sig = self.grant_heads.get((oid, host_id), (0, "GENESIS"))
+            if int(seq) >= current:
+                self.grant_heads[(oid, host_id)] = (
+                    int(seq), str(envelope.get("sig") or ""))
+            return record
+
+    def grants_after(self, org_id: str, host_id: str, seq: int) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            records = [record for record in self.grants.values()
+                       if record.org_id == oid and record.host_id == host_id
+                       and record.seq > int(seq)]
+        records.sort(key=lambda record: record.seq)
+        return [dict(record.envelope) for record in records]
+
+    def ack_grants(self, org_id: str, host_id: str,
+                   ids: List[str], *, now: Optional[float] = None) -> int:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            acked = 0
+            for grant_id in ids:
+                record = self.grants.get((oid, grant_id))
+                if record is None or record.host_id != host_id:
+                    continue
+                if record.acked_at is None:
+                    record.acked_at = at
+                    acked += 1
+            return acked
+
+    def last_ack_seq(self, org_id: str, host_id: str) -> int:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            return max((record.seq for record in self.grants.values()
+                        if record.org_id == oid and record.host_id == host_id
+                        and record.acked_at is not None), default=0)
+
+    def host_keys(self, org_id: str, host_id: str) -> List[Dict[str, Any]]:
+        host = self.host_by_id(org_id, host_id)
+        return [] if host is None else [dict(pin) for pin in host.public_keys]
 
     # -- RLS context ----------------------------------------------------
     @contextlib.contextmanager
@@ -1447,6 +1755,266 @@ class PostgresStore:
                 (at, oid, host_id),
             )
             return cur.rowcount
+
+
+    # -- reviews and grants (C3) ----------------------------------------
+    _REVIEW_COLUMNS = (
+        "org_id, host_id, id, status, binding, action, phase, principal, "
+        "requester, policy_id, reason, args_digest, preview_enc, mask_counts, "
+        "metadata, created, pending_until, decided, decided_by, approval_until, "
+        "approvers, min_approvals, allow_self_approval, approval_ttl"
+    )
+
+    def _review_row(self, row: Tuple[Any, ...]) -> ReviewRecord:
+        return ReviewRecord(
+            org_id=row[0], host_id=row[1], id=row[2], status=row[3],
+            binding=row[4] or "", action=row[5] or "", phase=row[6] or "call",
+            principal=row[7], requester=row[8], policy_id=row[9],
+            reason=row[10], args_digest=row[11],
+            preview_enc=bytes(row[12]) if row[12] is not None else None,
+            mask_counts=dict(row[13] or {}), metadata=dict(row[14] or {}),
+            created=_timestamp(row[15]) or 0.0,
+            pending_until=_timestamp(row[16]),
+            decided=_timestamp(row[17]), decided_by=row[18],
+            approval_until=_timestamp(row[19]),
+            approvers=list(row[20] or []),
+            min_approvals=int(row[21] if row[21] is not None else 1),
+            allow_self_approval=bool(row[22]),
+            approval_ttl=float(row[23] if row[23] is not None else 900.0),
+        )
+
+    def upsert_review(self, org_id: Union[str, Org], host_id: str,
+                      review_id: str, *, binding: str, action: str,
+                      phase: str, principal: Optional[str] = None,
+                      requester: Optional[str] = None,
+                      policy_id: Optional[str] = None,
+                      reason: Optional[str] = None,
+                      args_digest: Optional[str] = None,
+                      preview_enc: Optional[bytes] = None,
+                      mask_counts: Optional[Dict[str, int]] = None,
+                      metadata: Optional[Dict[str, Any]] = None,
+                      created: Optional[float] = None,
+                      pending_until: Optional[float] = None,
+                      min_approvals: int = 1,
+                      allow_self_approval: bool = True,
+                      approval_ttl: float = 900.0) -> ReviewRecord:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if created is None else float(created)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT binding FROM reviews WHERE org_id = %s AND host_id = %s "
+                "AND id = %s", (oid, host_id, review_id))
+            row = cur.fetchone()
+            if row is not None:
+                if (row[0] or "") != binding:
+                    raise ReviewConflict(
+                        "review {} already exists with another binding".format(
+                            review_id))
+            else:
+                cur.execute(
+                    "INSERT INTO reviews (org_id, host_id, id, status, binding, "
+                    "action, phase, principal, requester, policy_id, reason, "
+                    "args_digest, preview_enc, mask_counts, metadata, created, "
+                    "pending_until, approvers, min_approvals, allow_self_approval, "
+                    "approval_ttl) VALUES (%s, %s, %s, 'pending', %s, %s, %s, %s, "
+                    "%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, to_timestamp(%s), "
+                    "to_timestamp(%s), '[]'::jsonb, %s, %s, %s)",
+                    (oid, host_id, review_id, binding, action, phase, principal,
+                     requester, policy_id, reason, args_digest, preview_enc,
+                     json.dumps(mask_counts or {}), json.dumps(metadata or {}),
+                     at, pending_until, int(min_approvals),
+                     bool(allow_self_approval), float(approval_ttl)))
+            cur.execute(
+                "SELECT " + self._REVIEW_COLUMNS + " FROM reviews "
+                "WHERE org_id = %s AND host_id = %s AND id = %s",
+                (oid, host_id, review_id))
+            row = cur.fetchone()
+        return self._review_row(row)
+
+    def review_by_id(self, org_id: str, review_id: str,
+                     host_id: Optional[str] = None) -> Optional[ReviewRecord]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            if host_id is None:
+                cur.execute(
+                    "SELECT " + self._REVIEW_COLUMNS + " FROM reviews "
+                    "WHERE org_id = %s AND id = %s", (oid, review_id))
+            else:
+                cur.execute(
+                    "SELECT " + self._REVIEW_COLUMNS + " FROM reviews "
+                    "WHERE org_id = %s AND host_id = %s AND id = %s",
+                    (oid, host_id, review_id))
+            row = cur.fetchone()
+        return self._review_row(row) if row is not None else None
+
+    def list_reviews(self, org_id: str, *, status: Optional[str] = None,
+                     host_id: Optional[str] = None, cursor: int = 0,
+                     limit: int = 50) -> Tuple[List[ReviewRecord], Optional[int]]:
+        oid = _org_id(org_id) or ""
+        if (status is not None and status not in PLANE_REVIEW_STATUSES) or limit < 1:
+            raise ValueError("invalid review filter")
+        clauses = ["org_id = %s"]
+        params: List[Any] = [oid]
+        if status is not None:
+            clauses.append("status = %s")
+            params.append(status)
+        if host_id is not None:
+            clauses.append("host_id = %s")
+            params.append(host_id)
+        offset = max(0, int(cursor))
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT " + self._REVIEW_COLUMNS + " FROM reviews WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY created DESC, id LIMIT %s OFFSET %s",
+                tuple(params + [int(limit) + 1, offset]))
+            rows = cur.fetchall()
+        page = [self._review_row(row) for row in rows[:int(limit)]]
+        next_cursor = offset + len(page) if len(rows) > int(limit) else None
+        return page, next_cursor
+
+    def record_decision(self, org_id: str, review_id: str, *, reviewer: str,
+                        step_up_method: str, step_up_at: float,
+                        decision: str, grant_id: Optional[str] = None,
+                        grant_seq: Optional[int] = None,
+                        approve_anyway: bool = False,
+                        reason: Optional[str] = None,
+                        status: Optional[str] = None,
+                        decided_by: Optional[str] = None,
+                        approval_until: Optional[float] = None,
+                        now: Optional[float] = None) -> DecisionRecord:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        decision_id = "dec_" + secrets.token_hex(8)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT approvers FROM reviews WHERE org_id = %s AND id = %s "
+                "FOR UPDATE", (oid, review_id))
+            row = cur.fetchone()
+            if row is None:
+                raise NotFound("review not found")
+            approvers = list(row[0] or [])
+            if reviewer not in approvers:
+                approvers.append(reviewer)
+            if status is not None:
+                cur.execute(
+                    "UPDATE reviews SET approvers = %s::jsonb, status = %s, "
+                    "decided = to_timestamp(%s), decided_by = %s, "
+                    "approval_until = CASE WHEN %s::double precision IS NULL "
+                    "THEN approval_until ELSE to_timestamp(%s) END "
+                    "WHERE org_id = %s AND id = %s",
+                    (json.dumps(approvers), status, at, decided_by or reviewer,
+                     approval_until, approval_until, oid, review_id))
+            else:
+                cur.execute(
+                    "UPDATE reviews SET approvers = %s::jsonb "
+                    "WHERE org_id = %s AND id = %s",
+                    (json.dumps(approvers), oid, review_id))
+            cur.execute(
+                "INSERT INTO decisions (org_id, id, review_id, reviewer, "
+                "step_up_method, step_up_at, decision, grant_id, grant_seq, "
+                "approve_anyway, reason) VALUES (%s, %s, %s, %s, %s, "
+                "to_timestamp(%s), %s, %s, %s, %s, %s)",
+                (oid, decision_id, review_id, reviewer, step_up_method, at,
+                 decision, grant_id, grant_seq, bool(approve_anyway), reason))
+        return DecisionRecord(
+            org_id=oid, id=decision_id, review_id=review_id, reviewer=reviewer,
+            step_up_method=step_up_method, step_up_at=float(step_up_at),
+            decision=decision, grant_id=grant_id, grant_seq=grant_seq,
+            approve_anyway=bool(approve_anyway), reason=reason,
+        )
+
+    def pending_decisions(self, org_id: str, review_id: str) -> List[str]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT DISTINCT reviewer FROM decisions WHERE org_id = %s "
+                "AND review_id = %s AND decision = 'approve' ORDER BY reviewer",
+                (oid, review_id))
+            return [row[0] for row in cur.fetchall()]
+
+    def grant_head(self, org_id: str, host_id: str) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT last_seq, last_sig FROM grant_heads "
+                "WHERE org_id = %s AND host_id = %s", (oid, host_id))
+            row = cur.fetchone()
+        if row is None:
+            return {"seq": 0, "sig": "GENESIS"}
+        return {"seq": int(row[0]), "sig": row[1] or "GENESIS"}
+
+    def next_grant_seq(self, org_id: str, host_id: str) -> Tuple[int, str]:
+        head = self.grant_head(org_id, host_id)
+        return int(head["seq"]) + 1, str(head["sig"])
+
+    def add_grant(self, org_id: str, host_id: str, *, grant_id: str,
+                  review_id: str, seq: int, envelope: Dict[str, Any],
+                  now: Optional[float] = None) -> GrantRecord:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "INSERT INTO cloud_grants (org_id, id, host_id, review_id, seq, "
+                "envelope, delivered_at) VALUES (%s, %s, %s, %s, %s, %s::jsonb, "
+                "to_timestamp(%s)) ON CONFLICT (org_id, id) DO NOTHING",
+                (oid, grant_id, host_id, review_id, int(seq),
+                 json.dumps(envelope), at))
+            cur.execute(
+                "SELECT seq, envelope FROM cloud_grants "
+                "WHERE org_id = %s AND host_id = %s ORDER BY seq DESC LIMIT 1",
+                (oid, host_id))
+            row = cur.fetchone()
+            if row is not None:
+                current_seq = int(row[0])
+                signature = str((row[1] or {}).get("sig") or "")
+                cur.execute(
+                    "INSERT INTO grant_heads (org_id, host_id, last_seq, last_sig) "
+                    "VALUES (%s, %s, %s, %s) ON CONFLICT (org_id, host_id) "
+                    "DO UPDATE SET last_seq = EXCLUDED.last_seq, "
+                    "last_sig = EXCLUDED.last_sig, updated_at = now() "
+                    "WHERE grant_heads.last_seq <= EXCLUDED.last_seq",
+                    (oid, host_id, current_seq, signature))
+        return GrantRecord(org_id=oid, host_id=host_id, id=grant_id,
+                           review_id=review_id, seq=int(seq),
+                           envelope=dict(envelope), delivered_at=at)
+
+    def grants_after(self, org_id: str, host_id: str, seq: int) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT envelope FROM cloud_grants WHERE org_id = %s "
+                "AND host_id = %s AND seq > %s ORDER BY seq",
+                (oid, host_id, int(seq)))
+            return [dict(row[0] or {}) for row in cur.fetchall()]
+
+    def ack_grants(self, org_id: str, host_id: str,
+                   ids: List[str], *, now: Optional[float] = None) -> int:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        acked = 0
+        with self._transaction(oid) as cur:
+            for grant_id in ids:
+                cur.execute(
+                    "UPDATE cloud_grants SET acked_at = to_timestamp(%s) "
+                    "WHERE org_id = %s AND id = %s AND host_id = %s "
+                    "AND acked_at IS NULL", (at, oid, grant_id, host_id))
+                acked += cur.rowcount or 0
+        return acked
+
+    def last_ack_seq(self, org_id: str, host_id: str) -> int:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(seq), 0) FROM cloud_grants "
+                "WHERE org_id = %s AND host_id = %s AND acked_at IS NOT NULL",
+                (oid, host_id))
+            row = cur.fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def host_keys(self, org_id: str, host_id: str) -> List[Dict[str, Any]]:
+        host = self.host_by_id(org_id, host_id)
+        return [] if host is None else [dict(pin) for pin in host.public_keys]
 
 
 def _timestamp(value: Any) -> Optional[float]:

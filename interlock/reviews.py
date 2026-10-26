@@ -106,6 +106,18 @@ CREATE TABLE IF NOT EXISTS settings (
     approval_ttl REAL NOT NULL,
     seq INTEGER NOT NULL DEFAULT 0
 );
+-- Forward migration for a remote decision (C3). Every open runs this same
+-- idempotent ``CREATE TABLE IF NOT EXISTS``, so a database created before C3
+-- gains the table the first time a C3 process opens it.
+CREATE TABLE IF NOT EXISTS cloud_grants (
+    grant_id TEXT PRIMARY KEY,
+    review_id TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    approver TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    applied REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cloud_grants_review ON cloud_grants (review_id, applied);
 """
 
 #: Columns added after the first release; ``ALTER TABLE`` needs a default that
@@ -238,6 +250,19 @@ class Review:
 
 class ReviewError(ValueError):
     """A review action that isn't allowed (unknown id, wrong state, self-approval)."""
+
+
+class GrantRefused(ReviewError):
+    """A remote grant failed a local check; nothing was written.
+
+    ``check`` is the failed check's short name (``binding``, ``expiry``,
+    ``status``, ``decision``, ``approvers``, ``self_approval``, ``version``),
+    which is what the connector reports and logs.
+    """
+
+    def __init__(self, check: str, message: Optional[str] = None) -> None:
+        super().__init__(message or "grant refused: {}".format(check))
+        self.check = check
 
 
 class ReviewQueue:
@@ -560,6 +585,142 @@ class ReviewQueue:
         self._advance(seq)
         return True
 
+    # --- a remote decision --------------------------------------------------
+    def binding_of(self, review_id: str) -> str:
+        """The stored binding hash for ``review_id``; ``KeyError`` if unknown.
+
+        The binding is deliberately not on the :class:`Review` dataclass (a
+        reviewer never needs it), but the connector does: the plane's grant is
+        checked against the local row's binding before it is applied.
+        """
+        with self._db() as db:
+            row = db.execute("SELECT binding FROM reviews WHERE id = ?",
+                             (review_id,)).fetchone()
+        if row is None:
+            raise KeyError(review_id)
+        return row[0]
+
+    def grant_for(self, review_id: str) -> Optional[str]:
+        """The id of the grant last applied to ``review_id``, if any.
+
+        The hook reads this after a successful :meth:`claim` and stamps the
+        receipt ``approval="cloud:<grant_id>"``. A locally approved review has
+        no row here, so the caller keeps today's behaviour.
+        """
+        with self._db() as db:
+            row = db.execute(
+                "SELECT grant_id FROM cloud_grants WHERE review_id = ? "
+                "ORDER BY applied DESC, rowid DESC LIMIT 1", (review_id,)).fetchone()
+        return row[0] if row is not None else None
+
+    def apply_grant(self, grant: Dict[str, Any], *, binding: str,
+                    now: Optional[float] = None) -> Review:
+        """Settle a review from a verified remote grant, atomically.
+
+        This is a *fail-closed* wrapper over the same settle logic ``approve``,
+        ``reject`` and ``revoke`` use. It refuses when the grant does not bind
+        to the local row, is expired, names an unknown decision, or arrives for
+        a review that is no longer pending (unless this exact grant already
+        settled it, which is an idempotent no-op). The settle, the
+        ``approval_until`` clamp, the ``cloud_grants`` insert and the row
+        re-seal all share one ``BEGIN IMMEDIATE`` transaction, so a crash
+        cannot leave a half-applied decision or an unsealed row.
+
+        The remote approval must be indistinguishable from a local one in the
+        MAC payload except for ``decided_by = "<issuer>#<subject>"``: there is
+        no grant-specific bypass in the sealed columns.
+        """
+        now = time.time() if now is None else now
+        if not isinstance(grant, dict):
+            raise GrantRefused("version")
+        review_id = grant.get("review_id")
+        grant_id = grant.get("grant_id")
+        decision = grant.get("decision")
+        if not isinstance(review_id, str) or not review_id \
+                or not isinstance(grant_id, str) or not grant_id:
+            raise GrantRefused("version")
+        if decision not in ("approve", "reject", "revoke"):
+            raise GrantRefused("decision")
+        try:
+            expires_at = float(grant["expires_at"])
+        except (KeyError, TypeError, ValueError):
+            raise GrantRefused("expiry") from None
+        if not expires_at > now:
+            raise GrantRefused("expiry")
+        approver = _grant_approver(grant.get("approver"))
+
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                self._expire(db, now)
+                row = self._row(db, review_id)
+                self._verify(db, row)
+                if not hmac.compare_digest(str(row["binding"]), str(binding)):
+                    raise GrantRefused("binding")
+                applied = db.execute(
+                    "SELECT review_id FROM cloud_grants WHERE grant_id = ?",
+                    (grant_id,)).fetchone()
+                if applied is not None:
+                    # A redelivered grant is an acknowledged no-op - but only
+                    # for the review it settled. A grant id reused against a
+                    # different review is malformed and must not be acked as
+                    # if it had been applied.
+                    if applied[0] != review_id:
+                        raise GrantRefused("version")
+                    review = self._review(db, self._row(db, review_id))
+                    db.execute("COMMIT")
+                    return review
+                if row["status"] != "pending":
+                    raise GrantRefused("status")
+
+                if decision == "approve":
+                    allow_self, min_approvals, approval_ttl = self._policy(db, row)
+                    if not allow_self and approver == row["requester"]:
+                        raise GrantRefused("self_approval")
+                    db.execute(
+                        "INSERT OR IGNORE INTO approvals (review_id, approver, ts) "
+                        "VALUES (?, ?, ?)", (review_id, approver, now))
+                    count = db.execute(
+                        "SELECT COUNT(*) FROM approvals WHERE review_id = ?",
+                        (review_id,)).fetchone()[0]
+                    if count < min_approvals:
+                        # The plane signs only at quorum; a grant that arrives
+                        # short of it is malformed and must not half-settle.
+                        raise GrantRefused("approvers")
+                    approval_until = min(now + approval_ttl, expires_at)
+                    cursor = db.execute(
+                        "UPDATE reviews SET status = 'approved', decided = ?, "
+                        "decided_by = ?, approval_until = ?, rejection_reason = NULL "
+                        "WHERE id = ? AND status = 'pending'",
+                        (now, approver, approval_until, review_id))
+                else:
+                    allowed = ("pending",) if decision == "reject" \
+                        else ("pending", "approved")
+                    reason = grant.get("reason") if isinstance(grant.get("reason"), str) \
+                        else None
+                    status = "rejected" if decision == "reject" else "revoked"
+                    cursor = db.execute(
+                        "UPDATE reviews SET status = ?, decided = ?, decided_by = ?, "
+                        "rejection_reason = ? WHERE id = ? AND status IN ({})".format(
+                            ",".join("?" * len(allowed))),
+                        (status, now, approver, reason, review_id) + tuple(allowed))
+                if cursor.rowcount != 1:
+                    raise GrantRefused("status")
+                self._seal(db, review_id)
+                db.execute(
+                    "INSERT INTO cloud_grants (grant_id, review_id, decision, "
+                    "approver, seq, applied) VALUES (?, ?, ?, ?, ?, ?)",
+                    (grant_id, review_id, decision, approver,
+                     int(grant.get("seq") or 0), now))
+                seq = self._bump(db)
+                review = self._review(db, self._row(db, review_id))
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+        self._advance(seq)
+        return review
+
     # --- the human side -----------------------------------------------------
     def approve(self, review_id: str, approver: Optional[str] = None, *,
                 now: Optional[float] = None) -> Review:
@@ -706,6 +867,23 @@ class ReviewQueue:
         data["allow_self_approval"] = bool(data.get("allow_self_approval", True))
         data["approval_ttl"] = float(data.get("approval_ttl", 900.0))
         return Review(approvers=approvers, **data)
+
+
+def _grant_approver(value: Any) -> str:
+    """The ``decided_by`` label for a remote decision.
+
+    The plane's grant carries the reviewer's OIDC identity as an object; the
+    sealed row records it as ``<issuer>#<subject>`` so a local and a remote
+    approval cannot be told apart by anything except the expected, visible
+    provenance of who decided.
+    """
+    if isinstance(value, dict):
+        issuer = value.get("issuer") or ""
+        subject = value.get("subject") or ""
+        return "{}#{}".format(issuer, subject)
+    if isinstance(value, str) and value:
+        return value
+    return "unknown#unknown"
 
 
 def _whoami() -> str:

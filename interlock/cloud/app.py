@@ -16,7 +16,16 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tup
 
 from . import db
 from .api.auth_routes import register as register_auth_routes
+from .api.grant_routes import register as register_grant_routes
 from .api.host_routes import register as register_host_routes
+from .api.review_routes import register as register_review_routes
+from .ui import register as register_ui_routes
+from .crypto import parse_kek
+from .db import CloudDependencyMissing
+from .grants import (
+    approval_public_key_hex as _approval_public_key_hex,
+    read_seed_file,
+)
 from .auth import rbac
 from .auth.agent import (
     AgentAuthError,
@@ -87,10 +96,16 @@ class CloudApp:
     def __init__(self, config: Optional[CloudConfig] = None,
                  ping: Callable[[str], bool] = db.ping,
                  store: Any = None, oidc: Any = None,
-                 clock: Callable[[], float] = time.time) -> None:
+                 clock: Callable[[], float] = time.time,
+                 approval_seed: Optional[bytes] = None) -> None:
         self.config = config or CloudConfig()
         self._ping = ping
         self._clock = clock
+        #: C3 signing material, loaded lazily. A test may inject the seed
+        #: directly; production reads the operator's 0600 key file.
+        self._approval_seed_override = approval_seed
+        self._approval_seed: Optional[bytes] = None
+        self._preview_kek: Optional[bytes] = None
         if store is None:
             store = (PostgresStore(self.config.dsn) if self.config.dsn
                      else MemoryStore())
@@ -113,6 +128,37 @@ class CloudApp:
         self._patterns: List[Tuple[Any, str, Dict[str, Handler]]] = []
         register_auth_routes(self)
         register_host_routes(self)
+        register_review_routes(self)
+        register_grant_routes(self)
+        register_ui_routes(self)
+
+    # -- C3 signing and encryption material -----------------------------
+    def approval_seed(self) -> bytes:
+        """The org approval seed, loaded once from the operator's key file."""
+        if self._approval_seed is None:
+            if self._approval_seed_override is not None:
+                self._approval_seed = bytes(self._approval_seed_override)
+            elif self.config.approval_key_file:
+                self._approval_seed = read_seed_file(self.config.approval_key_file)
+            else:
+                raise CloudDependencyMissing(
+                    "IL_CLOUD_APPROVAL_KEY_FILE is not configured")
+        return self._approval_seed
+
+    def approval_public_key_hex(self) -> str:
+        """The public key an enrolling host pins; empty when unconfigured."""
+        try:
+            return _approval_public_key_hex(self.approval_seed())
+        except Exception:
+            return ""
+
+    def preview_kek(self) -> bytes:
+        if self._preview_kek is None:
+            if not self.config.preview_kek:
+                raise CloudDependencyMissing(
+                    "IL_CLOUD_PREVIEW_KEK is not configured")
+            self._preview_kek = parse_kek(self.config.preview_kek)
+        return self._preview_kek
 
     # -- route registration --------------------------------------------
     def add_route(self, path: str, method: str, handler: Handler) -> None:
@@ -299,7 +345,7 @@ class CloudApp:
         rbac.authorize(user.role, request.method, request.path)
 
         if request.method not in ("GET", "HEAD", "OPTIONS"):
-            provided = request.header("x-csrf-token")
+            provided = request.header("x-csrf-token") or _form_csrf(request)
             if not self.sessions.check_csrf(session, provided):
                 raise ApiError(403, "csrf", "CSRF token is missing or invalid")
 
@@ -341,6 +387,27 @@ class CloudApp:
             elif kind == "lifespan.shutdown":
                 await send({"type": "lifespan.shutdown.complete"})
                 return
+
+
+def _form_csrf(request: Request) -> Optional[str]:
+    """Read the CSRF token from an HTML form body (the UI's forms post one).
+
+    The JSON routes keep the header-only contract; the two server-rendered
+    pages cannot set a header from a plain form, so the same token is accepted
+    from a urlencoded body. The value is still checked by
+    :meth:`SessionManager.check_csrf`, never trusted from the body alone.
+    """
+    content_type = (request.header("content-type") or "").split(";", 1)[0].strip().lower()
+    if content_type != "application/x-www-form-urlencoded" or not request.body:
+        return None
+    from urllib.parse import parse_qs
+
+    try:
+        values = parse_qs(request.body.decode("utf-8"), keep_blank_values=True)
+    except (UnicodeDecodeError, ValueError):
+        return None
+    token = values.get("csrf")
+    return token[0] if token else None
 
 
 def json_module_dumps(payload: Any) -> bytes:

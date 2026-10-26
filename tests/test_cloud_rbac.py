@@ -80,7 +80,7 @@ def test_every_permission_row_allows_exactly_its_roles(method, route):
 @pytest.mark.parametrize("method,path", [
     ("POST", "/v1/hosts"),
     ("DELETE", "/v1/hosts/host-1"),
-    ("GET", "/v1/reviews"),
+    ("GET", "/v1/receipts"),
     ("GET", "/v1/nope"),
     ("DELETE", "/v1/org"),
     ("POST", "/v1/org"),
@@ -118,7 +118,12 @@ def test_normalize_route_maps_parameters():
 
 
 def test_agent_routes_are_literal_and_separate_from_the_human_matrix():
-    assert rbac.AGENT_ROUTES == {("POST", "/v1/hosts/self"): None}
+    assert rbac.AGENT_ROUTES == {
+        ("POST", "/v1/hosts/self"): None,
+        ("POST", "/v1/reviews"): None,
+        ("GET", "/v1/grants"): None,
+        ("POST", "/v1/grants/ack"): None,
+    }
     for method, route in rbac.AGENT_ROUTES:
         assert (method, route) not in rbac.PERMISSIONS
     # ``/v1/hosts/self`` must not normalize onto the human fleet detail row.

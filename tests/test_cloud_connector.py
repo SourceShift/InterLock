@@ -43,6 +43,50 @@ class _Queue:
     def list(self, status="pending"):
         return list(self.reviews)
 
+    def binding_of(self, review_id):
+        return "binding-" + str(review_id)
+
+
+def test_on_file_masks_the_preview_and_keeps_the_exact_allow_list(tmp_path):
+    connector, _home, _transport, _raw, _public = _connector(
+        tmp_path, queue=_Queue([]))
+    review = {
+        "id": "rev-1", "status": "pending", "action": "shell",
+        "phase": "propose", "principal": "alice", "requester": "bob",
+        "args_digest": "abc123", "created": 10.0, "pending_until": 20.0,
+        "args_preview": "SECRET ARGS", "preview": "write ada@example.com",
+    }
+
+    assert connector.on_file(review) is True
+
+    batches = connector.spool.batches()
+    assert len(batches) == 1
+    record = json.loads(gzip.decompress(batches[0].path.read_bytes()))
+    columns = {
+        "review_id", "binding", "action", "phase", "principal", "requester",
+        "policy_id", "reason", "args_digest", "preview", "mask_counts",
+        "created", "pending_until", "min_approvals", "allow_self_approval",
+        "approval_ttl",
+    }
+    assert set(record) == columns
+    assert record["review_id"] == "rev-1"
+    assert record["binding"] == "binding-rev-1"
+    assert record["args_digest"] == "abc123"
+    assert "ada@example.com" not in json.dumps(record)
+    assert record["mask_counts"] == {"EMAIL_ADDRESS": 1}
+    # The requester is a stable label, not the local user name.
+    assert record["requester"] != "bob"
+    assert record["requester"].startswith("hmac:")
+    assert "SECRET" not in json.dumps(record)
+    assert batches[0].kind == "security"
+    assert batches[0].sensor == "reviews"
+
+
+def test_on_file_without_a_queue_cannot_upload_without_a_binding(tmp_path):
+    connector, _home, _transport, _raw, _public = _connector(tmp_path)
+    assert connector.on_file({"id": "rev-1"}) is False
+    assert connector.spool.count == 0
+
 
 def _home(tmp_path, *, clock=None):
     home = CloudHome(tmp_path / "home")
@@ -131,31 +175,6 @@ def test_enroll_refuses_a_plain_http_url_off_loopback(tmp_path):
 
 
 # -- review metadata ----------------------------------------------------
-
-def test_on_file_spools_metadata_only_and_never_a_preview(tmp_path):
-    connector, _home, _transport, _raw, _public = _connector(tmp_path)
-    review = {
-        "id": "rev-1", "status": "pending", "action": "shell",
-        "phase": "propose", "principal": "alice", "requester": "bob",
-        "args_digest": "abc123", "created": 10.0, "pending_until": 20.0,
-        "args_preview": "SECRET ARGS", "preview": "SECRET ARGS",
-    }
-
-    assert connector.on_file(review) is True
-
-    batches = connector.spool.batches()
-    assert len(batches) == 1
-    record = json.loads(gzip.decompress(batches[0].path.read_bytes()))
-    assert set(record) == {
-        "review_id", "status", "action", "phase", "principal", "requester",
-        "args_digest", "created", "pending_until",
-    }
-    assert record["review_id"] == "rev-1"
-    assert record["args_digest"] == "abc123"
-    assert "SECRET" not in json.dumps(record)
-    assert batches[0].kind == "security"
-    assert batches[0].sensor == "reviews"
-
 
 def test_on_file_without_an_id_is_a_no_op(tmp_path):
     connector, _home, _transport, _raw, _public = _connector(tmp_path)
@@ -411,7 +430,9 @@ def test_status_has_exactly_the_documented_keys_and_no_agent_key(tmp_path):
     assert set(status) == {
         "connected", "last_sync", "url", "org_id", "host_id",
         "spool_batches", "spool_bytes", "dropped_batches", "queue_lag",
-        "cursor", "revoked", "last_error",
+        "cursor", "grant_seq", "last_ack_seq", "grants_applied",
+        "grants_refused", "grants_acked", "last_grant_applied",
+        "last_grant_refusal", "revoked", "last_error",
     }
     assert raw not in json.dumps(status)
     assert status["url"] == "https://cloud.example"

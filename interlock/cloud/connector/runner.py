@@ -34,6 +34,13 @@ from typing import Any, Dict, Mapping, Optional
 from ... import __version__ as CONNECTOR_VERSION
 from ..identity import generate_host_seed, key_id, public_key_hex
 from .config import CloudHome, redact
+from .grants import (
+    GrantProcessor,
+    initial_state as grant_initial_state,
+    load_state as load_grant_state,
+    public_key_from_config,
+)
+from .reviews import build_record
 from .spool import Spool
 from .transport import Transport, TransportError
 
@@ -150,15 +157,18 @@ class Connector:
             "revoked": False,
             "last_error": None,
             "poll_after": DEFAULT_POLL_AFTER,
+            "last_ack_seq": 0,
         }
+        state.update(grant_initial_state())
         try:
             doc = json.loads(self.state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             doc = None
         if isinstance(doc, dict):
             for key in state:
-                if key in doc:
+                if key in doc and key not in grant_initial_state():
                     state[key] = doc[key]
+            state.update(load_grant_state(doc))
         self._state = state
         return dict(state)
 
@@ -322,26 +332,24 @@ class Connector:
 
     # -- queue reconciliation ------------------------------------------
     def on_file(self, review: Any) -> bool:
-        """Spool one metadata record; never raises into the review queue.
+        """Spool one masked record; never raises into the review queue.
 
-        Only metadata and an argument digest leave the host. The default is
-        no preview at all; C3's masking policy owns any richer body.
+        The body is built by :func:`build_record`, which masks the preview and
+        asserts the exact wire allow-list. Without a local queue there is no
+        binding to prove, so the record is not uploaded at all rather than
+        sent without the hash the grant will later be checked against.
         """
         try:
-            record = {
-                "review_id": _review_id(review),
-                "status": _review_field(review, "status", "pending"),
-                "action": _review_field(review, "action"),
-                "phase": _review_field(review, "phase"),
-                "principal": _review_field(review, "principal"),
-                "requester": _review_field(review, "requester"),
-                "args_digest": _review_field(review, "args_digest"),
-                "created": _review_field(review, "created"),
-                "pending_until": _review_field(review, "pending_until"),
-            }
-            if not record["review_id"]:
+            review_id = _review_id(review)
+            if not review_id or self.queue is None:
                 return False
+            binding = self.queue.binding_of(review_id)
             config = self.config or {}
+            record = build_record(
+                review, binding=binding,
+                agent_key=config.get("agent_key"),
+                share_usernames=bool(config.get("share_usernames")),
+            )
             self.spool.add(
                 "security", self._json_body(record),
                 host=str(config.get("host_id") or "unassigned"),
@@ -426,9 +434,10 @@ class Connector:
         if revoked:
             return self._revoked(state, reviews, uploaded, errors)
 
-        # 3. Poll grants after the persisted cursor. Empty is normal in C2.
+        # 3. Poll grants after the persisted cursor. Empty is normal.
         cursor = int(state.get("cursor") or 0)
         path = "/v1/grants?cursor={}&wait=25".format(cursor)
+        payload: Dict[str, Any] = {}
         try:
             status, _headers, data = self._request("GET", path)
         except TransportError as exc:
@@ -438,24 +447,69 @@ class Connector:
                 return self._revoked(state, reviews, uploaded, errors)
             if 200 <= status < 300:
                 try:
-                    payload = json.loads(data.decode("utf-8")) if data else {}
+                    decoded = json.loads(data.decode("utf-8")) if data else {}
                 except (UnicodeDecodeError, ValueError):
-                    payload = {}
-                if not isinstance(payload, dict):
-                    payload = {}
-                # Persist the cursor only now, after the plane's ack.
-                new_cursor = payload.get("cursor")
-                if isinstance(new_cursor, int) and not isinstance(new_cursor, bool):
-                    state["cursor"] = new_cursor
-                else:
-                    state["cursor"] = cursor
-                try:
-                    poll_after = int(payload.get("poll_after") or poll_after)
-                except (TypeError, ValueError):
-                    pass
-                state["poll_after"] = poll_after
+                    decoded = {}
+                payload = decoded if isinstance(decoded, dict) else {}
             else:
                 errors.append(self._error_code(data))
+
+        ack_ok = True
+        grants = payload.get("grants")
+        if isinstance(grants, list) and grants:
+            if self.queue is None:
+                # No local queue: applying is impossible, so do not consume
+                # the cursor and lose the grants.
+                ack_ok = False
+            else:
+                processor = GrantProcessor(
+                    self.queue,
+                    public_key=public_key_from_config(config),
+                    org_id=str(config["org_id"]),
+                    host_id=str(config["host_id"]),
+                    clock=self.clock,
+                )
+                outcome = processor.process(grants, state)
+                if outcome["acked"] or outcome["refusals"]:
+                    ack_body: Dict[str, Any] = {"grant_ids": outcome["acked"]}
+                    if outcome["refusals"]:
+                        ack_body["refusals"] = outcome["refusals"]
+                    try:
+                        ack_status, _ack_headers, ack_data = self._request(
+                            "POST", "/v1/grants/ack", self._json_body(ack_body))
+                    except TransportError as exc:
+                        ack_ok = False
+                        errors.append(redact(str(exc)))
+                    else:
+                        if ack_status == 410:
+                            return self._revoked(state, reviews, uploaded, errors)
+                        if 200 <= ack_status < 300:
+                            try:
+                                ack_payload = json.loads(
+                                    ack_data.decode("utf-8")) if ack_data else {}
+                            except (UnicodeDecodeError, ValueError):
+                                ack_payload = {}
+                            if isinstance(ack_payload, dict):
+                                last_ack = ack_payload.get("last_ack_seq")
+                                if isinstance(last_ack, int) \
+                                        and not isinstance(last_ack, bool):
+                                    state["last_ack_seq"] = last_ack
+                        else:
+                            ack_ok = False
+                            errors.append(self._error_code(ack_data))
+
+        if payload and ack_ok:
+            # Persist the cursor only after the batch was applied and acked.
+            new_cursor = payload.get("next_cursor", payload.get("cursor"))
+            if isinstance(new_cursor, int) and not isinstance(new_cursor, bool):
+                state["cursor"] = new_cursor
+            else:
+                state["cursor"] = cursor
+            try:
+                poll_after = int(payload.get("poll_after") or poll_after)
+            except (TypeError, ValueError):
+                pass
+            state["poll_after"] = poll_after
 
         # 4. Heartbeat; last_sync advances only on a 2xx.
         heartbeat = self._json_body({
@@ -577,6 +631,13 @@ class Connector:
             "dropped_batches": dropped_batches,
             "queue_lag": self.queue_lag(),
             "cursor": state.get("cursor", 0),
+            "grant_seq": state.get("grant_last_seq", 0),
+            "last_ack_seq": state.get("last_ack_seq", 0),
+            "grants_applied": state.get("grants_applied", 0),
+            "grants_refused": state.get("grants_refused", 0),
+            "grants_acked": state.get("grants_acked", 0),
+            "last_grant_applied": state.get("last_grant_applied"),
+            "last_grant_refusal": state.get("last_grant_refusal"),
             "revoked": bool(state.get("revoked")),
             "last_error": state.get("last_error"),
         })

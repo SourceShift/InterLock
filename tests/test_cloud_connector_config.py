@@ -39,6 +39,7 @@ def _document(**overrides):
         "plane_public_keys": {"approval": "", "policy": "", "receipt": ""},
         "spool_dir": "spool",
         "state_dir": "state",
+        "share_usernames": False,
     }
     document.update(overrides)
     return document
@@ -61,6 +62,19 @@ def test_save_writes_0600_json_and_load_round_trips(tmp_path):
     assert json.loads(home.config_path.read_text()) == document
     assert home.load() == document
     assert [path.name for path in tmp_path.iterdir()] == ["cloud.json"]
+
+
+def test_a_c2_document_without_share_usernames_loads_with_the_default(tmp_path):
+    # A cloud.json enrolled before C3 has no `share_usernames`; loading it must
+    # not fail, and the normalised copy carries the opt-out default so the
+    # connector can read the field without a `.get` fallback.
+    home = CloudHome(tmp_path)
+    document = _document()
+    del document["share_usernames"]
+    home.save(document)
+
+    assert home.load()["share_usernames"] is False
+    assert json.loads(home.config_path.read_text())["share_usernames"] is False
 
 
 def test_save_replaces_atomically_and_leaves_no_temporary_file(tmp_path):

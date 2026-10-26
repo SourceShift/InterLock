@@ -100,6 +100,10 @@ def _host_view(app: Any, host: Host) -> Dict[str, Any]:
         host.state == "revoked"
         or (bool(keys) and all(key.revoked_at is not None for key in keys))
     )
+    # C3 delivery state: how far the host has been granted and how far it has
+    # acknowledged. Both are plane-side counters, never a host-supplied value.
+    view["grant_seq"] = int(app.store.grant_head(host.org_id, host.id)["seq"])
+    view["last_ack_seq"] = int(app.store.last_ack_seq(host.org_id, host.id))
     return view
 
 
@@ -207,9 +211,10 @@ async def enroll(app: Any, request: Request) -> Response:
             "connector_version": version,
         },
     )
-    # C3/C5 own the real signing keys. Empty strings are explicit
-    # "not configured", never a usable pin.
+    # C3 owns the approval key; C5 owns policy and receipt signing. Empty
+    # strings are explicit "not configured", never a usable pin.
     plane_keys = {name: "" for name in PLANE_KEY_NAMES}
+    plane_keys["approval"] = app.approval_public_key_hex()
     return json_response(201, {
         "host_id": host.id,
         "agent_key": raw_key,

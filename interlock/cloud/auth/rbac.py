@@ -37,6 +37,9 @@ PUBLIC_ROUTES = frozenset({
     ("GET", "/v1/auth/login"),
     ("GET", "/v1/auth/callback"),
     ("POST", "/v1/enroll"),
+    # The mobile review UI's one asset. It contains no tenant data and is
+    # safe to serve before login; the pages that load it are not public.
+    ("GET", "/static/stepup.js"),
 })
 
 #: (method, route) -> roles allowed. A route absent here is denied.
@@ -54,6 +57,18 @@ PERMISSIONS: Dict[Tuple[str, str], Set[str]] = {
     ("GET", "/v1/hosts/{id}"): {"owner", "admin"},
     ("POST", "/v1/keys"): {"owner", "admin"},
     ("POST", "/v1/keys/{id}/revoke"): {"owner", "admin"},
+    # C3: reviewers (and their admins) see and decide reviews. Auditors may
+    # not list reviews; on detail they are routed to a deliberate 404 so a
+    # probe cannot tell a real id from a missing one (they may search
+    # receipts, never read a preview).
+    ("GET", "/v1/reviews"): {"owner", "admin", "reviewer"},
+    ("GET", "/v1/reviews/{id}"): {"owner", "admin", "reviewer", "auditor"},
+    ("POST", "/v1/reviews/{id}/decision"): {"owner", "admin", "reviewer"},
+    # The same capability as the two server-rendered, mobile-first pages.
+    ("GET", "/reviews"): {"owner", "admin", "reviewer"},
+    ("GET", "/reviews/{id}"): {"owner", "admin", "reviewer", "auditor"},
+    ("POST", "/reviews/{id}/decision"): {"owner", "admin", "reviewer"},
+    ("POST", "/reviews/{id}/step-up"): {"owner", "admin", "reviewer"},
 }
 
 #: (method, literal route) -> required agent scope, or ``None`` when any
@@ -62,6 +77,11 @@ PERMISSIONS: Dict[Tuple[str, str], Set[str]] = {
 #: ``/v1/hosts/{id}`` route.
 AGENT_ROUTES: Dict[Tuple[str, str], Optional[str]] = {
     ("POST", "/v1/hosts/self"): None,
+    # C3 connector surface. Reviews are uploaded, grants are polled and acked;
+    # every one is scoped to the authenticated key's host.
+    ("POST", "/v1/reviews"): None,
+    ("GET", "/v1/grants"): None,
+    ("POST", "/v1/grants/ack"): None,
 }
 
 

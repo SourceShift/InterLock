@@ -511,10 +511,31 @@ distribution ships.
 and `cloud.json` under the connector home (`$IL_CLOUD_HOME`, default
 `~/.interlock`) with mode `0600`, and prints the host id and agent key id -
 never the agent key. `run` reconciles reviews from the local queue, uploads
-the metadata batch, long-polls for grants and heartbeats; `--once` does one
-cycle and exits non-zero when the sync failed. `status` reports connectivity,
-spool depth, queue lag and revocation without printing credentials. `leave`
+the masked review batch, long-polls for grants, verifies and applies them,
+acknowledges, and heartbeats; `--once` does one cycle and exits non-zero when
+the sync failed. `status` reports connectivity, spool depth, queue lag,
+revocation and the grant counters (`grants_applied`, `grants_refused`,
+`grants_acked`, `last_grant_refusal`) without printing credentials. `leave`
 removes `cloud.json` and the seed and prints what it left on disk.
+
+The uploaded review body is allow-listed on both sides: the masked preview,
+the argument digest, the mask counts and metadata - never the raw event or
+arguments. The connector sets `share_usernames: true` in `cloud.json` when the
+org wants the plain requester name; otherwise it sends a host-keyed HMAC label.
+
+A decision on the plane is a signed Ed25519 grant, and the host releases the
+call only after verifying it - binding, org, host, signature, per-host
+`seq`/`prev` chain, expiry and an unseen grant id. A refused grant leaves the
+review pending and is reported on the next acknowledgement. A released remote
+approval appears on the receipt as `approval="cloud:<grant_id>"`.
+
+The plane needs two pieces of C3 material, both read at use time and never
+written to the database or a log: `IL_CLOUD_APPROVAL_KEY_FILE`, a hex 32-byte
+Ed25519 approval seed in a `0600` file (enrolling hosts pin its public half),
+and `IL_CLOUD_PREVIEW_KEK`, a hex or base64 key used to encrypt masked previews
+per org. Operators review and decide in the hosted, mobile-first UI at
+`/reviews`; every preview read is an audited disclosure and a decision needs a
+step-up no older than 300 seconds.
 
 `keys rotate|revoke` calls the admin API and needs an operator session, taken
 from `IL_CLOUD_ADMIN_COOKIE` and `IL_CLOUD_ADMIN_CSRF` - never from argv, which

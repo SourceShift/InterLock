@@ -80,6 +80,13 @@ class CloudConfig:
     #: Session lifetime bounds from FR-049: 30 minute idle, 12 hour absolute.
     session_idle_seconds: int = DEFAULT_SESSION_IDLE
     session_absolute_seconds: int = DEFAULT_SESSION_ABSOLUTE
+    # -- C3: preview encryption and grant signing -----------------------
+    #: Hex or base64 key for the per-org preview envelope key. Empty means
+    #: preview storage is not configured; the routes that need it fail closed.
+    preview_kek: str = ""
+    #: The hex 32-byte Ed25519 approval seed. Never stored in the database,
+    #: never logged; a self-hosted plane supplies it as a 0600 file.
+    approval_key_file: str = ""
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "CloudConfig":
@@ -116,6 +123,8 @@ class CloudConfig:
             session_absolute_seconds=_int_env(
                 env, "IL_CLOUD_SESSION_ABSOLUTE", DEFAULT_SESSION_ABSOLUTE
             ),
+            preview_kek=env.get("IL_CLOUD_PREVIEW_KEK", ""),
+            approval_key_file=env.get("IL_CLOUD_APPROVAL_KEY_FILE", ""),
         )
 
     def validate(self) -> None:
