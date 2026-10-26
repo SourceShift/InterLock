@@ -265,6 +265,18 @@ def test_dry_run_prints_the_command_and_writes_nothing(home, capsys):
         assert json.dumps(hook_command(agent, flags())) in out
 
 
+def test_the_install_hint_matches_the_review_mode(tmp_path, capsys):
+    # --reviews always takes Claude Code's own prompt out of the loop, so the
+    # hint must not promise an inline ask that will never appear.
+    settings = tmp_path / "settings.json"
+    assert main(["install-hook", "--for", "claude-code", "--settings", str(settings)]) == 0
+    assert "ask you first" in capsys.readouterr().out
+    assert main(["install-hook", "--for", "claude-code", "--settings", str(settings),
+                 "--reviews", "always"]) == 0
+    out = capsys.readouterr().out
+    assert "file a review" in out and "ask you first" not in out
+
+
 def test_reinstall_replaces_the_hook_and_keeps_everything_else(home, tmp_path):
     settings = tmp_path / "settings.json"
     other = {"matcher": "Bash", "hooks": [{"type": "command", "command": "other-tool"}]}

@@ -197,8 +197,14 @@ def run(args) -> int:
                     print("  ! {}".format(flag))
                 print("  ! Codex asks you to trust new hooks: open Codex, run /hooks, press t")
             if name == "claude-code":
+                # With --reviews always the escalation never reaches Claude Code's
+                # own prompt: the hook refuses the call and files a review a human
+                # approves instead. Say which one this install will do.
                 print("  check it: start a new session and ask Claude to run "
-                      "`git push --force origin main` - interlock should ask you first")
+                      "`git push --force origin main` - interlock should {}".format(
+                          "refuse it and file a review you approve on #/reviews"
+                          if getattr(args, "reviews", None) == "always"
+                          else "ask you first"))
         except (OSError, ValueError) as exc:
             failed += 1
             sys.stderr.write("{}: could not configure {}: {}\n".format(name, path, exc))
