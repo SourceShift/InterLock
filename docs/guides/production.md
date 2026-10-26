@@ -162,11 +162,19 @@ checks the `Host` header, and sends no CORS headers.
 ## Performance
 
 Rules run in your process as ordinary Python, so a call costs roughly what your
-rules cost. There's no network hop. Scope lookups are cached per scope. There's no
-published benchmark for the Python side yet (one is on the
-[roadmap](https://github.com/SourceShift/InterLock/blob/main/ROADMAP.md)), so measure with your own rules. The Node.js client
-adds one local socket round trip per guarded call. Its smoke benchmark measured
-tens of microseconds per call on a development machine (`npm run bench` in `js/`).
+rules cost. There's no network hop, and scope lookups are cached per scope.
+
+`scripts/bench_overhead.py` measures what the built-in pack adds over an empty
+engine on 70 ordinary coding-agent events: **p50 241 µs, p95 390 µs, p99
+442 µs** per decision on a development machine. That excludes process start,
+hook-adapter parsing, receipt I/O and sidecar RPC, so treat it as the floor of
+what a hook will cost — method, corpus and gate thresholds are in
+[`benchmarks/overhead/README.md`](https://github.com/SourceShift/InterLock/blob/main/benchmarks/overhead/README.md).
+Measure with your own rules before setting a gate.
+
+The Node.js client adds one local socket round trip per guarded call. Its smoke
+benchmark measured tens of microseconds per call on a development machine
+(`npm run bench` in `js/`).
 
 ## Upgrades
 

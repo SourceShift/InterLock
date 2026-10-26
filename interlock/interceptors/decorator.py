@@ -1,8 +1,10 @@
 """The opt-in @guard decorator: the explicit escape hatch for custom tools.
 
-Automatic interception (import hooks for MCP and the model SDKs) lands in M1
-and M3; this decorator is what covers bespoke in-house tools the auto-hooks
-cannot see. It captures a SensorEvent, asks the engine for a verdict, and
+Automatic interception covers MCP sessions (an import hook on
+``ClientSession.call_tool``), the model SDKs and agent frameworks (adapters
+over the same ``enforce_tool_call`` core), and the Node client's patched
+surfaces. This decorator is what covers bespoke in-house tools none of those
+can see. It captures a SensorEvent, asks the engine for a verdict, and
 enforces it before the wrapped function runs.
 """
 from __future__ import annotations

@@ -1,9 +1,14 @@
 """The policy engine and its evaluate() contract.
 
-M0 evaluates an ordered list of Python-function rules. This is the seam that
-later milestones replace: M2 loads declarative YAML/JSON policies with a safe
-condition evaluator, M6 swaps in a Rust core over ctypes. The evaluate()
-signature stays identical, so nothing above it changes.
+The engine evaluates an ordered list of rules, each a callable returning a
+Decision or None. ``DeclarativeEngine`` is the ordinary way to fill that list:
+it compiles a JSON/YAML policy document, with a closed condition language, into
+the same callables, and nothing above this seam knows the difference.
+
+R31 is the planned exception: a Rust evaluator over a compiled plan, reached
+over ctypes and used only for policies it can express exactly, with this
+engine as the fallback. The evaluate() signature stays identical, so nothing
+above it changes.
 """
 from __future__ import annotations
 

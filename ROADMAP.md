@@ -83,6 +83,7 @@ worse at both jobs.
 | R28 | A2A policy dimension | `shipped` | M | operational review |
 | R29 | MCP transport controls and scoped engine over the sidecar | `partial` | M | operational review · no client sends a scope |
 | R30 | Upstream-drift detector | `shipped` | M | operational review |
+| R31 | Native policy engine (Rust fast path over a compiled plan) | `not started` | L | `Verdict` out-param contract |
 
 ---
 
@@ -1475,6 +1476,61 @@ unchanged surface exits zero; the report names the exact upstream version tested
 Noise — the report separates "new capability we do not cover" from "a shape
 change that broke us", and files nothing automatically without an operator
 threshold.
+
+---
+
+## R31 · Native policy engine (Rust fast path over a compiled plan)
+
+**Status:** `not started` — `rust/` holds the `ScopeTree` store and no
+evaluator. The `evaluate(event) -> Decision` seam and the `0/1/2/3` verdict
+values are already the contract it will implement.
+**Size:** L
+
+### Problem
+Every guarded call runs the policy in CPython. A hook process pays interpreter
+time for each rule, each regex detector, each intent analysis. Measured cost is
+241 µs at p50 for the built-in pack (`benchmarks/overhead/README.md`) — inside
+the 5 ms gate, but it scales with the rule set, and the process-start share of
+a hook cannot be amortized away if evaluation itself is the bulk of the work.
+A native evaluator also makes the verdict seam explicit: a process that can
+call `il_eval(event_json, plan_json, &mut verdict)` can be a front end in any
+language, not only Python.
+
+### What changes
+- A Rust evaluator over a **compiled plan**, not over Python callables: serde
+  structs for event and plan, `all/any/not`, the `action`/`field`/`arg` leaves
+  and the comparison operators, returning `Verdict` as an `int` out-parameter.
+- Two exports over the same function: a C ABI (`#[no_mangle] extern "C"`) for
+  `ctypes` and a PyO3 wrapper, both in `rust/`, so the Python and Node fronts
+  share one engine as they do today for scopes.
+- A Python planner that walks a policy document and emits a plan **only** when
+  every rule is expressible — no detectors, no `intent`/`sql`/`a2a`/`flow`
+  conditions, no `modify`, no shadow rules, no mesh ceilings. Anything else
+  leaves the policy on the Python engine, so parity holds by construction
+  rather than by comparison.
+- An opt-in switch (`INTERLOCK_NATIVE=1` or a `--native` flag), off by default
+  until the parity corpus has run in CI for a release.
+
+### Impact
+Policies that stay on the Python path see no change. Policies eligible for the
+native path get a lower and flatter per-call cost, and the C ABI becomes the
+documented way a non-Python front end evaluates without embedding CPython.
+The risk is a disagreement between the two engines, which is why the plan is
+all-or-nothing per policy and the fallback is the current code.
+
+### Acceptance
+Over the FP corpus (`benchmarks/fp/benign.jsonl`) and the policy fixtures in
+`tests/test_declarative_policy.py`, a native-eligible policy produces the same
+verdict, `policy_id` and reason as the Python engine for every event; a
+policy with one unsupported rule is never handed to the native path; and
+`bench_overhead.py` reports the native path's cost beside the Python one.
+
+### Risks & dependencies
+JSON crossing the boundary per call can cost more than the evaluation saves for
+tiny rule sets — the planner should refuse a plan below a size threshold rather
+than measure a regression. Detector-heavy policies gain nothing until detectors
+themselves are ported (a later item); this is the seam and the rule subset
+first.
 
 ---
 
