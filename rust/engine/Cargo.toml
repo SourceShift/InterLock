@@ -12,4 +12,5 @@ description = "Pure-Rust evaluator for interlock policies compiled to a plan."
 [dependencies]
 glob = "0.3"
 regex = "1"
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+unicode-normalization = "0.1"

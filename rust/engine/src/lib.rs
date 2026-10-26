@@ -5,8 +5,9 @@
 //! documents this evaluator can reproduce exactly; anything else stays on the
 //! Python engine. That is why the two engines cannot disagree by accident:
 //! there is no partial translation. The Python planner refuses to emit a plan
-//! for a policy with a detector, a rewrite, an overlay, a disabled rule, a
-//! quarantined rule, a shadow rule or a mesh ceiling.
+//! for a policy with a rewrite, an overlay, a disabled rule, a quarantined
+//! rule, a shadow rule, a mesh ceiling, or a detector without a port here (see
+//! [`detectors`]).
 //!
 //! The verdict values are the ones the rest of the package already uses:
 //! 0 allow, 1 block, 2 modify (never produced here), 3 escalate.
@@ -19,6 +20,10 @@
 use glob::{MatchOptions, Pattern};
 use regex::Regex;
 use serde_json::{Map, Value};
+
+mod detectors;
+
+pub use detectors::NativeDetector;
 
 /// Longest regex a `matches` condition may carry, and the longest string it
 /// scans. Same numbers as `declarative.MAX_PATTERN` / `MAX_SCAN`.
@@ -122,6 +127,9 @@ pub enum ActionMatch {
 
 #[derive(Debug, Clone)]
 pub enum Cond {
+    /// Always true. Only the planner constructs it, for a detector rule with
+    /// no `on` scope; no document can write it.
+    Always,
     All(Vec<Cond>),
     Any(Vec<Cond>),
     Not(Box<Cond>),
@@ -136,6 +144,9 @@ pub struct Rule {
     pub reason: String,
     pub phase: Phase,
     pub when: Cond,
+    /// Set for a detector rule. The detector supplies the verdict (BLOCK), the
+    /// `policy_id` and the reason; `verdict`/`reason` above are unused.
+    pub detector: Option<NativeDetector>,
 }
 
 #[derive(Debug, Clone)]
@@ -193,6 +204,11 @@ impl Event {
         let value: Value =
             serde_json::from_str(text).map_err(|exc| format!("invalid event JSON: {exc}"))?;
         Event::from_value(&value)
+    }
+
+    /// The event's arguments, for the detectors that scan top-level strings.
+    pub(crate) fn args(&self) -> &Value {
+        &self.args
     }
 
     /// The owned value of one top-level field. Cloning is deliberate: field
@@ -461,6 +477,7 @@ impl Cond {
     /// `Some(None)` is a hit with no attribution; `None` is a miss.
     fn eval(&self, event: &Event) -> Option<Option<String>> {
         match self {
+            Cond::Always => Some(None),
             Cond::All(subs) => {
                 let mut named: Option<String> = None;
                 for sub in subs {
@@ -545,11 +562,25 @@ impl Plan {
             let Some(named) = rule.when.eval(event) else {
                 continue;
             };
-            let outcome = Outcome {
-                verdict: rule.verdict,
-                policy_id: rule.id.clone(),
-                reason: rule.reason.clone(),
-                attributed_to: named,
+            let outcome = match rule.detector {
+                None => Outcome {
+                    verdict: rule.verdict,
+                    policy_id: rule.id.clone(),
+                    reason: rule.reason.clone(),
+                    attributed_to: named,
+                },
+                Some(detector) => {
+                    let Some(argument) = detector.scan(event) else {
+                        continue;
+                    };
+                    let policy = detector.policy_id();
+                    Outcome {
+                        verdict: BLOCK,
+                        policy_id: policy.to_string(),
+                        reason: format!("{policy}: {argument}"),
+                        attributed_to: Some(argument),
+                    }
+                }
             };
             if rule.verdict == BLOCK {
                 return outcome;
@@ -571,6 +602,29 @@ fn parse_rule(raw: &Value, index: usize) -> Result<Rule, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| format!("rules[{index}] needs a string id"))?
         .to_string();
+    if let Some(raw) = obj.get("detector") {
+        let name = raw
+            .as_str()
+            .ok_or_else(|| format!("rules[{index}] ({id}) detector must be a string"))?;
+        let detector = NativeDetector::parse(name).ok_or_else(|| {
+            format!("rules[{index}] ({id}) has no native port for detector {name:?}")
+        })?;
+        // A detector rule runs in the call phase, as the Python compiler
+        // builds it; `when` is only the `on` scope. The decision's reason and
+        // policy_id come from the detector port, not from this rule.
+        let when = match obj.get("when") {
+            Some(value) => parse_cond(value)?,
+            None => Cond::Always,
+        };
+        return Ok(Rule {
+            id,
+            verdict: BLOCK,
+            reason: String::new(),
+            phase: Phase::Call,
+            when,
+            detector: Some(detector),
+        });
+    }
     let verdict = match obj.get("verdict").and_then(Value::as_i64) {
         Some(value) if value == BLOCK as i64 => BLOCK,
         Some(value) if value == ESCALATE as i64 => ESCALATE,
@@ -599,6 +653,7 @@ fn parse_rule(raw: &Value, index: usize) -> Result<Rule, String> {
         reason,
         phase,
         when: parse_cond(when)?,
+        detector: None,
     })
 }
 
@@ -745,6 +800,40 @@ mod tests {
         let ask = plan.evaluate(&event(json!({"action": "Bash", "args": {"command": "ls"}})));
         assert_eq!(ask.verdict, ESCALATE);
         assert_eq!(ask.policy_id, "ask");
+    }
+
+    #[test]
+    fn detector_rules_carry_detector_identity_and_scope() {
+        let plan = plan(json!([
+            {"id": "no-ansi", "detector": "ansi_escape_output_guard"},
+            {"id": "scoped-download", "detector": "download_extension_guard",
+             "when": {"action": "WebFetch"}}
+        ]));
+        let ansi = plan.evaluate(&event(json!({
+            "action": "Bash", "args": {"command": "echo \u{1b}[31m"}
+        })));
+        assert_eq!(ansi.verdict, BLOCK);
+        assert_eq!(ansi.policy_id, "ansi_escape_output");
+        assert_eq!(ansi.reason, "ansi_escape_output: command");
+        assert_eq!(ansi.attributed_to.as_deref(), Some("command"));
+
+        // The `on` scope gates the detector: a download from Bash is not this
+        // rule's business.
+        let bash_download = plan.evaluate(&event(json!({
+            "action": "Bash", "args": {"path": "payload.sh"}
+        })));
+        assert_eq!(bash_download.verdict, ALLOW);
+        let web = plan.evaluate(&event(json!({
+            "action": "WebFetch", "args": {"url": "https://x/payload.sh"}
+        })));
+        assert_eq!(web.verdict, BLOCK);
+        assert_eq!(web.policy_id, "download_extension");
+        assert_eq!(web.attributed_to.as_deref(), Some("url"));
+
+        let clean = plan.evaluate(&event(json!({
+            "action": "WebFetch", "args": {"url": "https://x/report.pdf"}
+        })));
+        assert_eq!(clean.verdict, ALLOW);
     }
 
     #[test]

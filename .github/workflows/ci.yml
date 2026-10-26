@@ -115,6 +115,14 @@ jobs:
         run: cargo test --manifest-path engine/Cargo.toml
         working-directory: rust
 
+      - name: C ABI smoke from a non-Python caller
+        # Builds rust/ffi (a cdylib with no PyO3) and compiles smoke.c against
+        # it with the system compiler. This is the proof that il_eval_plan is
+        # usable outside CPython; the Python extension cannot serve it because
+        # extension-module leaves CPython symbols unresolved. Runs before
+        # pytest so the ctypes check finds the library too.
+        run: bash scripts/check_native_abi.sh
+
       - name: Build and install the native accelerator
         run: |
           maturin build --release --out /tmp/wheels

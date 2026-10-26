@@ -1,0 +1,19 @@
+[package]
+name = "interlock_engine_ffi"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+description = "Standalone C ABI over the interlock native policy engine."
+
+# A separate crate, not a second export from the Python extension: the
+# extension is built with PyO3's `extension-module`, which leaves CPython
+# symbols unresolved for the interpreter to supply. Such a library cannot be
+# dlopen()ed by a process that is not CPython. This cdylib depends only on
+# `interlock_engine`, so any host with a C FFI can load it.
+
+[lib]
+name = "interlock_engine_ffi"
+crate-type = ["cdylib"]
+
+[dependencies]
+interlock_engine = { path = "../engine" }

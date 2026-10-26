@@ -250,17 +250,28 @@ planner can express **in full** is evaluated in Rust instead of CPython. The
 decision is the same, including `policy_id`, `reason`, and `attributed_to`; the
 native path exists to lower per-call cost, not to change policy.
 
-A policy is either fully native or fully Python. Any detector, `modify`/`set`
-rule, `on`/`when` form outside the plain condition language, overlay, `disable`
-list, shadow rule, or mesh ceiling makes the planner decline the whole policy,
-so the two engines can never disagree about which rule applies. A failure
-during native evaluation also falls back to the Python engine for that event.
-Policies below eight rules (override with `INTERLOCK_NATIVE_MIN_RULES`) stay on
-the Python engine because crossing the JSON boundary would cost more than the
-evaluation it saves.
+A policy is either fully native or fully Python. Four stateless detectors have a
+Rust port and are native when used without parameters:
+`ansi_escape_output_guard`, `crlf_header_injection_guard`,
+`download_extension_guard`, and `code_eval_exec_guard`. Any other detector, a
+detector with `with` parameters, a `modify`/`set` rule, an `on`/`when` form
+outside the plain condition language, an overlay, a `disable` list, a shadow
+rule, or a mesh ceiling makes the planner decline the whole policy, so the two
+engines can never disagree about which rule applies. A failure during native
+evaluation also falls back to the Python engine for that event. Policies below
+eight rules (override with `INTERLOCK_NATIVE_MIN_RULES`) stay on the Python
+engine because crossing the JSON boundary would cost more than the evaluation it
+saves.
 
-The same engine has a C ABI (`il_eval_plan`) for non-Python processes; see the
-Rust README. It is not needed for normal use.
+The default pack is intentionally not native-eligible: its parameterised
+detectors and rewrites keep it on Python. To see what the fast path saves,
+`scripts/bench_overhead.py` runs a native-eligible policy
+(`benchmarks/overhead/native-policy.json`) through both engines on the same
+corpus and reports the per-action speed-up beside the normal overhead gate.
+
+The same engine has a C ABI (`il_eval_plan`, `il_abi_version`) in a separate
+`rust/ffi` library for non-Python processes; `scripts/check_native_abi.sh`
+builds it and runs an in-tree C caller. It is not needed for normal use.
 
 ## Safety of the evaluator
 

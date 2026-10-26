@@ -66,6 +66,40 @@ This run is after two changes that share work inside one decision:
 Before those, the same corpus measured 0.61 ms p50 / 1.19 ms p95; after the
 intent memo alone it was 0.24 ms p50 here, with `Bash` at 0.29 ms.
 
+## Native comparison
+
+`--no-native` turns this section off; without it the script also runs
+`benchmarks/overhead/native-policy.json` through the Python engine and the
+native plan evaluator (`INTERLOCK_NATIVE=1`, see the Rust README). The default
+`coding-agent` pack cannot be compared this way: its parameterised detectors and
+rewrites keep every policy containing them on Python, by design, so the
+comparison needs a policy the planner can translate whole.
+
+The native policy has twelve rules - plain conditions over `command`,
+`file_path`, `limit` and `owner`, and all four ported detectors (one of them
+`on`-scoped to `WebFetch`). The plan is compiled once, outside the timed passes;
+each sample includes the JSON event payload the PyO3 boundary needs. The
+Python baseline is loaded with `INTERLOCK_NATIVE` forced off, so an ambient
+`INTERLOCK_NATIVE=1` cannot turn the comparison into native-vs-native.
+
+| | Python | Native | Speed-up |
+|---|---:|---:|---:|
+| p50 | 43 µs | 16 µs | **2.7x** |
+| p95 | 176 µs | 43 µs | 4.1x |
+| p99 | 432 µs | 80 µs | 5.4x |
+
+Per action, p50: `Bash` 43 → 16 µs, `Read` 40 → 14 µs, `WebFetch` 51 → 18 µs,
+`Grep` 37 → 15 µs; the full table is the script's second block. These are one
+warm machine (macOS 24.4, CPython 3.9, 2026-10-26); absolute values move with
+load, the ratio is the within-run comparison that means something. A missing
+`interlock_scopes` module or an ineligible policy prints `native: skipped (...)`
+and leaves the gate untouched.
+
+The comparison is reported, never gated: it answers "what does the opt-in fast
+path save", while the gate answers "did the policy get slower". Keeping them
+separate means a slow CI runner cannot fail the build on a ratio between two
+numbers it did not control.
+
 ## The gate
 
 `scripts/bench_overhead.py` exits non-zero when:

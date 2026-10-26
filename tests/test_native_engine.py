@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from interlock.actions import canonical_action
+from interlock.enforce import Verdict
 from interlock.event import SensorEvent
 from interlock.policy import native
 from interlock.policy.declarative import load_policy
@@ -72,6 +74,12 @@ POLICY = {
                           {"arg": "owner", "ne": "dev"}]}},
         {"id": "no-hundred", "verdict": "block", "reason": "hundred",
          "when": {"arg": "limit", "eq": 100}},
+        # Native detector rules: each of the four ports, plus one `on` scope.
+        {"id": "d-ansi", "detector": "ansi_escape_output_guard"},
+        {"id": "d-crlf", "detector": "crlf_header_injection_guard"},
+        {"id": "d-code", "detector": "code_eval_exec_guard"},
+        {"id": "d-download", "detector": "download_extension_guard.download_extension_guard",
+         "on": ["WebFetch"]},
     ],
 }
 
@@ -99,6 +107,13 @@ EVENTS = [
     SensorEvent(action="custom_tool", args={"path": "ok.txt", "owner": "dev"}),
     SensorEvent(action="http_post", args={"host": "x.example"}),
     SensorEvent(action="query_db", args={"limit": 100.0}),
+    SensorEvent(action="Bash", args={"command": "printf '\x1b[31mred'"}),
+    SensorEvent(action="Bash", args={"command": "curl x%0d%0aY"}),
+    SensorEvent(action="Bash", args={"command": "python -c 'eval(x)'"}),
+    SensorEvent(action="Bash", args={"command": "x = ｅｖａｌ(y)"}),
+    SensorEvent(action="WebFetch", args={"url": "https://x/payload.EXE?t=1"}),
+    SensorEvent(action="WebFetch", args={"url": "https://x/report.pdf"}),
+    SensorEvent(action="Bash", args={"path": "payload.sh"}),
 ]
 
 
@@ -125,6 +140,39 @@ def test_native_matches_python(event):
         assert got.policy_id == expected.policy_id
         assert got.reason == expected.reason
         assert got.attributed_to == expected.attributed_to
+
+
+def test_detector_verdicts_are_native():
+    engine = load_policy(POLICY)
+    plan = _plan(engine)
+    cases = [
+        (SensorEvent(action="Bash", args={"command": "printf '\x1b[31m'"}), "ansi_escape_output"),
+        (SensorEvent(action="Bash", args={"command": "curl %0d%0aX"}), "crlf_injection"),
+        (SensorEvent(action="Bash", args={"command": "eval(x)"}), "code_eval_exec"),
+        (SensorEvent(action="Bash", args={"command": "x = ｅｖａｌ(y)"}), "code_eval_exec"),
+        (SensorEvent(action="WebFetch", args={"url": "https://x/a.sh"}), "download_extension"),
+    ]
+    for event, policy_id in cases:
+        expected = engine.evaluate(event)
+        got = native.decide(plan, event)
+        assert expected.verdict.name == "BLOCK", event
+        assert got.verdict == expected.verdict == Verdict.BLOCK, event
+        assert got.policy_id == expected.policy_id == policy_id, event
+        assert got.reason == expected.reason, event
+        assert got.attributed_to == expected.attributed_to, event
+
+
+def test_native_matches_python_over_the_fp_corpus():
+    from interlock.mesh.harness import load_corpus
+
+    corpus = load_corpus(
+        str(Path(__file__).resolve().parent.parent / "benchmarks" / "fp" / "benign.jsonl")
+    )
+    assert corpus
+    engine = load_policy(POLICY)
+    plan = _plan(engine)
+    for event in corpus:
+        assert native.decide(plan, event) == engine.evaluate(event), event
 
 
 def test_enabled_engine_answers_identically(monkeypatch):
@@ -201,10 +249,24 @@ def test_canonical_action_parity():
 
 
 def _library() -> ctypes.CDLL:
-    directory = Path(interlock_scopes.__file__).parent
-    candidates = [p for p in directory.iterdir() if p.suffix in (".so", ".dylib", ".pyd")]
-    assert candidates, "no extension module beside interlock_scopes/__init__.py"
-    return ctypes.CDLL(str(candidates[0]))
+    """The standalone FFI cdylib from `rust/ffi`, or skip.
+
+    The Python extension cannot serve: it is built with `extension-module` and
+    only loads inside CPython. `scripts/check_native_abi.sh` builds the FFI
+    library and runs the same checks from C; this test is the Python-side
+    convenience when that build is already present.
+    """
+    root = Path(__file__).resolve().parent.parent
+    candidates = [
+        Path(os.environ["INTERLOCK_FFI_LIB"]) if os.environ.get("INTERLOCK_FFI_LIB") else None,
+        root / "rust" / "ffi" / "target" / "release" / "libinterlock_engine_ffi.dylib",
+        root / "rust" / "ffi" / "target" / "release" / "libinterlock_engine_ffi.so",
+        root / "rust" / "ffi" / "target" / "release" / "interlock_engine_ffi.dll",
+    ]
+    found = [path for path in candidates if path is not None and path.is_file()]
+    if not found:
+        pytest.skip("rust/ffi not built; scripts/check_native_abi.sh covers the C ABI")
+    return ctypes.CDLL(str(found[0]))
 
 
 def test_c_abi_evaluates_and_reports_errors():

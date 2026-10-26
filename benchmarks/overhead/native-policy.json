@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "name": "overhead-native",
+  "description": "A native-eligible policy for benchmarks/overhead: plain conditions and the four ported detectors, no rewrites, overlays or parameterised detectors. Paired with the coding-agent pack it is not: that pack is deliberately Python-only.",
+  "tools": {
+    "query_db": ["limit", "owner"]
+  },
+  "rules": [
+    {
+      "id": "self-protect-files",
+      "verdict": "block",
+      "on": ["Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
+      "reason": "interlock's own policy and hooks are read-only to the agent",
+      "when": {"arg": "file_path", "glob": "*interlock*"}
+    },
+    {
+      "id": "destructive-commands",
+      "verdict": "block",
+      "on": "Bash",
+      "reason": "recursive delete outside a build directory",
+      "when": {
+        "all": [
+          {"arg": "command", "matches": "rm\\s+-[a-z]*r"},
+          {"not": {"arg": "command", "contains": "build"}}
+        ]
+      }
+    },
+    {
+      "id": "ask-force-push",
+      "verdict": "escalate",
+      "on": "Bash",
+      "reason": "force push needs a human",
+      "when": {"arg": "command", "contains": "push --force"}
+    },
+    {
+      "id": "no-tmp-writes",
+      "verdict": "block",
+      "on": ["Write", "Edit", "MultiEdit"],
+      "reason": "write outside the workspace",
+      "when": {"arg": "file_path", "startswith": "/tmp/"}
+    },
+    {
+      "id": "no-key-material",
+      "verdict": "block",
+      "on": ["Read", "Write", "Edit"],
+      "reason": "key material",
+      "when": {"arg": "file_path", "glob": "*.pem"}
+    },
+    {
+      "id": "cap-rows",
+      "verdict": "block",
+      "reason": "row limit above the ceiling",
+      "when": {"all": [{"action": ["query_db"]}, {"arg": "limit", "gt": 1000}]}
+    },
+    {
+      "id": "no-eval",
+      "verdict": "block",
+      "on": "Bash",
+      "reason": "dynamic code evaluation",
+      "when": {"arg": "command", "matches": "\\b(?:eval|exec|compile|__import__)\\s*\\("}
+    },
+    {
+      "id": "missing-owner",
+      "verdict": "escalate",
+      "reason": "an owner is required for this tool",
+      "when": {"all": [{"action": "query_db"}, {"arg": "owner", "exists": false}]}
+    },
+    {
+      "id": "ansi-escape-output",
+      "detector": "ansi_escape_output_guard"
+    },
+    {
+      "id": "crlf-header-injection",
+      "detector": "crlf_header_injection_guard"
+    },
+    {
+      "id": "code-eval-exec",
+      "detector": "code_eval_exec_guard"
+    },
+    {
+      "id": "download-extension",
+      "detector": "download_extension_guard.download_extension_guard",
+      "on": ["WebFetch"]
+    }
+  ]
+}

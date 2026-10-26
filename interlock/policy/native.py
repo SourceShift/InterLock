@@ -10,9 +10,14 @@ construction rather than by test only.
 
 The plan format mirrors the condition language in
 :mod:`interlock.policy.declarative` exactly; :mod:`interlock_engine` is the
-Rust side and documents the semantics it copies. The evaluator is opt-in
-(``INTERLOCK_NATIVE=1``) until the parity suite has run for a release, and a
-failure at any point falls back to the Python engine for that event.
+Rust side and documents the semantics it copies. Detector rules are native
+only when the detector itself has a Rust port (see :data:`NATIVE_DETECTORS`);
+every other detector keeps the whole policy on Python, because a detector can
+choose a verdict and a half-ported one could choose differently.
+
+The evaluator is opt-in (``INTERLOCK_NATIVE=1``) until the parity suite has
+run for a release, and a failure at any point falls back to the Python engine
+for that event.
 
 Two front ends sit on the same Rust engine: a PyO3 class (used here) and a C
 ABI (``il_eval_plan``) for processes that do not embed CPython. Both are in
@@ -50,6 +55,21 @@ OPS = frozenset(
 
 #: Longest regex the native evaluator accepts (mirrors MAX_PATTERN).
 MAX_PATTERN = 512
+
+#: Detectors with a Rust port in ``rust/engine/src/detectors.rs``, keyed by
+#: every spelling the Python loader accepts and valued by the canonical plan
+#: name. A detector not listed here - or listed but used with ``with``
+#: parameters - keeps the policy on the Python engine.
+NATIVE_DETECTORS = {
+    name: name
+    for name in (
+        "ansi_escape_output_guard",
+        "crlf_header_injection_guard",
+        "download_extension_guard",
+        "code_eval_exec_guard",
+    )
+}
+NATIVE_DETECTORS.update({"{0}.{0}".format(name): name for name in list(NATIVE_DETECTORS)})
 
 
 def enabled() -> bool:
@@ -122,10 +142,12 @@ def _rule(raw: Any) -> Optional[Mapping[str, Any]]:
     rule_id = raw.get("id")
     if not isinstance(rule_id, str) or not rule_id:
         return None
-    # Detectors decide at evaluation time, rewrites change the event the
-    # remaining rules judge, shadow rules never decide, and a ceiling can turn
-    # a block into an escalation: none of that is in the plan.
-    if "detector" in raw or "set" in raw:
+    if "detector" in raw:
+        return _detector(raw, rule_id)
+    # Rewrites change the event the remaining rules judge, shadow rules never
+    # decide, and a ceiling can turn a block into an escalation: none of that
+    # is in the plan.
+    if "set" in raw:
         return None
     if raw.get("mode", "enforce") != "enforce":
         return None
@@ -157,6 +179,36 @@ def _rule(raw: Any) -> Optional[Mapping[str, Any]]:
         "phase": phase,
         "when": when,
     }
+
+
+def _detector(raw: Mapping[str, Any], rule_id: str) -> Optional[Mapping[str, Any]]:
+    """A native detector rule, or None when the detector has no Rust port.
+
+    Only the four stateless scanners are here. A ``with`` payload, a shadow
+    mode, a ceiling or an origin on a detector rule all decline: the Rust port
+    has no parameters and no verdict transform, so accepting one would be a
+    different rule. Detector rules run in the call phase in Python as well;
+    ``phase`` is not a property they honour.
+    """
+    name = raw.get("detector")
+    canonical = NATIVE_DETECTORS.get(name) if isinstance(name, str) else None
+    if canonical is None:
+        return None
+    if raw.get("with") not in (None, {}):
+        return None
+    if raw.get("mode", "enforce") != "enforce":
+        return None
+    if raw.get("ceiling") is not None or raw.get("origin") is not None:
+        return None
+    if raw.get("phase", "call") != "call":
+        return None
+    rule: Mapping[str, Any] = {"id": rule_id, "detector": canonical}
+    if "on" in raw:
+        scope = _action(raw["on"])
+        if scope is None:
+            return None
+        rule = {"id": rule_id, "detector": canonical, "when": scope}
+    return rule
 
 
 def _action(raw: Any) -> Optional[Mapping[str, Any]]:

@@ -83,7 +83,7 @@ worse at both jobs.
 | R28 | A2A policy dimension | `shipped` | M | operational review |
 | R29 | MCP transport controls and scoped engine over the sidecar | `partial` | M | operational review · no client sends a scope |
 | R30 | Upstream-drift detector | `shipped` | M | operational review |
-| R31 | Native policy engine (Rust fast path over a compiled plan) | `partial` | L | engine crate + C ABI shipped; opt-in planner and parity suite |
+| R31 | Native policy engine (Rust fast path over a compiled plan) | `shipped` | L | opt-in planner, parity + FP-corpus suite, native-vs-Python bench, C ABI with an in-tree C caller, four ported detectors |
 
 ---
 
@@ -1481,13 +1481,17 @@ threshold.
 
 ## R31 · Native policy engine (Rust fast path over a compiled plan)
 
-**Status:** `partial` — `rust/engine/` holds the evaluator, `rust/src/native.rs`
-its PyO3 and C-ABI fronts, `interlock/policy/native.py` the all-or-nothing
-planner, and `tests/test_native_engine.py` the parity suite. The path is opt-in
-(`INTERLOCK_NATIVE=1`) and falls back to Python on its own. Missing: the
-`bench_overhead.py` native-vs-Python comparison the acceptance asks for, a
-non-Python caller exercising `il_eval_plan` in-tree, and detectors (still
-Python-only, so detector-heavy policies stay on the Python path).
+**Status:** `shipped` — `rust/engine/` holds the evaluator, `rust/src/native.rs`
+its PyO3 front end, `rust/ffi` the standalone C ABI, `interlock/policy/native.py`
+the all-or-nothing planner, and `tests/test_native_engine.py` the parity suite
+(including the FP corpus). The path is opt-in (`INTERLOCK_NATIVE=1`) and falls
+back to Python on its own. `scripts/bench_overhead.py` reports native beside
+Python on the same eligible policy, `scripts/check_native_abi.sh` runs an
+in-tree C caller (`rust/abi-smoke/smoke.c`) with no Python, and the four
+stateless detectors (`ansi_escape_output_guard`, `crlf_header_injection_guard`,
+`download_extension_guard`, `code_eval_exec_guard`) have Rust ports. Detectors
+with parameters, and every stateful or verdict-transforming detector, keep the
+whole policy on Python by design.
 **Size:** L
 
 ### Problem
@@ -1504,16 +1508,16 @@ language, not only Python.
 - A Rust evaluator over a **compiled plan**, not over Python callables: serde
   structs for event and plan, `all/any/not`, the `action`/`field`/`arg` leaves
   and the comparison operators, returning `Verdict` as an `int` out-parameter.
-- Two exports over the same function: a C ABI (`#[no_mangle] extern "C"`) for
-  `ctypes` and a PyO3 wrapper, both in `rust/`, so the Python and Node fronts
-  share one engine as they do today for scopes.
+- Two exports over the same function: a C ABI (`#[no_mangle] extern "C"`) in a
+  standalone `rust/ffi` cdylib and a PyO3 wrapper in the wheel, so a non-Python
+  front end can load the engine without CPython; both call `Plan::evaluate`.
 - A Python planner that walks a policy document and emits a plan **only** when
-  every rule is expressible — no detectors, no `intent`/`sql`/`a2a`/`flow`
-  conditions, no `modify`, no shadow rules, no mesh ceilings. Anything else
-  leaves the policy on the Python engine, so parity holds by construction
-  rather than by comparison.
-- An opt-in switch (`INTERLOCK_NATIVE=1` or a `--native` flag), off by default
-  until the parity corpus has run in CI for a release.
+  every rule is expressible — plain conditions or a detector with a Rust port,
+  no `intent`/`sql`/`a2a`/`flow` conditions, no `modify`, no shadow rules, no
+  mesh ceilings. Anything else leaves the policy on the Python engine, so
+  parity holds by construction rather than by comparison.
+- An opt-in switch (`INTERLOCK_NATIVE=1`), off by default until the parity
+  corpus has run in CI for a release.
 
 ### Impact
 Policies that stay on the Python path see no change. Policies eligible for the
