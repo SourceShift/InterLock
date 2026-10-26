@@ -62,7 +62,12 @@ def test_native_comparison_runs_the_same_policy_twice():
     corpus = load_corpus(str(ROOT / "benchmarks" / "fp" / "benign.jsonl"))[:10]
     measured = bench_overhead.measure_native(_native_policy(), corpus, repeats=2)
     if "skipped" in measured:
-        assert measured["skipped"] == "policy is not native-eligible"
+        # No wheel in the plain-Python CI jobs; an old wheel may not know the
+        # policy's detector rules. Either way there is nothing to compare.
+        assert measured["skipped"] in {
+            "interlock_scopes is not installed",
+            "policy is not native-eligible",
+        }
         return
     assert measured["events"] == len(corpus)
     assert measured["evaluated"] == len(corpus) * 2
