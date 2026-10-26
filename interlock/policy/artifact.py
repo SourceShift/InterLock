@@ -27,6 +27,7 @@ import hashlib
 import json
 import os
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Optional, Union
 
@@ -243,19 +244,151 @@ def parse_artifact(raw: bytes) -> dict:
     return artifact
 
 
-class CompiledPolicy:
-    """A loaded artifact plus the scoped engine it materialised.
+def build_documents_engine(documents: Any) -> Optional[Any]:
+    """Compile the artifact's documents into the unscoped base policy.
 
-    The engine and its per-scope cache are built once, at load/swap time.  A
-    call only evaluates; it never re-parses the artifact, re-imports the
-    module or rebuilds a scope.
+    The artifact carries two kinds of rules and both must decide something: the
+    scope bindings (templates, per principal) and the declarative documents
+    (the org-wide base).  A document-only policy has no bindings at all, so
+    without this engine its rules would be inert - an artifact that signs,
+    verifies and allows everything.  Returns None when there are no rules.
+
+    A quarantined rule refuses the load.  Quarantine is the engine's
+    forward-compatibility valve for a *file* an operator edited; inside a
+    signed artifact it means the plane signed a rule set the host does not
+    enforce, which is exactly the silent-drop this module must never allow.
+    """
+    from .declarative import load_policy
+
+    if not isinstance(documents, (list, tuple)):
+        raise ArtifactError("invalid_documents", "documents must be a list")
+    rules: list = []
+    for index, document in enumerate(documents):
+        if not isinstance(document, Mapping):
+            raise ArtifactError(
+                "invalid_documents", "document {} must be an object".format(index)
+            )
+        declared = document.get("rules")
+        if declared is None:
+            continue
+        if not isinstance(declared, (list, tuple)):
+            raise ArtifactError(
+                "invalid_documents",
+                "document {} rules must be a list".format(index),
+            )
+        rules.extend(declared)
+    if not rules:
+        return None
+    try:
+        engine = load_policy({"version": 1, "rules": rules})
+    except Exception as exc:
+        raise ArtifactError(
+            "invalid_documents", "documents could not be loaded: {}".format(exc)
+        ) from None
+    if engine.quarantined:
+        raise ArtifactError(
+            "invalid_rule",
+            "document rule refused: {}".format(engine.quarantined[0]),
+        )
+    return engine
+
+
+def _combine_layers(floor: Any, scoped: Any) -> Any:
+    """Combine the document floor with the scope decision, block always winning.
+
+    Mirrors ``PolicyEngine``'s own combine rule: BLOCK ends evaluation,
+    ESCALATE waits for no block, MODIFYs compose in order (the later rewrite
+    of a named argument wins) and an ESCALATE keeps the merged rewrites.  The
+    documents are a *floor*: a scope binding can add blocks and escalations,
+    but it can never turn a document block into an allow.
+    """
+    from ..enforce import Decision, Verdict
+
+    if scoped.verdict is Verdict.BLOCK:
+        return scoped
+    if scoped.verdict is Verdict.ALLOW:
+        return floor
+    if scoped.verdict is Verdict.ESCALATE:
+        if floor.verdict is Verdict.MODIFY and floor.modified_args:
+            return Decision(
+                verdict=Verdict.ESCALATE,
+                reason=scoped.reason,
+                policy_id=scoped.policy_id,
+                modified_args=dict(floor.modified_args),
+                attributed_to=scoped.attributed_to,
+                mesh_ceiling=scoped.mesh_ceiling,
+            )
+        if floor.verdict is Verdict.ESCALATE:
+            return scoped if scoped.policy_id else floor
+        return scoped
+    # scoped is MODIFY
+    if floor.verdict in (Verdict.ALLOW,):
+        return scoped
+    merged = {**(floor.modified_args or {}), **(scoped.modified_args or {})}
+    if floor.verdict is Verdict.ESCALATE:
+        return Decision(
+            verdict=Verdict.ESCALATE,
+            reason=floor.reason,
+            policy_id=floor.policy_id,
+            modified_args=merged or None,
+            attributed_to=floor.attributed_to,
+            mesh_ceiling=floor.mesh_ceiling,
+        )
+    first = floor
+    return Decision(
+        verdict=Verdict.MODIFY,
+        reason="; ".join(r for r in (floor.reason, scoped.reason) if r),
+        policy_id=first.policy_id,
+        modified_args=merged or None,
+        attributed_to=first.attributed_to,
+        masked=floor.masked or None,
+    )
+
+
+def evaluate_layers(base: Any, scoped: Any, event: Any) -> Any:
+    """The artifact's evaluation order, shared by the compiler and the host.
+
+    The documents are the org-wide floor and the scope bindings are the
+    per-principal refinement; both decide, and the stricter verdict wins.  A
+    document-only artifact has no bindings, so its rules are the whole policy -
+    without this layering those rules would be carried, signed and never
+    evaluated.  A document rewrite is applied before the scope judges the
+    call, exactly as ``PolicyEngine`` re-judges after a MODIFY.
+    """
+    from ..enforce import Verdict
+
+    if base is None:
+        return scoped.evaluate(event)
+    floor = base.evaluate(event)
+    if floor.verdict is Verdict.BLOCK:
+        return floor
+    if not (scoped.scope_of(event) or scoped.default_scope):
+        # No scope path at all: the documents are the whole policy for this
+        # subject. Without this, an artifact that ships documents but leaves
+        # ``allow_unscoped`` at its fail-closed default would block every
+        # event the documents just authorised.
+        return floor
+    working = event
+    if floor.verdict is Verdict.MODIFY and floor.modified_args:
+        working = replace(event, args={**(event.args or {}), **floor.modified_args})
+    return _combine_layers(floor, scoped.evaluate(working))
+
+
+
+class CompiledPolicy:
+    """A loaded artifact plus the engines it materialised.
+
+    The scope engine, its per-scope cache and the document base are all built
+    once, at load/swap time.  A call only evaluates; it never re-parses the
+    artifact, re-imports the module or rebuilds a scope.
     """
 
     def __init__(self, artifact: Mapping[str, Any], engine: Any, *,
                  raw: bytes, rules_module: Optional[str],
-                 template_ids: list) -> None:
+                 template_ids: list, base: Any = None) -> None:
         self.artifact = dict(artifact)
         self.engine = engine
+        self.base = base
         self.artifact_bytes = bytes(raw)
         self.sha256 = hashlib.sha256(self.artifact_bytes).hexdigest()
         self.epoch = str(artifact.get("epoch") or "")
@@ -267,11 +400,18 @@ class CompiledPolicy:
         self.scope = dict(artifact.get("scope") or {})
 
     def evaluate(self, event: Any) -> Any:
-        return self.engine.evaluate(event)
+        return evaluate_layers(self.base, self.engine, event)
 
     def evaluate_with_epoch(self, event: Any) -> tuple:
-        """``(Decision, scope_epoch)``; the scope epoch is None when unbound."""
-        return self.engine.evaluate(event), self.engine.epoch_for(event)
+        """``(Decision, scope_epoch)``; the scope epoch is None when unbound.
+
+        A document-decided event has no scope, so its epoch is None: the
+        artifact's own ``epoch`` identifies the rules it was judged under.
+        """
+        return (
+            evaluate_layers(self.base, self.engine, event),
+            self.engine.epoch_for(event),
+        )
 
     def scope_epochs(self) -> dict:
         """Each bound scope path's compiled-engine epoch, deterministically."""
@@ -344,6 +484,7 @@ def load_artifact(
         engine = build_scoped_engine(scope, templates)
     except RulesError as exc:
         raise ArtifactError("invalid_scope", str(exc)) from None
+    base = build_documents_engine(artifact.get("documents"))
 
     # Bindings are the authority: a module that exports extra ids is fine
     # unless a binding names one, in which case build_scoped_engine already
@@ -357,7 +498,7 @@ def load_artifact(
     })
     return CompiledPolicy(
         artifact, engine, raw=raw, rules_module=rules_module,
-        template_ids=resolved_ids,
+        template_ids=resolved_ids, base=base,
     )
 
 
@@ -423,9 +564,11 @@ __all__ = [
     "FAILURE_POLICY_DEFAULTS",
     "FAILURE_POLICY_KEYS",
     "FAILURE_POLICY_VALUES",
+    "build_documents_engine",
     "canonical_bytes",
     "canonical_json",
     "compute_epoch",
+    "evaluate_layers",
     "load_artifact",
     "materialize",
     "parse_artifact",

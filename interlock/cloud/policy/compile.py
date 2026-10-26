@@ -29,8 +29,10 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 from ...policy.artifact import (
     FAILURE_POLICY_DEFAULTS,
     ArtifactError,
+    build_documents_engine,
     canonical_bytes,
     compute_epoch,
+    evaluate_layers,
     load_artifact,
     seal_artifact,
     validate_failure_policy,
@@ -112,6 +114,13 @@ def _catalog_id() -> str:
 
 
 def _normalise_documents(documents: Any) -> list:
+    """Load every authored document and keep only what the engine kept.
+
+    A quarantined rule refuses the compile: signing a rule the host will skip
+    is a policy that silently does nothing, and the plane cannot tell the
+    admin afterwards.  A file an operator edits may tolerate quarantine; a
+    distributed artifact may not.
+    """
     if not isinstance(documents, (list, tuple)):
         raise CompileError("bad_artifact", "documents must be a list")
     out: list = []
@@ -131,6 +140,11 @@ def _normalise_documents(documents: Any) -> list:
                 "bad_artifact",
                 "document {} could not be loaded: {}".format(index, type(exc).__name__),
             ) from None
+        if engine.quarantined:
+            raise CompileError(
+                "bad_artifact",
+                "document {}: invalid rule: {}".format(index, engine.quarantined[0]),
+            )
         out.extend(engine.documents)
     return out
 
@@ -288,8 +302,20 @@ def compile_from_source(
 
     try:
         source_engine = build_scoped_engine(normal_scope, templates)
+        # The documents are the unscoped base layer, so the source form has to
+        # carry them too: a parity check against a scope-only source would
+        # compare two engines that both ignore the org's declarative rules.
+        source_base = build_documents_engine(normal_documents)
     except RulesError as exc:
         raise CompileError("bad_artifact", str(exc)) from None
+    except ArtifactError as exc:
+        raise CompileError("bad_artifact", str(exc)) from None
+    if source_base is None and not bindings:
+        raise CompileError(
+            "bad_artifact",
+            "policy is empty: the documents declare no rules and there are no "
+            "scope bindings",
+        )
 
     try:
         policy = (
@@ -319,7 +345,7 @@ def compile_from_source(
 
     corpus_path = Path(corpus) if corpus is not None else DEFAULT_CORPUS
     events = _load_corpus(corpus_path)
-    source_decisions = [source_engine.evaluate(event) for event in events]
+    source_decisions = [evaluate_layers(source_base, source_engine, e) for e in events]
     compiled_decisions = [compiled.evaluate(event) for event in events]
     for index, (source, generated) in enumerate(
         zip(source_decisions, compiled_decisions)

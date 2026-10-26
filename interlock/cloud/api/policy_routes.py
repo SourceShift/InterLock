@@ -17,11 +17,12 @@ import re
 import time
 import uuid
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from ..auth.stepup import StepUpError, StepUpService
 from ..http import ApiError, Request, Response, json_response, parse_json_body
 from ..policy.compile import CompileError, compile_from_source
+from ...policy.artifact import ArtifactError, load_artifact
 from ..policy.manifest import (
     MANIFEST_MAX_TTL,
     MANIFEST_MODES,
@@ -99,13 +100,33 @@ def _public_hex(app: Any) -> str:
 
 
 async def compile_policy(app: Any, request: Request) -> Response:
-    """Compile authored documents/scope and return the deterministic report."""
+    """Compile authored documents/scope, store the artifact, return the report.
+
+    Storing here is what lets ``POST /v1/policy/publish`` sign *the bytes the
+    admin reviewed* by sha256, rather than recompiling and hoping the
+    environment (notably the detector catalog id) did not move in between.
+    """
     body = parse_json_body(request.body, request.headers, (
         "documents", "scope", "rules_module", "failure_policy"))
     result = _compile(app, body)
+    now = _now(app)
+    oid = request.org.id
+    source = _store_source(app, oid, body, result, now)
     report = result.to_dict()
     report["artifact"] = _parse(result.artifact_bytes)
+    report["source_version"] = source["source_version"] if source else None
     return json_response(200, report)
+
+
+def _store_source(app: Any, oid: str, body: Dict[str, Any], result: Any,
+                  now: float) -> Any:
+    """Store the compiled artifact and the source it was compiled from."""
+    app.store.put_artifact(
+        oid, result.sha256, result.artifact_bytes,
+        epoch=result.epoch, compiler_version="c5", now=now)
+    return app.store.put_policy_source(
+        oid, body.get("documents") or [], body.get("scope") or {},
+        rules_module=result.rules_module, sha256=result.sha256, now=now)
 
 
 def _parse(raw: bytes) -> Dict[str, Any]:
@@ -117,7 +138,10 @@ def _parse(raw: bytes) -> Dict[str, Any]:
 def _target(body: Dict[str, Any]) -> Dict[str, str]:
     target = body.get("target")
     if not isinstance(target, dict):
-        target = {"kind": "org", "id": ""}
+        # A bare ``ring`` is the publish shorthand for a ring target.
+        ring = body.get("ring")
+        target = ({"kind": "ring", "id": ring} if isinstance(ring, str) and ring
+                  else {"kind": "org", "id": ""})
     kind = target.get("kind")
     identifier = target.get("id")
     if kind not in TARGET_KINDS:
@@ -147,12 +171,46 @@ def _expires(body: Dict[str, Any], now: float) -> float:
     return now + ttl
 
 
+def _artifact_for_publish(app: Any, oid: str, body: Dict[str, Any],
+                          now: float) -> Dict[str, Any]:
+    """The artifact to sign: a compiled sha256, or source compiled here.
+
+    ``sha256`` publishes exactly the bytes an admin reviewed at compile time.
+    The source form stays accepted so a one-shot publish remains possible; it
+    compiles, stores and links the source exactly as ``/v1/policy/compile``.
+    """
+    sha = body.get("sha256")
+    if sha is not None:
+        if not isinstance(sha, str) or not _SHA256.match(sha):
+            raise ApiError(422, "invalid_request",
+                           "sha256 must be lowercase 64-character hex")
+        raw = app.store.artifact_bytes(oid, sha)
+        if raw is None:
+            raise ApiError(404, "unknown_artifact",
+                           "no compiled artifact with that sha256")
+        try:
+            compiled = load_artifact(raw)
+        except ArtifactError as exc:
+            raise ApiError(422, "bad_artifact", str(exc)) from None
+        return {
+            "sha256": sha, "epoch": compiled.epoch, "size": len(raw),
+            "source": app.store.policy_source(oid, sha256=sha), "report": None,
+        }
+    result = _compile(app, body)
+    return {
+        "sha256": result.sha256, "epoch": result.epoch,
+        "size": len(result.artifact_bytes), "report": result.to_dict(),
+        "source": _store_source(app, oid, body, result, now),
+    }
+
+
 async def publish_manifest(app: Any, request: Request) -> Response:
-    """Compile, store the artifact, and publish a signed manifest."""
+    """Sign a manifest for a compiled artifact and open its rollout."""
     _require_step_up(app, request, "publish policy")
     body = parse_json_body(request.body, request.headers, (
-        "documents", "scope", "rules_module", "failure_policy", "target",
-        "mode", "expires_at", "expires_in", "minimum_agent", "rollout"))
+        "sha256", "documents", "scope", "rules_module", "failure_policy",
+        "target", "ring", "mode", "expires_at", "expires_in", "minimum_agent",
+        "rollout"))
     mode = body.get("mode", "enforce")
     if mode not in MANIFEST_MODES:
         raise ApiError(422, "invalid_request",
@@ -167,11 +225,9 @@ async def publish_manifest(app: Any, request: Request) -> Response:
     if target["kind"] == "org":
         target_id = oid
     now = _now(app)
-    result = _compile(app, body)
     try:
-        app.store.put_artifact(
-            oid, result.sha256, result.artifact_bytes,
-            epoch=result.epoch, compiler_version="c5", now=now)
+        artifact = _artifact_for_publish(app, oid, body, now)
+        source = artifact["source"]
         version = app.store.next_manifest_version(oid)
         public_hex = _public_hex(app)
         envelope = sign_manifest(app.policy_seed(), {
@@ -179,7 +235,7 @@ async def publish_manifest(app: Any, request: Request) -> Response:
             "manifest_id": "m-" + uuid.uuid4().hex[:16],
             "org_id": oid,
             "version": version,
-            "epoch": result.epoch,
+            "epoch": artifact["epoch"],
             "target": {"kind": target["kind"], "id": target_id},
             "mode": mode,
             "issued_at": now,
@@ -187,17 +243,14 @@ async def publish_manifest(app: Any, request: Request) -> Response:
             "minimum_agent": minimum_agent,
             "artifact": {
                 "format": 1,
-                "sha256": result.sha256,
-                "size": len(result.artifact_bytes),
+                "sha256": artifact["sha256"],
+                "size": artifact["size"],
             },
-            "rules_digest": result.epoch,
+            "rules_digest": artifact["epoch"],
             "key_id": policy_key_id(bytes.fromhex(public_hex)),
         })
         app.store.put_manifest(
             oid, envelope, author=getattr(request.user, "id", None), now=now)
-        source = app.store.put_policy_source(
-            oid, body.get("documents") or [], body.get("scope") or {},
-            rules_module=result.rules_module, now=now)
     except ValueError as exc:
         raise ApiError(422, "invalid_request", str(exc)) from None
 
@@ -223,20 +276,21 @@ async def publish_manifest(app: Any, request: Request) -> Response:
         except ValueError as exc:
             raise ApiError(422, "invalid_request", str(exc)) from None
 
+    source_version = source["source_version"] if source else None
     app.store.audit_append(
         oid, "policy.published",
         actor=getattr(request.user, "id", None),
-        detail={"version": version, "epoch": result.epoch,
-                "sha256": result.sha256, "target": target,
-                "mode": mode, "source_version": source["source_version"]},
+        detail={"version": version, "epoch": artifact["epoch"],
+                "sha256": artifact["sha256"], "target": target,
+                "mode": mode, "source_version": source_version},
     )
     return json_response(201, {
         "manifest": envelope,
-        "artifact": {"sha256": result.sha256, "epoch": result.epoch,
-                     "size": len(result.artifact_bytes)},
-        "source_version": source["source_version"],
+        "artifact": {"sha256": artifact["sha256"], "epoch": artifact["epoch"],
+                     "size": artifact["size"]},
+        "source_version": source_version,
         "rollout": rollout,
-        "report": result.to_dict(),
+        "report": artifact["report"],
     })
 
 
@@ -393,7 +447,7 @@ async def promote_rollout(app: Any, request: Request) -> Response:
     _require_step_up(app, request, "promote a rollout")
     body = parse_json_body(request.body, request.headers, (
         "id", "percent", "action", "health"))
-    rollout_id = body.get("id")
+    rollout_id = request.params.get("id") or body.get("id")
     if not isinstance(rollout_id, str) or not rollout_id:
         raise ApiError(422, "invalid_request", "id is required")
     oid = request.org.id
@@ -453,13 +507,13 @@ async def list_rollouts(app: Any, request: Request) -> Response:
 
 def register(app: Any) -> None:
     app.add_route("/v1/policy/compile", "POST", partial(compile_policy, app))
-    app.add_route("/v1/policy/manifests", "POST", partial(publish_manifest, app))
+    app.add_route("/v1/policy/publish", "POST", partial(publish_manifest, app))
     app.add_route("/v1/manifest", "GET", partial(get_manifest, app))
     app.add_pattern("/v1/artifacts/{sha256}", "GET", partial(get_artifact, app))
     app.add_route("/v1/hints", "GET", partial(get_hints, app))
-    app.add_route("/v1/policy/kills", "POST", partial(publish_kill, app))
+    app.add_route("/v1/policy/kill", "POST", partial(publish_kill, app))
     app.add_route("/v1/kills", "GET", partial(list_kills, app))
-    app.add_route("/v1/policy/rollouts/promote", "POST",
+    app.add_pattern("/v1/policy/rollouts/{id}/promote", "POST",
                   partial(promote_rollout, app))
     app.add_route("/v1/policy/rollouts", "GET", partial(list_rollouts, app))
 

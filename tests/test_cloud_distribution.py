@@ -11,9 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 
-import pytest
-
-from interlock import __version__ as AGENT_VERSION
 from interlock.cloud.connector.config import CloudHome
 from interlock.cloud.connector.policy import (
     EXPIRY_ALARM_SECONDS,
@@ -35,6 +32,7 @@ from interlock.cloud.policy.manifest import (
 )
 from interlock.event import SensorEvent
 from interlock.mesh.ed25519 import generate_seed, public_key
+from interlock.policy.killswitch import read_kill, marker_path
 from tests.fixtures.cloud.rules_module import scope_document
 
 NOW = 2_000_000_000.0
@@ -66,7 +64,6 @@ def _compile(allow=("ls", "pwd")):
 
 def _manifest(seed, result, *, version=2, issued=NOW, expires=NOW + 3600,
               target=None, mode="enforce"):
-    public_hex = public_key(seed).hex()
     return sign_manifest(seed, {
         "v": 1,
         "manifest_id": "m-{}".format(version),
@@ -203,6 +200,30 @@ def test_a_lower_manifest_version_is_refused_and_the_active_artifact_stays(tmp_p
     assert dist.status()["manifest_version"] == 2
     assert dist.status()["artifact_sha256"] == current.sha256
     assert dist.active_policy().sha256 == current.sha256
+
+
+def test_a_refusal_raises_the_alarm_until_a_successful_swap(tmp_path):
+    seed, dist = _with_seed(tmp_path)
+    _install(dist, _compile(), version=2)
+    dist.transport.responses.extend([
+        _json({"version": 3, "kill_epoch": 0}),
+        _json(_manifest(seed, _compile(allow=("pwd",)), version=1)),
+    ])
+    dist.poll_once()
+    status = dist.status()
+    assert status["alarm"] is True
+    assert status["refusal"]["code"] == "manifest_version"
+
+    accepted = _compile(allow=("pwd",))
+    dist.transport.responses.extend([
+        _json({"version": 4, "kill_epoch": 0}),
+        _json(_manifest(seed, accepted, version=4)),
+        (200, {}, accepted.artifact_bytes),
+    ])
+    dist.poll_once()
+    assert dist.status()["alarm"] is False
+    assert dist.status()["refusal"] is None
+    assert dist.active_policy().sha256 == accepted.sha256
 
 
 def test_the_accepted_version_is_persisted_before_the_bytes_arrive(tmp_path):
@@ -424,6 +445,56 @@ def test_a_forged_kill_is_refused_and_not_activated(tmp_path):
     assert out["kill_active"] is False
     assert out["refusals"]["kill_signature"] == 1
     assert dist.status()["kill_epoch"] == 1
+    assert read_kill(dist.active_path) is None
+
+
+def test_a_verified_kill_writes_the_marker_the_hook_reads(tmp_path):
+    # The hook has no network and no state: the marker beside the artifact is
+    # how a kill reaches the process that actually releases calls (FR-067).
+    seed, dist = _with_seed(tmp_path)
+    _install(dist, _compile(), version=2)
+    kill = sign_kill(seed, {
+        "v": 1, "id": "k-1", "org_id": "org-1", "reason": "credential leak",
+        "target": {"kind": "ring", "id": "stable"}, "issued_at": NOW,
+    })
+    dist.transport.responses.extend([
+        _json({"version": 2, "kill_epoch": 1}),
+        _json({"kills": [kill], "kill_epoch": 1}),
+    ])
+    dist.poll_once()
+
+    marker = read_kill(dist.active_path)
+    assert marker is not None
+    assert (marker["id"], marker["reason"]) == ("k-1", "credential leak")
+
+    # The distributor's own loader honours it, and the artifact identity still
+    # surfaces so a receipt can name what was killed.
+    killed = dist.active_policy()
+    decision = killed.evaluate(
+        SensorEvent("run_shell", {"cmd": "ls"}, principal="acme"))
+    assert (decision.verdict.name, decision.policy_id) == ("BLOCK", "kill:k-1")
+    assert killed.sha256 == dist.status()["artifact_sha256"]
+
+
+def test_a_removed_kill_marker_is_reasserted(tmp_path):
+    # The hook trusts only the marker, so a later poll must not let a deleted
+    # one quietly end a kill: only another signed publication clears it.
+    seed, dist = _with_seed(tmp_path)
+    _install(dist, _compile(), version=2)
+    kill = sign_kill(seed, {
+        "v": 1, "id": "k-1", "org_id": "org-1", "reason": "x",
+        "target": {"kind": "ring", "id": "stable"}, "issued_at": NOW,
+    })
+    dist.transport.responses.extend([
+        _json({"version": 2, "kill_epoch": 1}),
+        _json({"kills": [kill], "kill_epoch": 1}),
+    ])
+    dist.poll_once()
+    marker_path(dist.active_path).unlink()
+
+    dist.transport.responses.append(_json({"version": 2, "kill_epoch": 1}))
+    dist.poll_once()
+    assert read_kill(dist.active_path)["id"] == "k-1"
 
 
 # -- in-flight evaluation ----------------------------------------------

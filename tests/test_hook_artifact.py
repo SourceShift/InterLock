@@ -11,7 +11,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 
 import pytest
 
@@ -141,6 +140,38 @@ def test_the_artifact_allows_and_blocks_in_the_agents_protocol(tmp_path):
     stdout, _stderr, code = _decide(command, _payload("rm -rf /"), home, tmp_path)
     reason = _deny_reason(stdout, code)
     assert "shell_allowlist" in reason and "not allowed" in reason
+
+
+def test_an_active_kill_denies_even_a_fresh_artifact(tmp_path):
+    # The connector writes kill.json beside the artifact after verifying a
+    # signed kill (FR-067). The hook must block every call whatever
+    # --on-error says: a kill is a decision, not an internal error.
+    home = tmp_path / "home"
+    home.mkdir()
+    result, path = _artifact(tmp_path)
+    (tmp_path / "kill.json").write_text(json.dumps({
+        "kill": {"id": "k-1", "reason": "credential leak",
+                 "target": {"kind": "ring", "id": "stable"}},
+        "kill_epoch": 1,
+        "verified_at": 1.0,
+    }), encoding="utf-8")
+    command = hook_command("claude-code", flags(
+        artifact=str(path), on_error="allow"))
+
+    # 'ls' is allowed by the artifact itself; the kill overrides it.
+    stdout, _stderr, code = _decide(command, _payload("ls"), home, tmp_path)
+    reason = _deny_reason(stdout, code)
+    assert "kill switch k-1" in reason and "credential leak" in reason
+
+
+def test_an_unreadable_kill_marker_fails_closed(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    _result, path = _artifact(tmp_path)
+    (tmp_path / "kill.json").write_bytes(b"{not json")
+    command = hook_command("claude-code", flags(artifact=str(path)))
+    stdout, _stderr, code = _decide(command, _payload("ls"), home, tmp_path)
+    assert "kill switch unreadable" in _deny_reason(stdout, code)
 
 
 def test_a_directory_containing_active_json_is_accepted(tmp_path):

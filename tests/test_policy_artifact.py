@@ -151,6 +151,56 @@ def test_a_valid_artifact_materialises_and_evaluates():
     assert decision.verdict.name == "ALLOW"
 
 
+_DOCUMENT_ONLY = [{"version": 1, "rules": [
+    {"id": "deny-rm-rf", "verdict": "block", "reason": "destructive",
+     "when": {"all": [{"action": "shell"}, {"arg": "command", "contains": "rm -rf"}]}},
+]}]
+
+
+def _document_only():
+    return seal_artifact(_body(documents=_DOCUMENT_ONLY))
+
+
+def test_a_document_only_artifact_evaluates_its_rules():
+    # The artifact carries the org's declarative documents as well as the
+    # scope bindings. A document-only policy has no bindings at all, so if
+    # loading built only the scope engine these rules would be signed, fetched,
+    # verified and then never evaluated: a policy that allows everything.
+    from interlock.event import SensorEvent
+
+    policy = load_artifact(_raw(_document_only()))
+    assert policy.base is not None and len(policy.base) == 1
+    blocked = policy.evaluate(
+        SensorEvent("shell", {"command": "rm -rf /"}))
+    assert (blocked.verdict.name, blocked.policy_id) == ("BLOCK", "deny-rm-rf")
+    allowed = policy.evaluate(SensorEvent("shell", {"command": "ls"}))
+    assert allowed.verdict.name == "ALLOW"
+
+
+def test_the_documents_are_a_floor_a_scope_cannot_loosen():
+    # A scoped principal is judged by its template *and* the org documents:
+    # the stricter verdict wins, so a per-scope allowlist cannot erase a
+    # document block.
+    from interlock.event import SensorEvent
+
+    policy = load_artifact(_raw(_scoped(documents=_DOCUMENT_ONLY)))
+    decision = policy.evaluate(
+        SensorEvent("run_shell", {"cmd": "rm -rf /"}, principal="acme/agent1"))
+    assert decision.verdict.name == "BLOCK"
+
+
+def test_a_quarantined_document_rule_refuses_the_load():
+    # load_policy tolerates an invalid rule in a *file*; inside a signed
+    # artifact that tolerance would mean the plane shipped a rule the host
+    # silently skips. The host refuses instead and keeps last-known-good.
+    broken = [{"version": 1, "rules": [
+        {"id": "typo", "verdict": "block", "then": {"verdict": "block"}}]}]
+    with pytest.raises(ArtifactError) as exc:
+        load_artifact(_raw(seal_artifact(_body(documents=broken))))
+    assert exc.value.code == "invalid_rule"
+    assert "typo" in str(exc.value)
+
+
 def test_module_pin_mismatch_is_refused():
     with pytest.raises(ArtifactError) as exc:
         load_artifact(_raw(_scoped()), module="somewhere.else:templates")

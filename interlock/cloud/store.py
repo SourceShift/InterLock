@@ -1586,9 +1586,16 @@ class MemoryStore:
 
     def put_policy_source(self, org_id: str, documents: Any, scope: Any, *,
                           rules_module: Optional[str] = None,
+                          sha256: Optional[str] = None,
                           now: Optional[float] = None) -> Dict[str, Any]:
         oid = _org_id(org_id) or ""
         with self._lock:
+            if sha256:
+                # One source version per distinct artifact: compiling twice is
+                # not two policies, and rollback walks versions as policies.
+                for (row_org, _v), record in self.policy_sources.items():
+                    if row_org == oid and record.get("sha256") == sha256:
+                        return dict(record)
             versions = [key[1] for key in self.policy_sources if key[0] == oid]
             version = (max(versions) + 1) if versions else 1
             record = {
@@ -1597,15 +1604,24 @@ class MemoryStore:
                 "documents": list(documents or []),
                 "scope": dict(scope or {}),
                 "rules_module": rules_module,
+                "sha256": sha256,
                 "updated_at": _epoch() if now is None else float(now),
             }
             self.policy_sources[(oid, version)] = record
             return dict(record)
 
     def policy_source(self, org_id: str, *,
-                      version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+                      version: Optional[int] = None,
+                      sha256: Optional[str] = None) -> Optional[Dict[str, Any]]:
         oid = _org_id(org_id) or ""
         with self._lock:
+            if sha256 is not None:
+                matches = [record for (row_org, _v), record
+                           in self.policy_sources.items()
+                           if row_org == oid and record.get("sha256") == sha256]
+                if not matches:
+                    return None
+                return dict(max(matches, key=lambda row: row["source_version"]))
             if version is not None:
                 record = self.policy_sources.get((oid, int(version)))
                 return None if record is None else dict(record)
@@ -3227,48 +3243,75 @@ class PostgresStore:
 
     def put_policy_source(self, org_id: str, documents: Any, scope: Any, *,
                           rules_module: Optional[str] = None,
+                          sha256: Optional[str] = None,
                           now: Optional[float] = None) -> Dict[str, Any]:
         oid = _org_id(org_id) or ""
         at = _epoch() if now is None else float(now)
+        columns = ("source_version, documents, scope, rules_module, sha256, "
+                   "updated_at")
         with self._transaction(oid) as cur:
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (oid,))
+            if sha256:
+                cur.execute(
+                    "SELECT {} FROM policy_sources WHERE org_id = %s AND "
+                    "sha256 = %s ORDER BY source_version DESC LIMIT 1".format(
+                        columns), (oid, sha256))
+                existing = cur.fetchone()
+                if existing is not None:
+                    row = existing
+                    version = int(row[0])
+                    return {
+                        "org_id": oid, "source_version": version,
+                        "documents": list(row[1] or []),
+                        "scope": dict(row[2] or {}),
+                        "rules_module": row[3], "sha256": row[4],
+                        "updated_at": _timestamp(row[5]),
+                    }
             cur.execute(
                 "SELECT COALESCE(MAX(source_version), 0) + 1 "
                 "FROM policy_sources WHERE org_id = %s", (oid,))
             version = int(cur.fetchone()[0])
             cur.execute(
                 "INSERT INTO policy_sources (org_id, source_version, documents, "
-                "scope, rules_module, updated_at) VALUES (%s, %s, %s::jsonb, "
-                "%s::jsonb, %s, to_timestamp(%s))",
+                "scope, rules_module, sha256, updated_at) VALUES (%s, %s, "
+                "%s::jsonb, %s::jsonb, %s, %s, to_timestamp(%s))",
                 (oid, version, json.dumps(list(documents or [])),
-                 json.dumps(dict(scope or {})), rules_module, at))
+                 json.dumps(dict(scope or {})), rules_module, sha256, at))
         return {
             "org_id": oid, "source_version": version,
             "documents": list(documents or []), "scope": dict(scope or {}),
-            "rules_module": rules_module, "updated_at": at,
+            "rules_module": rules_module, "sha256": sha256, "updated_at": at,
         }
 
     def policy_source(self, org_id: str, *,
-                      version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+                      version: Optional[int] = None,
+                      sha256: Optional[str] = None) -> Optional[Dict[str, Any]]:
         oid = _org_id(org_id) or ""
+        columns = ("source_version, documents, scope, rules_module, sha256, "
+                   "updated_at")
         with self._transaction(oid) as cur:
-            if version is None:
+            if sha256 is not None:
                 cur.execute(
-                    "SELECT source_version, documents, scope, rules_module, "
-                    "updated_at FROM policy_sources WHERE org_id = %s "
-                    "ORDER BY source_version DESC LIMIT 1", (oid,))
+                    "SELECT {} FROM policy_sources WHERE org_id = %s AND "
+                    "sha256 = %s ORDER BY source_version DESC LIMIT 1".format(
+                        columns), (oid, sha256))
+            elif version is None:
+                cur.execute(
+                    "SELECT {} FROM policy_sources WHERE org_id = %s "
+                    "ORDER BY source_version DESC LIMIT 1".format(columns),
+                    (oid,))
             else:
                 cur.execute(
-                    "SELECT source_version, documents, scope, rules_module, "
-                    "updated_at FROM policy_sources WHERE org_id = %s AND "
-                    "source_version = %s", (oid, int(version)))
+                    "SELECT {} FROM policy_sources WHERE org_id = %s AND "
+                    "source_version = %s".format(columns), (oid, int(version)))
             row = cur.fetchone()
         if row is None:
             return None
         return {
             "org_id": oid, "source_version": int(row[0]),
             "documents": list(row[1] or []), "scope": dict(row[2] or {}),
-            "rules_module": row[3], "updated_at": _timestamp(row[4]),
+            "rules_module": row[3], "sha256": row[4],
+            "updated_at": _timestamp(row[5]),
         }
 
 

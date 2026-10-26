@@ -83,9 +83,9 @@ PERMISSIONS: Dict[Tuple[str, str], Set[str]] = {
     # switch is an owner action; promot/rollback is administrative. Auditors
     # may list rollouts but cannot change distribution.
     ("POST", "/v1/policy/compile"): {"owner", "admin"},
-    ("POST", "/v1/policy/manifests"): {"owner", "admin"},
-    ("POST", "/v1/policy/kills"): {"owner"},
-    ("POST", "/v1/policy/rollouts/promote"): {"owner", "admin"},
+    ("POST", "/v1/policy/publish"): {"owner", "admin"},
+    ("POST", "/v1/policy/kill"): {"owner"},
+    ("POST", "/v1/policy/rollouts/{id}/promote"): {"owner", "admin"},
     ("GET", "/v1/policy/rollouts"): {"owner", "admin", "auditor"},
 }
 

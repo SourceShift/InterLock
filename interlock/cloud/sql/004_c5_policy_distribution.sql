@@ -75,12 +75,16 @@ CREATE TABLE IF NOT EXISTS policy_sources (
     documents jsonb not null,
     scope jsonb not null,
     rules_module text,
+    sha256 text,
     updated_at timestamptz not null default now(),
     primary key (org_id, source_version)
 );
 
 CREATE INDEX IF NOT EXISTS policy_sources_org_version_idx
     ON policy_sources (org_id, source_version DESC);
+
+CREATE INDEX IF NOT EXISTS policy_sources_org_sha_idx
+    ON policy_sources (org_id, sha256);
 
 ALTER TABLE policy_sources ENABLE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON policy_sources

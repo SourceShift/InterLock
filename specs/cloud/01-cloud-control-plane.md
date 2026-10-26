@@ -200,8 +200,11 @@ separately and are immutable.
   promoted by a later manifest without recompiling.
 - A signed **kill switch** names a host, ring or org. A host that receives one
   stops releasing calls within one poll or hint cycle regardless of artifact
-  freshness, and records the kill on its receipt stream. The kill does not
-  self-expire; removal is another signed publication.
+  freshness, and records the kill on its receipt stream. The connector writes
+  the verified kill beside the active pointer; the hook, which never talks to
+  the plane, blocks every event while that marker exists and stamps each
+  receipt with the artifact identity and a `kill:<id>` policy id. The kill does
+  not self-expire; removal is another signed publication.
 
 ### Two-tier data plane
 
@@ -1072,8 +1075,8 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
       `policy_artifacts`; deterministic sha256 in tests.
 - [x] Implement manifest signing, the strictly increasing version allocator,
       expiry (≤7 days), target resolution and `policy_manifests`, published by
-      `POST /v1/policy/manifests`.
-- [x] Implement rollout rings in `POST /v1/policy/rollouts/promote` with hold
+      `POST /v1/policy/publish`.
+- [x] Implement rollout rings in `POST /v1/policy/rollouts/{id}/promote` with hold
       on health regression and rollback by publishing the old source above
       every host version.
 - [x] Implement `GET /v1/manifest`, `GET /v1/artifacts/{sha256}` and the
@@ -1081,7 +1084,7 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
 - [x] Implement connector verification: signature, target, expiry, artifact
       hash, highest-version persistence **outside** the artifact directory,
       temp-file fetch, fsync, rename, atomic pointer swap, `.prev` fallback.
-- [x] Implement signed kill switch (`POST /v1/policy/kills`, `GET /v1/kills`),
+- [x] Implement signed kill switch (`POST /v1/policy/kill`, `GET /v1/kills`),
       connector honouring within one cycle, and its receipt stamp.
 - [x] Load the active artifact once per hook process; fail closed when missing
       or invalid; keep the legacy source-policy loader for non-cloud installs.

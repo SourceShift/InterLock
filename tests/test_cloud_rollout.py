@@ -11,8 +11,6 @@ import asyncio
 import hashlib
 import json
 
-import pytest
-
 from interlock.cloud.app import CloudApp
 from interlock.cloud.config import CloudConfig
 from interlock.cloud.enrollment import generate_agent_key
@@ -122,7 +120,7 @@ def _publish(ctx, *, allow=("ls", "pwd"), version_target="ring",
     }
     if rollout is not None:
         body["rollout"] = rollout
-    return _post(ctx["app"], "/v1/policy/manifests", ctx["headers"], body)
+    return _post(ctx["app"], "/v1/policy/publish", ctx["headers"], body)
 
 
 def _public(ctx):
@@ -138,7 +136,7 @@ def _verify(ctx, manifest):
 
 # -- compile ------------------------------------------------------------
 
-def test_compile_returns_the_deterministic_report_without_publishing():
+def test_compile_stores_the_artifact_without_publishing():
     ctx = _setup()
     body = {"documents": [], "scope": _scope(), "rules_module": MODULE}
     first_status, _h, _raw, first = _post(
@@ -150,7 +148,42 @@ def test_compile_returns_the_deterministic_report_without_publishing():
     assert first["sha256"] == second["sha256"]
     assert first["artifact"]["epoch"] == first["epoch"]
     assert ctx["store"].policy_manifests == {}
-    assert ctx["store"].policy_artifacts == {}
+    # Compiling stores the bytes and their source so publish can sign exactly
+    # what the admin reviewed; compiling twice is one source version.
+    assert ctx["store"].artifact_bytes(ctx["org"].id, first["sha256"]) is not None
+    assert first["source_version"] == second["source_version"] == 1
+
+
+def test_publish_signs_a_previously_compiled_artifact_by_sha():
+    ctx = _setup()
+    body = {"documents": [], "scope": _scope(), "rules_module": MODULE}
+    _status, _h, _raw, compiled = _post(
+        ctx["app"], "/v1/policy/compile", ctx["headers"], body)
+
+    status, _h, _raw, published = _post(
+        ctx["app"], "/v1/policy/publish", ctx["headers"], {
+            "sha256": compiled["sha256"],
+            "target": {"kind": "ring", "id": "stable"},
+            "mode": "enforce",
+            "expires_in": 3600,
+        })
+    assert status == 201, published
+    manifest = published["manifest"]
+    assert manifest["artifact"]["sha256"] == compiled["sha256"]
+    assert manifest["epoch"] == compiled["epoch"]
+    assert published["source_version"] == compiled["source_version"]
+    assert _verify(ctx, manifest) is None
+
+
+def test_publishing_an_unknown_sha_is_a_404():
+    ctx = _setup()
+    status, _h, _raw, payload = _post(
+        ctx["app"], "/v1/policy/publish", ctx["headers"], {
+            "sha256": "0" * 64,
+            "target": {"kind": "ring", "id": "stable"},
+        })
+    assert status == 404
+    assert payload["error"]["code"] == "unknown_artifact"
 
 
 def test_compile_refuses_a_broken_binding_and_a_bad_failure_policy():
@@ -290,7 +323,7 @@ def test_a_kill_is_signed_recorded_and_visible_to_its_ring_only():
     ctx = _setup(role="owner")
     _publish(ctx)
     status, _h, _raw, payload = _post(
-        ctx["app"], "/v1/policy/kills", ctx["headers"],
+        ctx["app"], "/v1/policy/kill", ctx["headers"],
         {"id": "k-1", "reason": "credential leak",
          "target": {"kind": "ring", "id": "stable"}})
     assert status == 201, payload
@@ -327,12 +360,12 @@ def test_a_rollout_advances_canary_to_ten_to_one_hundred_and_holds():
     assert second["rollout"]["state"] == "canary"
 
     status, _h, _raw, promoted = _post(
-        ctx["app"], "/v1/policy/rollouts/promote", ctx["headers"],
+        ctx["app"], "/v1/policy/rollouts/r1/promote", ctx["headers"],
         {"id": "r1"})
     assert status == 200 and promoted["rollout"]["percent"] == 10
 
     status, _h, _raw, held = _post(
-        ctx["app"], "/v1/policy/rollouts/promote", ctx["headers"],
+        ctx["app"], "/v1/policy/rollouts/r1/promote", ctx["headers"],
         {"id": "r1", "health": "regressed"})
     assert status == 200 and held["held"] is True
     assert held["rollout"]["percent"] == 10
@@ -340,7 +373,7 @@ def test_a_rollout_advances_canary_to_ten_to_one_hundred_and_holds():
     assert held["rollout"]["reason"] == "regressed"
 
     status, _h, _raw, promoted = _post(
-        ctx["app"], "/v1/policy/rollouts/promote", ctx["headers"],
+        ctx["app"], "/v1/policy/rollouts/r1/promote", ctx["headers"],
         {"id": "r1", "percent": 100})
     assert status == 200 and promoted["rollout"]["percent"] == 100
 
@@ -359,7 +392,7 @@ def test_rollback_republishes_the_previous_source_above_every_host():
     assert (v1["manifest"]["version"], v2["manifest"]["version"]) == (1, 2)
 
     status, _h, _raw, rolled = _post(
-        ctx["app"], "/v1/policy/rollouts/promote", ctx["headers"],
+        ctx["app"], "/v1/policy/rollouts/r1/promote", ctx["headers"],
         {"id": "r1", "action": "rollback"})
     assert status == 200, rolled
     manifest = rolled["manifest"]
@@ -384,7 +417,7 @@ def test_rollback_without_source_history_is_refused_not_guessed():
     ctx = _setup()
     _publish(ctx, rollout={"id": "r1", "ring": "stable", "percent": 0})
     status, _h, _raw, payload = _post(
-        ctx["app"], "/v1/policy/rollouts/promote", ctx["headers"],
+        ctx["app"], "/v1/policy/rollouts/r1/promote", ctx["headers"],
         {"id": "r1", "action": "rollback"})
     assert status == 422
     assert payload["error"]["code"] == "no_previous_source"

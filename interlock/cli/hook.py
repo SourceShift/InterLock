@@ -69,7 +69,11 @@ def run(args) -> int:
         artifact_engine = None
         if getattr(args, "artifact", None):
             from ..policy.artifact import load_artifact
-            artifact_engine = load_artifact(args.artifact)
+            from ..policy.killswitch import apply_kill_marker
+            # The marker the connector writes beside the artifact is a
+            # decision, not an error: it denies whatever --on-error says.
+            artifact_engine = apply_kill_marker(
+                load_artifact(args.artifact), args.artifact)
         raw = sys.stdin.buffer.read(MAX_PAYLOAD + 1)
         if len(raw) > MAX_PAYLOAD:
             raise ValueError("hook input larger than {} bytes".format(MAX_PAYLOAD))

@@ -100,12 +100,13 @@ call (fail closed) unless --on-error allow, which lets the call through and
 says so loudly.
 
 ```text
-usage: interlock hook [-h] --agent {claude-code,codex,cursor} [--policy FILE]
+usage: interlock hook [-h] --agent {claude-code,codex,cursor} [--policy FILE] [--artifact PATH]
                       [--rules MODULE:ATTR] [--sidecar PATH] [--receipts FILE] [--key-file FILE]
                       [--no-receipts] [--no-overlay] [--monitor] [--on-error {deny,allow}]
                       [--reviews {fallback,always,off}] [--review-db FILE]
   --agent                    
   --policy                   policy file (default ~/.interlock/policy.json, else the built-in coding-agent pack)
+  --artifact                 a manifest-delivered policy artifact, or a directory containing active.json; mutually exclusive with --policy
   --rules                    a Python policy module instead
   --sidecar                  ask this sidecar instead
   --receipts                 receipt log (default ~/.interlock/receipts.jsonl when its key exists)
@@ -144,12 +145,13 @@ Exit codes: 0 done, 1 an agent could not be configured, 64 bad arguments.
 
 ```text
 usage: interlock install-hook [-h] --for {claude-code,codex,cursor,all} [--settings FILE]
-                              [--policy FILE] [--sidecar PATH] [--receipts FILE] [--key-file FILE]
-                              [--reviews {fallback,always,off}] [--review-db FILE] [--monitor]
-                              [--dry-run] [--uninstall]
+                              [--policy FILE] [--artifact PATH] [--sidecar PATH] [--receipts FILE]
+                              [--key-file FILE] [--reviews {fallback,always,off}]
+                              [--review-db FILE] [--monitor] [--dry-run] [--uninstall]
   --for                      
   --settings                 the agent's settings file (default: its usual path)
   --policy                   pin this policy file in the hook
+  --artifact                 pin a distributed policy artifact (or its directory) in the hook; mutually exclusive with --policy
   --sidecar                  decide through this sidecar
   --receipts                 receipt log path
   --key-file                 receipt key path

@@ -35,6 +35,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from ... import __version__ as AGENT_VERSION
 from ...policy.artifact import ACTIVE_POINTER, canonical_bytes, load_artifact
+from ...policy.killswitch import KILL_MARKER, apply_kill_marker
 from ..policy.manifest import verify_kill, verify_manifest
 from .config import CloudHome, redact
 from .transport import TransportError
@@ -130,6 +131,7 @@ class PolicyDistributor:
                 "kill": None,
                 "kill_active": False,
                 "refusals": {},
+                "last_refusal": None,
                 "last_error": None,
                 "last_hint": None,
             }
@@ -169,6 +171,10 @@ class PolicyDistributor:
         refusals = dict(state.get("refusals") or {})
         refusals[code] = int(refusals.get(code, 0)) + 1
         state["refusals"] = refusals
+        # A refusal is an alarm, not a quiet log line: the host is still
+        # serving last-known-good while the plane offers something it will not
+        # accept, and only a later successful swap clears it.
+        state["last_refusal"] = {"code": code, "at": float(self.clock())}
 
     # -- HTTP -----------------------------------------------------------
     def _headers(self) -> Dict[str, str]:
@@ -237,6 +243,7 @@ class PolicyDistributor:
         state["manifest_version"] = int(version)
         state["mode"] = mode
         state["last_swap"] = float(self.clock())
+        state["last_refusal"] = None
 
     # -- expiry ---------------------------------------------------------
     def _check_expiry(self, state: Dict[str, Any], now: float) -> None:
@@ -296,6 +303,11 @@ class PolicyDistributor:
         if hint_kill > int(state.get("kill_epoch") or 0):
             reachable = self._poll_kills(state, hint_kill) and reachable
         self._check_expiry(state, now)
+        if state.get("kill_active") and isinstance(state.get("kill"), dict) \
+                and not (self.artifacts_dir / KILL_MARKER).exists():
+            # Re-assert a kill whose marker was removed: the hook trusts only
+            # the marker, so a missing one is a kill that stopped applying.
+            self._write_kill_marker(state)
         if reachable:
             # A completed hint cycle clears a previous transport error. A
             # refusal is an answer too: the plane was reached, it was wrong.
@@ -456,7 +468,28 @@ class PolicyDistributor:
         if isinstance(server_epoch, int) and not isinstance(server_epoch, bool):
             newest = max(newest, server_epoch)
         state["kill_epoch"] = max(newest, hint_kill)
+        if state.get("kill_active") and isinstance(state.get("kill"), dict):
+            self._write_kill_marker(state)
         return True
+
+    def _write_kill_marker(self, state: Dict[str, Any]) -> None:
+        """Publish the verified kill beside the active pointer for the hook.
+
+        The hook has no network and no state directory of its own; the marker
+        is how a kill reaches the process that releases calls.  Writing is
+        idempotent, so a failed write is retried on the next kill poll.
+        """
+        document = {
+            "kill": state.get("kill"),
+            "kill_epoch": int(state.get("kill_epoch") or 0),
+            "verified_at": float(self.clock()),
+        }
+        try:
+            self._write_atomic(
+                self.artifacts_dir / KILL_MARKER, canonical_bytes(document))
+        except OSError as exc:
+            self._refuse(state, "kill_marker")
+            state["last_error"] = redact(str(exc))
 
     # -- results --------------------------------------------------------
     def _result(self, state: Dict[str, Any], ok: bool) -> Dict[str, Any]:
@@ -486,7 +519,8 @@ class PolicyDistributor:
             "highest_version": int(state.get("highest_version") or 0),
             "last_manifest_id": state.get("last_manifest_id"),
             "expired": state.get("expired_since") is not None,
-            "alarm": self._alarm(state, now),
+            "alarm": self._alarm(state, now) or state.get("last_refusal") is not None,
+            "refusal": state.get("last_refusal"),
             "grace_until": self._grace_until(state),
             "kill": state.get("kill"),
             "kill_epoch": int(state.get("kill_epoch") or 0),
@@ -494,8 +528,13 @@ class PolicyDistributor:
         return redact(status)
 
     def active_policy(self) -> Any:
-        """Load the active artifact once for a process that will enforce it."""
-        return load_artifact(self.active_path)
+        """Load the active artifact once for a process that will enforce it.
+
+        The kill marker is applied here too: a caller that asked this
+        distributor for the policy gets the same block the hook would.
+        """
+        return apply_kill_marker(
+            load_artifact(self.active_path), self.active_path)
 
 
 def _integer(value: Any) -> int:

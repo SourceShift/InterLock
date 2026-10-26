@@ -140,13 +140,45 @@ def test_an_empty_policy_is_refused():
 
 def test_a_document_only_policy_compiles_without_a_module():
     result = compile_from_source(
-        [{"version": 1, "rules": []}],
+        [{"version": 1, "rules": [
+            {"id": "deny-shell", "verdict": "block", "reason": "no shell",
+             "when": {"action": "shell"}},
+        ]}],
         {"version": 1, "bindings": {}},
         corpus=DEFAULT_CORPUS,
     )
     assert result.rules_module is None
     artifact = load_artifact(result.artifact_bytes)
     assert artifact.documents[0]["source"] == "<policy>"
+    # ...and the document's rule actually decides, which is the whole point of
+    # distributing the documents instead of only the scope bindings.
+    assert artifact.base is not None and len(artifact.base) == 1
+
+
+def test_a_document_with_no_effective_rules_is_an_empty_policy():
+    with pytest.raises(CompileError) as exc:
+        compile_from_source(
+            [{"version": 1, "rules": []}],
+            {"version": 1, "bindings": {}},
+            corpus=DEFAULT_CORPUS,
+        )
+    assert exc.value.code == "bad_artifact"
+    assert "empty" in exc.value.message
+
+
+def test_a_quarantined_rule_refuses_the_compile():
+    # An invalid rule is skipped by load_policy in a hand-edited file; the
+    # plane must not sign an artifact whose rule the host will never apply.
+    with pytest.raises(CompileError) as exc:
+        compile_from_source(
+            [{"version": 1, "rules": [
+                {"id": "typo", "verdict": "block", "then": {"verdict": "block"}},
+            ]}],
+            {"version": 1, "bindings": {}},
+            corpus=DEFAULT_CORPUS,
+        )
+    assert exc.value.code == "bad_artifact"
+    assert "typo" in exc.value.message
 
 
 # -- module references --------------------------------------------------
