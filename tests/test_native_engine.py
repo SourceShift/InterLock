@@ -128,6 +128,10 @@ def test_native_matches_python(event):
 
 
 def test_enabled_engine_answers_identically(monkeypatch):
+    # Set the flag explicitly both ways: the suite is also run with
+    # INTERLOCK_NATIVE=1 in the environment, and a "plain" engine must stay
+    # plain whatever the caller's shell says.
+    monkeypatch.setenv(native.ENV_FLAG, "0")
     plain = load_policy(POLICY)
     monkeypatch.setenv(native.ENV_FLAG, "1")
     armed = load_policy(POLICY)
