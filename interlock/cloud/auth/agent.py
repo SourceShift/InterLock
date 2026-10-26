@@ -20,10 +20,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 from ..enrollment import AGENT_SCOPES, parse_agent_key
-from ..store import AgentKey
 
 #: The header the connector uses for the RLS org hint.
 ORG_HEADER = "x-interlock-org"

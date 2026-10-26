@@ -30,7 +30,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 #: FR-011: the spool is capped at 256 MiB by default.
 DEFAULT_CAP_BYTES = 256 * 1024 * 1024

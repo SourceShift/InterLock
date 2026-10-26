@@ -224,8 +224,9 @@ async def enroll(app: Any, request: Request) -> Response:
 
 async def heartbeat(app: Any, request: Request) -> Response:
     """Record a connector heartbeat; the plane never initiates one."""
-    body = _json_body(request, ("connector_version", "last_seen", "spool_depth",
-                                "spool_bytes", "queue_lag", "cursor", "status"))
+    # Validate the body's shape even though no field is persisted yet.
+    _json_body(request, ("connector_version", "last_seen", "spool_depth",
+                         "spool_bytes", "queue_lag", "cursor", "status"))
     context = request.key
     now = _now(app)
     host = app.store.touch_host(context.org_id, context.host_id, now)
