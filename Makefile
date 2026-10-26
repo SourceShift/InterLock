@@ -13,7 +13,20 @@ RUFF ?= ruff
 ZENSICAL ?= zensical
 # The console port the Vite dev server proxies /api to (web/vite.config.ts).
 PORT ?= 7878
-# Extra console flags, e.g. make dev CONSOLE_ARGS='--receipts audit.jsonl'
+# The console reads no receipt log unless pointed at one. Development uses the
+# log the installed hooks write, when there is one, so Activity shows real calls
+# instead of the "point the console at a receipt log" prompt. The wildcards are
+# expanded at parse time: an uninstalled hook leaves the flags off and the
+# console explains itself. The key goes only with that log — pairing it with
+# another one makes the chain read broken — so RECEIPTS= elsewhere wants its own
+# KEY_FILE=. A repeat of the same flag in CONSOLE_ARGS wins: argparse keeps the
+# last.
+HOOK_RECEIPTS = $(wildcard $(HOME)/.interlock/receipts.jsonl)
+RECEIPTS ?= $(HOOK_RECEIPTS)
+KEY_FILE ?= $(if $(filter $(HOOK_RECEIPTS),$(RECEIPTS)),$(wildcard $(HOME)/.interlock/receipts.key))
+RECEIPT_FLAGS = $(if $(RECEIPTS),--receipts $(RECEIPTS)) \
+	$(if $(KEY_FILE),--key-file $(KEY_FILE))
+# Extra console flags, e.g. make dev CONSOLE_ARGS='--four-eyes'
 CONSOLE_ARGS ?=
 
 .DEFAULT_GOAL := help
@@ -41,9 +54,10 @@ dev: ## Run the console (auto-restart) and the Vite dev server together
 		echo "proxy target in web/vite.config.ts to match" >&2; exit 1; }
 	@echo "api  http://127.0.0.1:$(PORT)   (the unlock link prints below)"
 	@echo "web  Vite prints its own address below — open that one"
+	@echo "log  $(if $(RECEIPTS),$(RECEIPTS),none — install a hook, or pass RECEIPTS=…)"
 	@trap 'kill 0' EXIT INT TERM; \
 	watchfiles --filter python \
-		"$(PY) -m interlock.console --port $(PORT) $(CONSOLE_ARGS)" interlock/ & \
+		"$(PY) -m interlock.console --port $(PORT) $(RECEIPT_FLAGS) $(CONSOLE_ARGS)" interlock/ & \
 	$(NPM) --prefix web run dev & \
 	wait
 
