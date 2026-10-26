@@ -905,9 +905,6 @@ function moreVals(S: State, D: Data, A: Actions, c: { wide: boolean; locked: boo
       const x = byKey.get(key);
       const params = x?.f.params ?? [];
       return {
-        selRef: (el: HTMLSelectElement | null) => {
-          if (el && el.value !== key) el.value = key;
-        },
         module: key,
         sig: signature(x?.f.name ?? r.factory, params),
         params: params.map((p) => ({

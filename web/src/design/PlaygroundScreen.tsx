@@ -2,6 +2,7 @@
 // Edit the view-model, not this markup: regenerate instead.
 import { Fragment } from "react";
 import type { Vals } from "../vals";
+import { DetectorPicker } from "../components/DetectorPicker";
 
 export function PlaygroundScreen({ v }: { v: Vals }) {
   return (
@@ -40,15 +41,7 @@ export function PlaygroundScreen({ v }: { v: Vals }) {
               <Fragment key={i_r}>
                 <div style={{ border: "1px solid var(--il-rule)", borderRadius: "10px", background: "var(--il-panel)", padding: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
                   <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                    <select ref={it_r.selRef} value={it_r.module} onChange={it_r.onModule} aria-label="Detector" style={{ flex: "1", minWidth: "0", fontFamily: "'Martian Mono',monospace", fontSize: "11px", padding: "6px 8px", borderRadius: "7px", border: "1px solid var(--il-rule2)", background: "var(--il-sunken)" }}>
-                      {v.pgv.detOpts.map((it_o: (typeof v.pgv.detOpts)[number], i_o: number) => (
-                        <Fragment key={i_o}>
-                          <option value={it_o.v}>
-                            <span className="sc-interp">{it_o.v}</span>
-                          </option>
-                        </Fragment>
-                      ))}
-                    </select>
+                    <DetectorPicker value={it_r.module} onChange={it_r.onModule} options={v.pgv.detOpts} aria-label="Detector" />
                     <button onClick={it_r.remove} aria-label="Remove rule" style={{ width: "28px", height: "28px", borderRadius: "6px", border: "1px solid var(--il-rule2)", background: "transparent", cursor: "pointer" }}>
                       ✕
                     </button>

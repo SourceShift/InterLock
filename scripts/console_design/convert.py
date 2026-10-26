@@ -69,7 +69,19 @@ PATCHES = [
      "<il-extra name=\"reviewAlerts\"></il-extra>\n<button onClick=\"{{ openKeys }}\""),
     ("<a href=\"#/policy\" style=\"font-size:12.5px;font-weight:500;padding:6px 11px;border-radius:7px;border:1px solid var(--il-rule2);color:var(--il-fg);text-decoration:none\">Review starter policy</a>",
      "<a href=\"#/policy/starter\" style=\"font-size:12.5px;font-weight:500;padding:6px 11px;border-radius:7px;border:1px solid var(--il-rule2);color:var(--il-fg);text-decoration:none\">Review starter policy</a>"),
+    # Playground: the detector <select> becomes a searchable picker. The catalog
+    # has more detectors than a native menu can be scanned through, so the
+    # designer's dropdown keeps its place and its aria-label but gains a filter.
+    ("<select ref=\"{{ r.selRef }}\" value=\"{{ r.module }}\" onChange=\"{{ r.onModule }}\" aria-label=\"Detector\" style=\"flex:1;min-width:0;font-family:'Martian Mono',monospace;font-size:11px;padding:6px 8px;border-radius:7px;border:1px solid var(--il-rule2);background:var(--il-sunken)\"><sc-for list=\"{{ pgv.detOpts }}\" as=\"o\"><option value=\"{{ o.v }}\">{{ o.v }}</option></sc-for></select>",
+     "<il-detector-picker value=\"{{ r.module }}\" onchange=\"{{ r.onModule }}\" options=\"{{ pgv.detOpts }}\" aria-label=\"Detector\"></il-detector-picker>"),
 ]
+
+#: custom elements the markup may use: tag -> (React component, its import path).
+#: The converter emits the component with the interpolated props and adds the
+#: import to every screen that uses it.
+COMPONENTS = {
+    "il-detector-picker": ("DetectorPicker", "../components/DetectorPicker"),
+}
 
 
 def apply_patches(html):
@@ -308,6 +320,9 @@ class Emitter:
             raise SystemExit("unhandled " + node.tag)
         if node.tag == "il-extra":
             return [ind + "{v.extras." + a["name"] + "}"]
+        if node.tag in COMPONENTS:
+            attrs = self.attrs(node, scope)
+            return [ind + "<" + COMPONENTS[node.tag][0] + ("" if not attrs else " " + " ".join(attrs)) + " />"]
         style = a.get("style") or ""
         child_pre = pre or node.tag in ("pre", "textarea") or "white-space:pre" in style
         attrs = self.attrs(node, scope)
@@ -368,11 +383,18 @@ def main():
                 "saveOpen": "SaveDialog"}[key]
         names[key] = comp
         body_lines = em.children(node, set(), False, "      ")
+        # A custom element brings its own import, but only into the screens that
+        # actually render it.
+        component_imports = sorted(
+            'import {{ {} }} from "{}";'.format(name, path)
+            for name, path in COMPONENTS.values()
+            if any("<" + name in ln for ln in body_lines))
         src_lines = [
             "// GENERATED from design/console/Interlock Console.dc.html by scripts/console_design/convert.py.",
             "// Edit the view-model, not this markup: regenerate instead.",
             "import { Fragment } from \"react\";",
             "import type { Vals } from \"../vals\";",
+        ] + component_imports + [
             "",
             "export function {}({{ v }}: {{ v: Vals }}) {{".format(comp),
             "  return (",
