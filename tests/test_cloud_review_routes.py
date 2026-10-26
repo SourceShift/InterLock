@@ -25,6 +25,12 @@ from interlock.cloud.grants import (
 )
 from interlock.cloud.store import MemoryStore
 
+# Preview encryption needs the optional ``cryptography`` dependency. The Python
+# matrix jobs install ``.[dev]`` only, so every upload that carries a preview
+# would 500 there; the cloud job installs ``.[dev,cloud]`` and is where this
+# file really runs. Skip when the dep is absent, never fail.
+pytest.importorskip("cryptography")
+
 NOW = 2_000_000_000.0
 KEK = "ab" * 32
 

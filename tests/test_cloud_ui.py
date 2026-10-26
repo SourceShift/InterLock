@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import re
 
+import pytest
+
 from interlock.cloud.app import CloudApp
 from interlock.cloud.config import CloudConfig
 from interlock.cloud.crypto import encrypt_preview, parse_kek
@@ -17,6 +19,11 @@ from interlock.cloud.grants import generate_seed
 from interlock.cloud.http import CSP
 from interlock.cloud.store import MemoryStore
 from interlock.cloud.ui import UI_CSP, VIEWPORT
+
+# Preview encryption needs the optional ``cryptography`` dependency. The Python
+# matrix jobs install ``.[dev]`` only, so the fixture below would error there;
+# the cloud job installs ``.[dev,cloud]`` and is where this file really runs.
+pytest.importorskip("cryptography")
 
 NOW = 2_000_000_000.0
 KEK = "cd" * 32

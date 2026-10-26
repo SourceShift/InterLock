@@ -308,19 +308,19 @@ jobs:
           PY
 
       - name: Test
-        # The seven C1 files, including the Postgres cases that IL_CLOUD_TEST_DSN
-        # unlocks. The store-contract file is the same assertions as the
-        # in-memory store, so a divergence between the two implementations
-        # fails here.
+        # Every cloud file, not a hand-kept list: the C1 seven, the C2
+        # enrollment/connector/spool files and the C3 review/grant/UI files.
+        # This is the only job that installs ``.[dev,cloud]``, so it is the only
+        # place the preview-encryption and WebAuthn paths actually execute — the
+        # Python matrix jobs skip those files. The Postgres cases here are
+        # unlocked by IL_CLOUD_TEST_DSN; the store-contract file is the same
+        # assertions as the in-memory store, so a divergence between the two
+        # implementations fails here.
         run: |
           python3 -m pytest -q \
-            tests/test_cloud_oidc.py \
-            tests/test_cloud_sessions.py \
-            tests/test_cloud_stepup.py \
-            tests/test_cloud_rbac.py \
-            tests/test_cloud_admin.py \
-            tests/test_cloud_cross_org.py \
-            tests/test_cloud_store_contract.py
+            tests/test_cloud_*.py \
+            tests/test_reviews_grants.py \
+            tests/test_cloud_receipt_stamp.py
 
   lint:
     name: lint
