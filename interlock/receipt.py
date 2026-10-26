@@ -314,6 +314,7 @@ def verify_chain(
     *,
     verifier: Optional[Verifier] = None,
     head: Optional[str] = None,
+    start_prev: Optional[str] = None,
 ) -> Optional[str]:
     """Walk a receipt chain and report the first break, or None if intact.
 
@@ -325,9 +326,12 @@ def verify_chain(
     ``verifier`` replaces recomputing each tag with ``signer`` and ``key``: pass
     one to check a public-key chain without the signing key. ``head`` is the
     last mac you recorded elsewhere; a chain ending anywhere else had receipts
-    cut off its end, which the linkage alone cannot show.
+    cut off its end, which the linkage alone cannot show. ``start_prev`` is the
+    mac the first receipt must link to - the stored chain head when verifying
+    an incremental batch; it defaults to :data:`GENESIS`, so existing callers
+    that verify a whole log are unchanged.
     """
-    previous_mac = GENESIS
+    previous_mac = GENESIS if start_prev is None else start_prev
     for index, receipt in enumerate(receipts):
         if receipt.prev != previous_mac:
             return "receipt {}: chain break (prev does not match the preceding receipt's mac)".format(

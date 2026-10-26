@@ -210,7 +210,8 @@ def test_a_successful_cycle_uploads_acks_and_persists_both_markers(tmp_path):
     result = connector.run_once()
 
     assert result == {"ok": True, "reviews": 0, "uploaded": 1,
-                      "poll_after": 42, "revoked": False, "error": None}
+                      "receipts_spooled": 0, "poll_after": 42,
+                      "revoked": False, "error": None}
     assert connector.spool.count == 0
     paths = [(method, path.split("?")[0]) for method, path, _b, _h
              in transport.calls]
@@ -433,6 +434,8 @@ def test_status_has_exactly_the_documented_keys_and_no_agent_key(tmp_path):
         "cursor", "grant_seq", "last_ack_seq", "grants_applied",
         "grants_refused", "grants_acked", "last_grant_applied",
         "last_grant_refusal", "revoked", "last_error",
+        "receipts_offset", "receipts_line", "receipts_pending_bytes",
+        "last_receipt_error", "last_receipt_ack", "verification_level",
     }
     assert raw not in json.dumps(status)
     assert status["url"] == "https://cloud.example"

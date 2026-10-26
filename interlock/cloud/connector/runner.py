@@ -40,6 +40,7 @@ from .grants import (
     load_state as load_grant_state,
     public_key_from_config,
 )
+from .receipts import ReceiptBatch, ReceiptTailer, TailerError
 from .reviews import build_record
 from .spool import Spool
 from .transport import Transport, TransportError
@@ -148,6 +149,24 @@ class Connector:
         directory = self._resolve(str(config.get("state_dir") or "state"))
         return directory / "connector.json"
 
+    def receipt_tailer(self) -> Optional[ReceiptTailer]:
+        """The tailer for the configured receipt log, or ``None``.
+
+        The offset lives beside the connector state unless ``receipt_offset``
+        names another path. Configuring no ``receipt_log`` disables receipt
+        upload entirely - the connector never guesses a host log path.
+        """
+        config = self.config or {}
+        log = config.get("receipt_log")
+        if not log:
+            return None
+        offset = config.get("receipt_offset")
+        if not offset:
+            offset = str(self.state_path.parent / "receipt-offset.json")
+        return ReceiptTailer(
+            self._resolve(str(log)), self._resolve(str(offset)),
+            host_id=str(config.get("host_id") or "") or None)
+
     def _load_state(self) -> Dict[str, Any]:
         if self._state is not None:
             return dict(self._state)
@@ -158,6 +177,14 @@ class Connector:
             "last_error": None,
             "poll_after": DEFAULT_POLL_AFTER,
             "last_ack_seq": 0,
+            # C4 receipts: spool batches awaiting a 2xx, so an offset advances
+            # only after the plane acknowledged the exact bytes it carried.
+            "pending_receipt_batches": {},
+            "receipts_offset": 0,
+            "receipts_line": 1,
+            "last_receipt_ack": None,
+            "verification_level": None,
+            "last_receipt_error": None,
         }
         state.update(grant_initial_state())
         try:
@@ -383,6 +410,82 @@ class Connector:
         # C2 moves review metadata and receipts only; policy bodies are C5.
         return "/v1/receipts" if kind == "observability" else "/v1/reviews"
 
+    # -- receipt tailing (FR-032) ---------------------------------------
+    def _spool_receipts(self, state: Dict[str, Any]) -> int:
+        """Frame at most one batch of complete receipt lines into the spool.
+
+        The offset does **not** move here: it moves in
+        :meth:`_ack_receipt_batch` after the plane answers 2xx. While a
+        spooled receipt batch is unacknowledged, no new batch is framed, so a
+        retry re-sends the same bytes instead of splitting them.
+        """
+        config = self.config or {}
+        try:
+            tailer = self.receipt_tailer()
+        except TailerError as exc:
+            state["last_receipt_error"] = redact(str(exc))
+            return 0
+        if tailer is None:
+            return 0
+        if state.get("pending_receipt_batches"):
+            return 0
+        try:
+            batch = tailer.next_batch()
+        except (TailerError, OSError) as exc:
+            state["last_receipt_error"] = redact(str(exc))
+            return 0
+        state["last_receipt_error"] = tailer.last_error
+        state["receipts_offset"] = int(tailer.offset)
+        state["receipts_line"] = int(tailer.line)
+        if not batch:
+            return 0
+        spooled = self.spool.add(
+            "observability", batch.body(tailer.host_id),
+            host=str(config.get("host_id") or "unassigned"),
+            sensor="receipts",
+        )
+        pending = dict(state.get("pending_receipt_batches") or {})
+        pending[spooled.name] = {
+            "end_offset": int(batch.end_offset),
+            "end_line": int(batch.end_line),
+            "count": int(batch.count),
+        }
+        state["pending_receipt_batches"] = pending
+        return batch.count
+
+    def _ack_receipt_batch(self, state: Dict[str, Any], batch: Any,
+                           data: bytes) -> None:
+        """Advance the durable offset after a 2xx and record the plane's ack."""
+        pending = dict(state.get("pending_receipt_batches") or {})
+        entry = pending.pop(batch.name, None)
+        if entry is not None:
+            state["pending_receipt_batches"] = pending
+            end_offset = int(entry.get("end_offset") or 0)
+            end_line = int(entry.get("end_line") or 1)
+            try:
+                tailer = self.receipt_tailer()
+                if tailer is not None:
+                    tailer.commit(ReceiptBatch(
+                        [], end_offset, end_offset, end_line, end_line))
+            except (TailerError, OSError) as exc:
+                state["last_receipt_error"] = redact(str(exc))
+            state["receipts_offset"] = end_offset
+            state["receipts_line"] = end_line
+        try:
+            payload = json.loads(data.decode("utf-8")) if data else {}
+        except (UnicodeDecodeError, ValueError):
+            payload = {}
+        if isinstance(payload, dict):
+            accepted = payload.get("accepted")
+            if isinstance(accepted, int) and not isinstance(accepted, bool):
+                state["last_receipt_ack"] = accepted
+            level = payload.get("verification")
+            if isinstance(level, str):
+                state["verification_level"] = level
+            status = payload.get("status")
+            if status == "fork":
+                state["last_receipt_error"] = "chain_fork"
+
     def run_once(self) -> Dict[str, Any]:
         """One reconcile/upload/poll/heartbeat cycle; never raises for a 4xx."""
         config = self.config
@@ -397,6 +500,7 @@ class Connector:
         errors = []
         reviews = 0
         uploaded = 0
+        receipts_spooled = 0
         revoked = False
         poll_after = int(state.get("poll_after") or DEFAULT_POLL_AFTER)
 
@@ -405,13 +509,23 @@ class Connector:
             if self.on_file(review):
                 reviews += 1
 
-        # 2. Upload queued batches, removing each only after a 2xx.
+        # 1b. Tail the host's receipt log into the spool from the durable
+        #     offset. The offset moves only after step 2 acknowledges it.
+        receipts_spooled = self._spool_receipts(state)
+
+        # 2. Upload queued batches, removing each only after a 2xx. Reviews
+        #    (security) go first so a decision is never starved by a receipt
+        #    backlog: at most three review batches and one receipt batch per
+        #    cycle.
         try:
-            batches = self.spool.peek(limit=50)
+            queued = self.spool.peek(limit=200)
         except Exception as exc:
-            batches = []
+            queued = []
             errors.append(redact(str(exc)))
-        for batch in batches:
+        security = [batch for batch in queued if batch.kind == "security"][:3]
+        observability = [batch for batch in queued
+                         if batch.kind == "observability"][:1]
+        for batch in security + observability:
             try:
                 body = gzip.decompress(batch.path.read_bytes())
             except (OSError, EOFError, ValueError) as exc:
@@ -427,6 +541,8 @@ class Connector:
                 revoked = True
                 break
             if 200 <= status < 300:
+                if batch.sensor == "receipts":
+                    self._ack_receipt_batch(state, batch, data)
                 self.spool.remove(batch)
                 uploaded += 1
             else:
@@ -549,6 +665,7 @@ class Connector:
             "ok": not errors,
             "reviews": reviews,
             "uploaded": uploaded,
+            "receipts_spooled": receipts_spooled,
             "poll_after": poll_after,
             "revoked": False,
             "error": errors[0] if errors else None,
@@ -620,6 +737,25 @@ class Connector:
             and not state.get("revoked")
             and now - float(last_sync) <= CONNECTED_WINDOW
         )
+        receipts = {
+            "receipts_offset": state.get("receipts_offset", 0),
+            "receipts_line": state.get("receipts_line", 1),
+            "receipts_pending_bytes": 0,
+            "last_receipt_error": state.get("last_receipt_error"),
+            "last_receipt_ack": state.get("last_receipt_ack"),
+            "verification_level": state.get("verification_level"),
+        }
+        try:
+            tailer = self.receipt_tailer()
+        except TailerError as exc:
+            tailer = None
+            receipts["last_receipt_error"] = redact(str(exc))
+        if tailer is not None:
+            live = tailer.status()
+            live["last_receipt_error"] = (
+                live.get("last_receipt_error")
+                or state.get("last_receipt_error"))
+            receipts.update(live)
         return redact({
             "connected": connected,
             "last_sync": last_sync,
@@ -640,7 +776,34 @@ class Connector:
             "last_grant_refusal": state.get("last_grant_refusal"),
             "revoked": bool(state.get("revoked")),
             "last_error": state.get("last_error"),
+            **receipts,
         })
+
+    def reset_receipt_offset(self, line_no: int) -> int:
+        """Move the receipt offset to 1-based ``line_no`` (operator recovery).
+
+        Any spooled receipt batch still awaiting an acknowledgement is
+        forgotten: the operator has decided to re-read the log from an earlier
+        line, so that batch must not later pull the offset forward again.
+        """
+        tailer = self.receipt_tailer()
+        if tailer is None:
+            raise TailerError("no receipt_log is configured")
+        offset = tailer.rewind_to(int(line_no))
+        state = self._load_state()
+        # Queued receipt batches carry the bytes the operator is asking to
+        # re-read. Leave one of them in the spool and the next cycle would
+        # upload it ahead of the re-read batch and re-advance the offset past
+        # the recovery point.
+        for batch in self.spool.batches():
+            if batch.sensor == "receipts":
+                self.spool.remove(batch)
+        state["pending_receipt_batches"] = {}
+        state["receipts_offset"] = int(offset)
+        state["receipts_line"] = int(tailer.line)
+        state["last_receipt_error"] = None
+        self._save_state(state)
+        return int(offset)
 
     def leave(self, *, confirmed: bool = True) -> Dict[str, Any]:
         """Forget the enrollment; the spool and state stay for the operator."""

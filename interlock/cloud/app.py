@@ -18,6 +18,7 @@ from . import db
 from .api.auth_routes import register as register_auth_routes
 from .api.grant_routes import register as register_grant_routes
 from .api.host_routes import register as register_host_routes
+from .api.receipt_routes import register as register_receipt_routes
 from .api.review_routes import register as register_review_routes
 from .ui import register as register_ui_routes
 from .crypto import parse_kek
@@ -53,6 +54,16 @@ from .store import CrossOrgAccess, MemoryStore, PostgresStore
 
 #: Refuse a request body larger than this before reading a byte of it.
 MAX_BODY_BYTES = 64 * 1024
+
+#: Receipt and checkpoint batches are the two large bodies the plane accepts.
+#: Resolved per route before the length check, so the 64 KiB default still
+#: governs every other route.
+RECEIPT_BODY_BYTES = 8 * 1024 * 1024
+
+_RECEIPT_ROUTES = frozenset((
+    ("POST", "/v1/receipts"),
+    ("POST", "/v1/checkpoints"),
+))
 
 #: An inbound request id is echoed only when it looks like one we would mint.
 REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -130,6 +141,7 @@ class CloudApp:
         register_host_routes(self)
         register_review_routes(self)
         register_grant_routes(self)
+        register_receipt_routes(self)
         register_ui_routes(self)
 
     # -- C3 signing and encryption material -----------------------------
@@ -225,21 +237,24 @@ class CloudApp:
         request_id = request_id_for(headers)
         header_map_local = _header_map(headers)
 
+        path = scope.get("path") or "/"
+        method = str(scope.get("method") or "GET").upper()
+        body_limit = (RECEIPT_BODY_BYTES
+                      if (method, path) in _RECEIPT_ROUTES else MAX_BODY_BYTES)
+
         declared = header_map_local.get("content-length")
         if declared is not None:
             try:
                 size: Optional[int] = int(declared)
             except ValueError:
                 size = None
-            if size is not None and size > MAX_BODY_BYTES:
+            if size is not None and size > body_limit:
                 await self._send(send, error_response(
                     413, "payload_too_large",
-                    "request body exceeds {} bytes".format(MAX_BODY_BYTES),
+                    "request body exceeds {} bytes".format(body_limit),
                 ), request_id)
                 return
 
-        path = scope.get("path") or "/"
-        method = str(scope.get("method") or "GET").upper()
         route, params, _template = self._match(path)
         if route is None:
             await self._send(send, error_response(
@@ -253,7 +268,7 @@ class CloudApp:
             return
 
         try:
-            body = await read_body(receive, MAX_BODY_BYTES)
+            body = await read_body(receive, body_limit)
         except PayloadTooLarge as exc:
             await self._send(send, error_response(
                 413, "payload_too_large", str(exc)), request_id)

@@ -48,7 +48,7 @@ def _live_key(app: Any, request: Request) -> Any:
     if key is None or key.revoked_at is not None:
         raise AgentRevoked("agent key revoked")
     host = app.store.host_by_id(context.org_id, context.host_id)
-    if host is None or host.state != "active":
+    if host is None or host.state not in ("active", "ingest_frozen"):
         raise AgentAuthError("host is not active")
     return key
 

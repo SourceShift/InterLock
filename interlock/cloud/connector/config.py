@@ -40,9 +40,12 @@ REQUIRED_FIELDS = (
 STRING_FIELDS = tuple(field for field in REQUIRED_FIELDS
                       if field != "plane_public_keys")
 
-#: Optional C3 fields. ``share_usernames`` (default false) lets a deployment
-#: upload the plain requester instead of the host-keyed HMAC label.
-OPTIONAL_FIELDS = ("share_usernames",)
+#: Optional C3/C4 fields. ``share_usernames`` (default false) lets a
+#: deployment upload the plain requester instead of the host-keyed HMAC label.
+#: ``receipt_log`` names the host's newline-delimited receipt file; when it is
+#: absent the connector tails nothing. ``receipt_offset`` overrides where the
+#: durable byte offset lives (default: beside the connector state).
+OPTIONAL_FIELDS = ("share_usernames", "receipt_log", "receipt_offset")
 
 #: Loopback hosts may use plain http; everything else must be https.
 LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
@@ -162,6 +165,9 @@ class CloudHome:
             raise HomeError("plane_public_keys must be an object")
         if "share_usernames" in doc and not isinstance(doc["share_usernames"], bool):
             raise HomeError("share_usernames must be a boolean")
+        for field in ("receipt_log", "receipt_offset"):
+            if field in doc and not isinstance(doc[field], str):
+                raise HomeError("{} must be a string".format(field))
         if parse_agent_key(doc["agent_key"]) is None:
             raise HomeError("agent_key is not an ilk_ key")
         CloudHome._validate_url(str(doc["url"]))

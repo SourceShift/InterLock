@@ -142,7 +142,10 @@ def agent_authenticate(store: Any, header: Any, *,
         raise AgentAuthError("agent key expired")
 
     host = store.host_by_id(key.org_id, key.host_id)
-    if host is None or host.state != "active":
+    # ``ingest_frozen`` stops receipt ingest only (FR-036). The key stays
+    # authenticated so the connector can still poll grants and heartbeat,
+    # which is exactly what lets an administrator unfreeze it later.
+    if host is None or host.state not in ("active", "ingest_frozen"):
         raise AgentAuthError("host is not active")
 
     scopes = tuple(scope for scope in key.scopes if scope in KNOWN_SCOPES)

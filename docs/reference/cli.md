@@ -500,60 +500,75 @@ Enroll this host with an interlock cloud plane, and run the connector.
 interlock cloud enroll --url https://cloud.example --token TOKEN
 interlock cloud run --once
 interlock cloud status --json
+interlock cloud leave --yes
+IL_CLOUD_ADMIN_COOKIE=... IL_CLOUD_ADMIN_CSRF=...       interlock cloud keys rotate --host host_...
 ```
 
 The connector is outbound-only: it polls the plane for reviews, grants and
-policy manifests, and the plane cannot dial this host. `enroll`, `run`,
-`status` and `leave` are implemented; `policy` stays a stub until policy
-distribution ships.
+policy manifests, and the plane cannot dial this host. `policy` remains a
+stub until C5; it prints a notice and exits 3.
 
 `enroll` consumes a single-use enrollment token, writes an Ed25519 host seed
 and `cloud.json` under the connector home (`$IL_CLOUD_HOME`, default
 `~/.interlock`) with mode `0600`, and prints the host id and agent key id -
 never the agent key. `run` reconciles reviews from the local queue, uploads
 the masked review batch, long-polls for grants, verifies and applies them,
-acknowledges, and heartbeats; `--once` does one cycle and exits non-zero when
-the sync failed. `status` reports connectivity, spool depth, queue lag,
-revocation and the grant counters (`grants_applied`, `grants_refused`,
-`grants_acked`, `last_grant_refusal`) without printing credentials. `leave`
-removes `cloud.json` and the seed and prints what it left on disk.
+acknowledges, heartbeats and ships receipts; `--once` does one cycle and
+exits non-zero when the sync failed. `status` reports connectivity, spool
+depth, queue lag, revocation and the grant counters (`grants_applied`,
+`grants_refused`, `grants_acked`, `last_grant_refusal`) without printing
+credentials. `leave` removes `cloud.json` and the seed and prints what it
+left on disk.
 
 The uploaded review body is allow-listed on both sides: the masked preview,
 the argument digest, the mask counts and metadata - never the raw event or
-arguments. The connector sets `share_usernames: true` in `cloud.json` when the
-org wants the plain requester name; otherwise it sends a host-keyed HMAC label.
+arguments. The connector sets `share_usernames: true` in `cloud.json` when
+the org wants the plain requester name; otherwise it sends a host-keyed HMAC
+label.
 
 A decision on the plane is a signed Ed25519 grant, and the host releases the
 call only after verifying it - binding, org, host, signature, per-host
-`seq`/`prev` chain, expiry and an unseen grant id. A refused grant leaves the
-review pending and is reported on the next acknowledgement. A released remote
-approval appears on the receipt as `approval="cloud:<grant_id>"`.
+`seq`/`prev` chain, expiry and an unseen grant id. A refused grant leaves
+the review pending and is reported on the next acknowledgement. A released
+remote approval appears on the receipt as `approval="cloud:<grant_id>"`.
 
 The plane needs two pieces of C3 material, both read at use time and never
 written to the database or a log: `IL_CLOUD_APPROVAL_KEY_FILE`, a hex 32-byte
 Ed25519 approval seed in a `0600` file (enrolling hosts pin its public half),
-and `IL_CLOUD_PREVIEW_KEK`, a hex or base64 key used to encrypt masked previews
-per org. Operators review and decide in the hosted, mobile-first UI at
-`/reviews`; every preview read is an audited disclosure and a decision needs a
-step-up no older than 300 seconds.
+and `IL_CLOUD_PREVIEW_KEK`, a hex or base64 key used to encrypt masked
+previews per org. Operators review and decide in the hosted, mobile-first UI at
+`/reviews`; every preview read is an audited disclosure and a decision needs
+a step-up no older than 300 seconds.
 
 `keys rotate|revoke` calls the admin API and needs an operator session, taken
-from `IL_CLOUD_ADMIN_COOKIE` and `IL_CLOUD_ADMIN_CSRF` - never from argv, which
-is visible in `ps` and shell history. The CLI never prompts for a password;
-without a session it prints how to rotate or revoke from the web UI instead.
+from `IL_CLOUD_ADMIN_COOKIE` and `IL_CLOUD_ADMIN_CSRF` - never from argv,
+which is visible in `ps` and shell history. The CLI never prompts for a
+password; without a session it prints how to rotate or revoke from the web UI
+instead.
 
-Exit codes: 0 ok, 1 the action failed, 2 no connector config, 3 the action is
-not implemented yet, 64 the command line was wrong (no action, or one that
-does not exist).
+Receipts leave the host without ever touching a verdict: the connector tails
+the host receipt log from a durable byte offset, batches only complete lines,
+and advances the offset only after the plane answers 2xx, so uploads are
+at-least-once and the plane deduplicates by mac. `status` reports that
+offset, its line number, the pending bytes and the last framing error;
+`status --reset-offset LINE --yes` is operator recovery only, for a log that
+was rotated under the connector. A receipt whose `prev` does not continue
+the plane's head is a fork: the plane freezes receipt ingest for that host and
+audits the break, while grants, reviews and heartbeats keep working until an
+admin unfreezes it with a step-up and a reason.
+
+Exit codes: 0 done, 1 failure, 2 missing or unsafe configuration, 3 not
+implemented yet, 64 the command line was wrong. The agent key is never asked
+for on the command line and is printed only by an explicit rotate that hands
+it back once.
 
 ```text
 usage: interlock cloud [-h] ACTION ...
-usage: interlock cloud enroll [-h] [--url URL] [--token TOKEN] [--name NAME]
-                              [--home DIR]
+usage: interlock cloud enroll [-h] [--url URL] [--token TOKEN] [--name NAME] [--home DIR]
 usage: interlock cloud run [-h] [--once] [--url URL] [--home DIR] [--verbose]
-usage: interlock cloud status [-h] [--json] [--home DIR]
+usage: interlock cloud status [-h] [--json] [--reset-offset LINE] [--yes] [--home DIR]
 usage: interlock cloud leave [-h] [--yes] [--home DIR]
-usage: interlock cloud keys [-h] [--host HOST] [--key KEY] [--url URL]
-                            [--json] [--home DIR] [rotate|revoke]
 usage: interlock cloud policy [-h] [--policy FILE]
+usage: interlock cloud keys [-h] [--host HOST] [--key KEY] [--url URL] [--json] [--home DIR]
+                            [rotate|revoke]
 ```

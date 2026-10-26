@@ -8,8 +8,57 @@
       interlock cloud keys rotate --host host_...
 
 The connector is outbound-only: it polls the plane for reviews, grants and
-policy manifests, and the plane cannot dial this host. ``policy`` remains a
+policy manifests, and the plane cannot dial this host. `policy` remains a
 stub until C5; it prints a notice and exits 3.
+
+`enroll` consumes a single-use enrollment token, writes an Ed25519 host seed
+and `cloud.json` under the connector home (`$IL_CLOUD_HOME`, default
+`~/.interlock`) with mode `0600`, and prints the host id and agent key id -
+never the agent key. `run` reconciles reviews from the local queue, uploads
+the masked review batch, long-polls for grants, verifies and applies them,
+acknowledges, heartbeats and ships receipts; `--once` does one cycle and
+exits non-zero when the sync failed. `status` reports connectivity, spool
+depth, queue lag, revocation and the grant counters (`grants_applied`,
+`grants_refused`, `grants_acked`, `last_grant_refusal`) without printing
+credentials. `leave` removes `cloud.json` and the seed and prints what it
+left on disk.
+
+The uploaded review body is allow-listed on both sides: the masked preview,
+the argument digest, the mask counts and metadata - never the raw event or
+arguments. The connector sets `share_usernames: true` in `cloud.json` when
+the org wants the plain requester name; otherwise it sends a host-keyed HMAC
+label.
+
+A decision on the plane is a signed Ed25519 grant, and the host releases the
+call only after verifying it - binding, org, host, signature, per-host
+`seq`/`prev` chain, expiry and an unseen grant id. A refused grant leaves
+the review pending and is reported on the next acknowledgement. A released
+remote approval appears on the receipt as `approval="cloud:<grant_id>"`.
+
+The plane needs two pieces of C3 material, both read at use time and never
+written to the database or a log: `IL_CLOUD_APPROVAL_KEY_FILE`, a hex 32-byte
+Ed25519 approval seed in a `0600` file (enrolling hosts pin its public half),
+and `IL_CLOUD_PREVIEW_KEK`, a hex or base64 key used to encrypt masked
+previews per org. Operators review and decide in the hosted, mobile-first UI at
+`/reviews`; every preview read is an audited disclosure and a decision needs
+a step-up no older than 300 seconds.
+
+`keys rotate|revoke` calls the admin API and needs an operator session, taken
+from `IL_CLOUD_ADMIN_COOKIE` and `IL_CLOUD_ADMIN_CSRF` - never from argv,
+which is visible in `ps` and shell history. The CLI never prompts for a
+password; without a session it prints how to rotate or revoke from the web UI
+instead.
+
+Receipts leave the host without ever touching a verdict: the connector tails
+the host receipt log from a durable byte offset, batches only complete lines,
+and advances the offset only after the plane answers 2xx, so uploads are
+at-least-once and the plane deduplicates by mac. `status` reports that
+offset, its line number, the pending bytes and the last framing error;
+`status --reset-offset LINE --yes` is operator recovery only, for a log that
+was rotated under the connector. A receipt whose `prev` does not continue
+the plane's head is a fork: the plane freezes receipt ingest for that host and
+audits the break, while grants, reviews and heartbeats keep working until an
+admin unfreezes it with a step-up and a reason.
 
 Exit codes: 0 done, 1 failure, 2 missing or unsafe configuration, 3 not
 implemented yet, 64 the command line was wrong. The agent key is never asked
@@ -54,6 +103,10 @@ def add_arguments(parser) -> None:
 
     status = sub.add_parser("status", help="report connector and plane state")
     status.add_argument("--json", action="store_true", help="print JSON")
+    status.add_argument("--reset-offset", type=int, metavar="LINE",
+                        help="re-read the receipt log from LINE (operator recovery)")
+    status.add_argument("--yes", action="store_true",
+                        help="confirm --reset-offset without a prompt")
     status.add_argument("--home", metavar="DIR",
                         help="connector home (default: $IL_CLOUD_HOME)")
 
@@ -194,7 +247,22 @@ def _status(args) -> int:
         return EXIT_NOT_CONFIGURED
     try:
         home.load()
-        status = _connector(home).status()
+        connector = _connector(home)
+        reset = getattr(args, "reset_offset", None)
+        if reset is not None:
+            if not getattr(args, "yes", False):
+                sys.stderr.write(
+                    "interlock cloud status: --reset-offset changes the durable "
+                    "receipt offset; pass --yes to confirm\n")
+                return EXIT_USAGE
+            offset = connector.reset_receipt_offset(int(reset))
+            if getattr(args, "json", False):
+                _print({"receipts_offset": offset, "receipts_line": int(reset)})
+            else:
+                sys.stdout.write(
+                    "receipt offset: line {} (byte {})\n".format(reset, offset))
+            return EXIT_OK
+        status = connector.status()
     except PermissionError as exc:
         return _fail(str(exc))
     except (ValueError, OSError) as exc:
@@ -211,6 +279,14 @@ def _status(args) -> int:
         status["spool_batches"], status["spool_bytes"],
         status["dropped_batches"]))
     sys.stdout.write("cursor:    {}\n".format(status["cursor"]))
+    sys.stdout.write("receipts:  line {}, byte {}, {} pending\n".format(
+        status.get("receipts_line", 1), status.get("receipts_offset", 0),
+        status.get("receipts_pending_bytes", 0)))
+    if status.get("verification_level"):
+        sys.stdout.write("verify:    {}\n".format(status["verification_level"]))
+    if status.get("last_receipt_error"):
+        sys.stdout.write("receipt error: {}\n".format(
+            status["last_receipt_error"]))
     if status.get("revoked"):
         sys.stdout.write("revoked:   yes\n")
     if status.get("last_error"):

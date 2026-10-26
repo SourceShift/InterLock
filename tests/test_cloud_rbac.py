@@ -123,6 +123,8 @@ def test_agent_routes_are_literal_and_separate_from_the_human_matrix():
         ("POST", "/v1/reviews"): None,
         ("GET", "/v1/grants"): None,
         ("POST", "/v1/grants/ack"): None,
+        ("POST", "/v1/receipts"): "ingest:receipts",
+        ("POST", "/v1/checkpoints"): "ingest:receipts",
     }
     for method, route in rbac.AGENT_ROUTES:
         assert (method, route) not in rbac.PERMISSIONS

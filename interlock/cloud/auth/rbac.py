@@ -69,6 +69,16 @@ PERMISSIONS: Dict[Tuple[str, str], Set[str]] = {
     ("GET", "/reviews/{id}"): {"owner", "admin", "reviewer", "auditor"},
     ("POST", "/reviews/{id}/decision"): {"owner", "admin", "reviewer"},
     ("POST", "/reviews/{id}/step-up"): {"owner", "admin", "reviewer"},
+    # C4: auditors (and admins) search receipts and export a verified chain.
+    # Auditors may never read a preview or raw arguments; the route has no
+    # field that could carry them.
+    ("GET", "/v1/audit"): {"owner", "admin", "auditor"},
+    ("GET", "/v1/audit/export"): {"owner", "admin", "auditor"},
+    # Retention is an owner action: it deletes tenant data and runs audited.
+    ("POST", "/v1/admin/retention/run"): {"owner"},
+    # Unfreezing receipt ingest after a fork is a deliberate, audited
+    # administrator action with a required reason.
+    ("POST", "/v1/hosts/{id}/unfreeze"): {"owner", "admin"},
 }
 
 #: (method, literal route) -> required agent scope, or ``None`` when any
@@ -82,6 +92,10 @@ AGENT_ROUTES: Dict[Tuple[str, str], Optional[str]] = {
     ("POST", "/v1/reviews"): None,
     ("GET", "/v1/grants"): None,
     ("POST", "/v1/grants/ack"): None,
+    # C4 connector surface. The key must carry the ingest scope; both routes
+    # are scoped to the authenticated key's host, never a body-supplied one.
+    ("POST", "/v1/receipts"): "ingest:receipts",
+    ("POST", "/v1/checkpoints"): "ingest:receipts",
 }
 
 

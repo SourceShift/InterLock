@@ -29,6 +29,7 @@ from ..auth.stepup import StepUpError, StepUpService
 from ..enrollment import AGENT_SCOPES, generate_agent_key
 from ..http import ApiError, Request, Response, json_response, parse_json_body
 from ..identity import is_public_key_hex, key_id as derive_key_id
+from ..receipts import CHECKPOINT_MAX_AGE
 from ..store import Host, keys_version
 
 #: How long the connector should wait between polls, in seconds.
@@ -104,6 +105,22 @@ def _host_view(app: Any, host: Host) -> Dict[str, Any]:
     # acknowledged. Both are plane-side counters, never a host-supplied value.
     view["grant_seq"] = int(app.store.grant_head(host.org_id, host.id)["seq"])
     view["last_ack_seq"] = int(app.store.last_ack_seq(host.org_id, host.id))
+    # C4 chain state: the verification level is never a boolean (FR-033 ..
+    # FR-035). A linkage-only chain whose newest signed checkpoint is older
+    # than 24 hours is reported as ``receipts_unverified``. Before the first
+    # checkpoint, the time the head moved stands in for "when we last saw
+    # evidence"; a host that never ingested anything stays unverified.
+    head = app.store.receipt_head(host.org_id, host.id)
+    level = str(head.get("verification") or "receipts_unverified")
+    if level == "linkage_only":
+        attested = head.get("last_checkpoint_at") or head.get("updated_at")
+        if attested is None \
+                or _now(app) - float(attested) > CHECKPOINT_MAX_AGE:
+            level = "receipts_unverified"
+    view["verification"] = level
+    view["receipts_head"] = head.get("head_mac")
+    view["receipts_count"] = int(head.get("count") or 0)
+    view["last_checkpoint_at"] = _iso(head.get("last_checkpoint_at"))
     return view
 
 
