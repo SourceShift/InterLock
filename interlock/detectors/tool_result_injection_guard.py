@@ -8,7 +8,8 @@ coming BACK. This rule fires only on ``phase="result"`` events - on a
 result-phase event ``event.args`` carries the payload (a dict result as
 itself, any other shape under ``"result"``) - and scans every top-level
 string payload value for instruction-override signatures before the caller
-receives them.
+receives them. A signature has to begin a word, so a field name that merely
+contains one (``themeOverride:``) is not treated as an instruction.
 
 Non-str payload values (None, int, nested dicts/lists) are skipped rather
 than coerced, so structural data never produces a spurious match. With
@@ -87,12 +88,21 @@ def tool_result_injection_guard(
                 continue
             text = value.lower()
             for pattern in patterns:
-                if pattern in text:
-                    return Decision.block(
-                        reason="{}: {}".format(POLICY_ID, pattern),
-                        policy_id=POLICY_ID,
-                        attributed_to=name,  # the payload key NAME, never the value
-                    )
+                at = text.find(pattern)
+                while at != -1:
+                    # A signature has to start a word: ``themeOverride:`` and
+                    # ``noSystemPrompt:`` are field names, not instructions.
+                    # The boundary costs no detection - a smuggled instruction
+                    # starts a word whatever punctuation precedes it - and the
+                    # substring search stays, so a pathological payload is not
+                    # scanned by a regex per pattern.
+                    if at == 0 or not (text[at - 1].isalnum() or text[at - 1] == "_"):
+                        return Decision.block(
+                            reason="{}: {}".format(POLICY_ID, pattern),
+                            policy_id=POLICY_ID,
+                            attributed_to=name,  # the payload key NAME, never the value
+                        )
+                    at = text.find(pattern, at + 1)
         return None
 
     rule.phase = "result"  # engine-level phase separation: result-side only

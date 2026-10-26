@@ -11,6 +11,11 @@ breaking changes land.
 
 ### Fixed
 
+- `tool_result_injection` no longer fires on a signature that starts inside a
+  word. `themeOverride: 'light'` and `noSystemPrompt: true` are field names,
+  not instructions, but the substring scan blocked them and withheld ordinary
+  source and config from the agent that read them; a signature now has to
+  begin a word, so `override: …` after a newline or punctuation still blocks.
 - Mesh reports name only published rule ids. A receipt produced by a rule of
   the operator's own (`block-prod-db-writes`) contributed its id to counts,
   digests, fingerprints and samples, which the guide promised stayed on the
