@@ -21,6 +21,7 @@ export function ReviewsScreen({ v }: { v: Vals }) {
             ))}
           </div>
           <span style={{ flex: "1" }}></span>
+          {v.extras.reviewAlerts}
           <button onClick={v.openKeys} style={{ display: "inline-flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--il-fg2)", padding: "5px 10px", borderRadius: "7px", border: "1px solid var(--il-rule)", background: "transparent", cursor: "pointer" }}>
             <span style={{ fontFamily: "'Martian Mono',monospace", fontSize: "10px", padding: "0 5px", border: "1px solid var(--il-rule2)", borderRadius: "4px" }}>
               ?

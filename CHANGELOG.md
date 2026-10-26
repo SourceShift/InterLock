@@ -30,6 +30,13 @@ breaking changes land.
 
 ### Added
 
+- The console can raise a desktop notification when a call is held for
+  approval: the **Desktop alerts** toggle on the Reviews screen asks the
+  browser for permission, then announces each newly filed review once, with
+  the tool, rule and reason; clicking the notification opens that review. The
+  first run adopts what is already queued instead of firing a burst, two open
+  tabs sharing a browser do not announce the same review twice, and nothing
+  is sent off the machine — the seen list is `localStorage` in that browser.
 - A filed review can now send one outbound ping: set
   `INTERLOCK_REVIEW_WEBHOOK` (plus `INTERLOCK_REVIEW_WEBHOOK_FORMAT=slack|json`
   and `INTERLOCK_REVIEW_CONSOLE_URL`) and the hook posts the review id, tool,

@@ -8,9 +8,9 @@
  * with mock data; this is that class, with the mocks replaced by the server.
  */
 import * as api from "./api";
-import { ApiError } from "./api";
+import { ApiError, type Review } from "./api";
 import { THEMES, jsonErrorLine, paramText, paramValue, type ThemeName } from "./format";
-import { initialData, initialState, parseHash, type Data, type Pg, type State } from "./model";
+import { initialData, initialState, parseHash, type Alerts, type Data, type Pg, type State } from "./model";
 import type { Actions } from "./vals";
 
 const POLL_FAST = 5000;
@@ -18,6 +18,33 @@ const POLL_DOCTOR = 15000;
 const POLL_ACTIVITY = 10000;
 /** A receipt makes the chain badge stale; re-verify at most this often. */
 const VERIFY_REFRESH_MS = 2000;
+
+/** Review ids this browser has already been told about, newest last. */
+const SEEN_KEY = "interlock.alerts.seen";
+const SEEN_MAX = 200;
+
+/**
+ * Null when the browser never stored a list: that is the first run here, and
+ * every review already queued is adopted silently instead of announced.
+ */
+function readSeen(): string[] | null {
+  try {
+    const raw = localStorage.getItem(SEEN_KEY);
+    if (raw === null) return null;
+    const ids: unknown = JSON.parse(raw);
+    return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : null;
+  } catch {
+    return null; // storage blocked: stay silent rather than re-announce every poll
+  }
+}
+
+function writeSeen(ids: string[]) {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify([...new Set(ids)].slice(-SEEN_MAX)));
+  } catch {
+    /* not persisted; the next read treats this as a first run */
+  }
+}
 
 function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number) {
   let t: ReturnType<typeof setTimeout> | undefined;
@@ -195,9 +222,97 @@ export class ConsoleStore {
     try {
       const r = await api.fetchReviews();
       this.data({ reviews: r.reviews, reviewsConfigured: r.configured });
+      this.announceNewReviews(r.reviews);
     } catch {
       /* stale is fine: polled again */
     }
+  }
+
+  /**
+   * Desktop alerts for reviews this browser has not seen yet. The seen list
+   * lives in localStorage so two open tabs do not announce the same call
+   * twice; an empty first run adopts what is already queued instead of
+   * firing a notification per old review.
+   */
+  private announceNewReviews(reviews: Review[]) {
+    const pending = reviews.filter((r) => r.status === "pending");
+    const known = readSeen();
+    if (known === null) {
+      writeSeen(pending.map((r) => r.id));
+      return;
+    }
+    const seen = new Set(known);
+    const fresh = pending.filter((r) => !seen.has(r.id));
+    if (fresh.length) writeSeen([...known, ...pending.map((r) => r.id)]);
+    if (!fresh.length || this.S.alerts !== "on") return;
+    fresh.slice(0, 3).forEach((r) => this.notifyReview(r));
+    if (fresh.length > 3) this.notifyMore(fresh.length - 3);
+  }
+
+  private notifyReview(r: Review) {
+    try {
+      const n = new Notification("interlock: a call is waiting for approval", {
+        body: r.action + " · " + r.policy_id + "\n" + r.reason,
+        tag: r.id, // a second tab's copy of the same review replaces, not stacks
+        requireInteraction: true,
+      });
+      n.onclick = () => {
+        window.focus();
+        window.location.hash = "#/reviews/" + encodeURIComponent(r.id);
+        n.close();
+      };
+    } catch {
+      /* the browser can refuse mid-flight; the badge and the queue still say so */
+    }
+  }
+
+  private notifyMore(rest: number) {
+    try {
+      new Notification("interlock: " + rest + " more review" + (rest === 1 ? "" : "s") + " waiting", {
+        body: "Open the console to decide them.",
+        tag: "interlock-more",
+      });
+    } catch {
+      /* same as above */
+    }
+  }
+
+  private async toggleAlerts() {
+    if (this.S.alerts === "on") {
+      this.setAlerts("off");
+      return;
+    }
+    if (typeof Notification === "undefined") {
+      this.set({ alerts: "unsupported" });
+      return;
+    }
+    let permission = Notification.permission;
+    if (permission === "default") {
+      try {
+        permission = await Notification.requestPermission();
+      } catch {
+        permission = Notification.permission;
+      }
+    }
+    if (permission !== "granted") {
+      this.setAlerts(permission === "denied" ? "denied" : "off");
+      return;
+    }
+    this.setAlerts("on");
+    // Enabling alerts on a queue that already holds calls should not stay
+    // silent until the next one arrives; announce what is waiting, once.
+    const pending = this.D.reviews.filter((r) => r.status === "pending");
+    pending.slice(0, 3).forEach((r) => this.notifyReview(r));
+    writeSeen(pending.map((r) => r.id));
+  }
+
+  private setAlerts(alerts: Alerts) {
+    try {
+      localStorage.setItem("interlock.alerts", alerts === "on" ? "on" : "off");
+    } catch {
+      /* not persisted */
+    }
+    this.set({ alerts });
   }
 
   private async loadVerify() {
@@ -847,6 +962,7 @@ export class ConsoleStore {
       }
     },
     decide: (kind) => void this.decide(kind),
+    toggleAlerts: () => void this.toggleAlerts(),
     doUnlock: () => void this.doUnlock(),
     lockClick: () => (this.D.session && !this.D.session.locked ? void this.relock() : this.set({ unlockOpen: true })),
     relock: () => void this.relock(),

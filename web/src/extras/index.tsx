@@ -462,7 +462,46 @@ function DetectorHits({ S, D, A }: { S: State; D: Data; A: Actions }) {
   );
 }
 
+// --- desktop alerts toggle (reviews header) ---------------------------------------------
+
+function ReviewAlerts({ S, A }: { S: State; A: Actions }) {
+  if (S.alerts === "unsupported") return null;
+  const on = S.alerts === "on";
+  const denied = S.alerts === "denied";
+  const hint = denied
+    ? "The browser blocked notifications for this site. Allow them in the site settings, then reload."
+    : on
+      ? "A desktop notification fires when a new call is held for approval. Click it to open that review."
+      : "Get a desktop notification when a new call is held for approval.";
+  return (
+    <button
+      onClick={A.toggleAlerts}
+      disabled={denied}
+      aria-pressed={on}
+      data-testid="review-alerts"
+      title={hint}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "8px",
+        fontSize: "12px",
+        color: on ? "var(--il-escalate)" : "var(--il-fg2)",
+        padding: "5px 10px",
+        borderRadius: "7px",
+        border: "1px solid " + (on ? "color-mix(in oklch,var(--il-escalate) 45%,transparent)" : "var(--il-rule)"),
+        background: "transparent",
+        cursor: denied ? "not-allowed" : "pointer",
+        opacity: denied ? ".55" : "1",
+      }}
+    >
+      <span aria-hidden="true">{on ? "●" : "○"}</span>
+      {denied ? "Alerts blocked" : "Desktop alerts"}
+    </button>
+  );
+}
+
 export interface Extras {
+  reviewAlerts: ReactNode;
   receiptCall: ReactNode;
   realCalls: ReactNode;
   backtest: ReactNode;
@@ -473,6 +512,7 @@ export interface Extras {
 
 export function renderExtras(S: State, D: Data, A: Actions): Extras {
   return {
+    reviewAlerts: <ReviewAlerts S={S} A={A} />,
     receiptCall: <ReceiptCall S={S} D={D} A={A} />,
     realCalls: <RealCalls S={S} D={D} A={A} />,
     backtest: <Backtest S={S} D={D} A={A} />,

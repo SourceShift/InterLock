@@ -64,6 +64,9 @@ PATCHES = [
     ("<sc-if value=\"{{ cd.has }}\">", "<il-extra name=\"sweep\"></il-extra>\n<sc-if value=\"{{ cd.has }}\">"),
     ("</sc-for>\n</div>\n</sc-for>\n<div style=\"display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:1.65",
      "</sc-for>\n</div>\n</sc-for>\n<il-extra name=\"detectorHits\"></il-extra>\n<div style=\"display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:1.65"),
+    # Reviews header: the desktop-alerts toggle sits beside the shortcuts button.
+    ("<button onClick=\"{{ openKeys }}\"",
+     "<il-extra name=\"reviewAlerts\"></il-extra>\n<button onClick=\"{{ openKeys }}\""),
     ("<a href=\"#/policy\" style=\"font-size:12.5px;font-weight:500;padding:6px 11px;border-radius:7px;border:1px solid var(--il-rule2);color:var(--il-fg);text-decoration:none\">Review starter policy</a>",
      "<a href=\"#/policy/starter\" style=\"font-size:12.5px;font-weight:500;padding:6px 11px;border-radius:7px;border:1px solid var(--il-rule2);color:var(--il-fg);text-decoration:none\">Review starter policy</a>"),
 ]

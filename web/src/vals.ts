@@ -61,6 +61,7 @@ export interface Actions {
   closeReceipt(): void;
   toggleLive(): void;
   decide(kind: "approve" | "reject" | "revoke"): void;
+  toggleAlerts(): void;
   doUnlock(): void;
   lockClick(): void;
   relock(): void;

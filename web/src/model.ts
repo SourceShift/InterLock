@@ -50,6 +50,8 @@ export function parseHash(hash: string): Route {
 }
 
 export type Win = "30m" | "24h" | "7d";
+/** Desktop alerts for new reviews; the browser holds the real permission. */
+export type Alerts = "unsupported" | "off" | "on" | "denied";
 export type TailKind = "connecting" | "live" | "paused" | "disconnected" | "reset";
 
 export interface PgRule {
@@ -103,6 +105,7 @@ export interface State {
   busy: "approve" | "reject" | "revoke" | null;
   flash: string;
   copied: string;
+  alerts: Alerts;
   // policy
   policyText: string;
   polTab: "rules" | "edit" | "overlays" | "pack" | "backtest";
@@ -216,6 +219,18 @@ export const initialState = (): State => ({
   busy: null,
   flash: "",
   copied: "",
+  alerts: (() => {
+    if (typeof Notification === "undefined") return "unsupported" as const;
+    const wanted = (() => {
+      try {
+        return localStorage.getItem("interlock.alerts") === "on";
+      } catch {
+        return false;
+      }
+    })();
+    if (Notification.permission === "denied") return "denied" as const;
+    return wanted && Notification.permission === "granted" ? ("on" as const) : ("off" as const);
+  })(),
   policyText: "",
   polTab: "rules",
   check: null,
