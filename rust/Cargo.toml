@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 interlock_engine = { path = "engine" }
 
 [dependencies.pyo3]
-version = "0.24"
+version = "0.30"
 # abi3-py39 builds against the stable ABI, minimum Python 3.9, matching the
 # interlock-guard package's requires-python. One wheel then loads on 3.9+.
 features = ["extension-module", "abi3-py39"]
