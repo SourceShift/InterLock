@@ -16,7 +16,14 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tup
 
 from . import db
 from .api.auth_routes import register as register_auth_routes
+from .api.host_routes import register as register_host_routes
 from .auth import rbac
+from .auth.agent import (
+    AgentAuthError,
+    AgentRevoked,
+    agent_authenticate,
+    require_scope,
+)
 from .auth.oidc import OIDCClient
 from .auth.sessions import SESSION_COOKIE, SessionManager, Unauthenticated
 from .auth.stepup import StepUpError
@@ -105,6 +112,7 @@ class CloudApp:
         #: ``(compiled, template, {method: handler})`` in registration order.
         self._patterns: List[Tuple[Any, str, Dict[str, Handler]]] = []
         register_auth_routes(self)
+        register_host_routes(self)
 
     # -- route registration --------------------------------------------
     def add_route(self, path: str, method: str, handler: Handler) -> None:
@@ -229,6 +237,8 @@ class CloudApp:
             result = await handler(request)
         except ApiError as exc:
             result = error_response(exc.status, exc.code, exc.message)
+        except (AgentAuthError, AgentRevoked) as exc:
+            result = error_response(exc.status, exc.code, str(exc))
         except Unauthenticated as exc:
             result = error_response(401, exc.code, str(exc))
         except rbac.Forbidden as exc:
@@ -246,8 +256,31 @@ class CloudApp:
         await self._send(send, result, request_id)
 
     async def _authenticate(self, request: Request) -> None:
-        """Authenticate, authorize the route, then enforce CSRF (FR-050)."""
+        """Authenticate, authorize the route, then enforce CSRF (FR-050).
+
+        A bearer agent key is branched on *before* the session/CSRF path: an
+        agent key has no cookie and no CSRF token, and it may only reach the
+        literal routes in ``rbac.AGENT_ROUTES``. Any other route with a bearer
+        is ``403 forbidden``; the session path stays byte-identical for human
+        requests.
+        """
         if rbac.is_public(request.method, request.path):
+            return
+        authorization = request.header("authorization") or ""
+        if authorization.lower().startswith("bearer "):
+            if rbac.agent_route(request.method, request.path) is None:
+                raise rbac.Forbidden(
+                    "agent keys may not call {}".format(request.path)
+                )
+            context = agent_authenticate(self.store, request.headers)
+            require_scope(context, rbac.required_agent_scope(
+                request.method, request.path
+            ))
+            org = self.store.org_by_id(context.org_id)
+            if org is None:
+                raise Unauthenticated("authentication required")
+            request.key = context
+            request.org = org
             return
         raw = request.cookies.get(SESSION_COOKIE)
         if not raw:

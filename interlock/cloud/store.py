@@ -23,9 +23,14 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 from . import db as _db
 from .db import CloudDependencyMissing, quote_literal  # noqa: F401  (re-exported)
+from .enrollment import hash_token, mint_enrollment_token
 
 ROLES = ("owner", "admin", "reviewer", "auditor")
 STATUSES = ("active", "invited", "disabled")
+
+#: Host lifecycle. ``revoked`` is terminal for the fleet view; ``disabled``
+#: stops heartbeats without discarding the pin.
+HOST_STATES = ("active", "disabled", "revoked")
 
 
 class CrossOrgAccess(Exception):
@@ -132,6 +137,92 @@ class AuditEntry:
         }
 
 
+@dataclass
+class EnrollmentToken:
+    """A single-use enrollment token; the raw value is never stored."""
+
+    org_id: str
+    id: str
+    token_hash: str
+    host_name: Optional[str] = None
+    expires: float = 0.0
+    used_at: Optional[float] = None
+
+    def public(self) -> Dict[str, Any]:
+        """The safe view: no hash and no raw token."""
+        return {
+            "id": self.id,
+            "host_name": self.host_name,
+            "expires_at": _now_iso(self.expires),
+            "used": self.used_at is not None,
+        }
+
+
+@dataclass
+class Host:
+    """A registered host and the public keys it pinned at enrollment.
+
+    ``owner_subject`` is required by the schema but C2 has no column that
+    carries the token's creator across the enroll request (the plan forbids a
+    schema change), so the enrolling admin is recorded in ``audit_log`` and
+    the host carries the documented sentinel ``enrollment-token:<token id>``.
+    """
+
+    org_id: str
+    id: str
+    name: str
+    owner_subject: str
+    public_keys: List[Dict[str, Any]] = field(default_factory=list)
+    state: str = "active"
+    last_seen: Optional[float] = None
+
+    def public(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "state": self.state,
+            "owner_subject": self.owner_subject,
+            "public_keys": [dict(pin) for pin in self.public_keys],
+            "last_seen": _now_iso(self.last_seen),
+        }
+
+
+@dataclass
+class AgentKey:
+    """One agent key; ``secret_hash`` is the only secret-derived value."""
+
+    org_id: str
+    id: str
+    prefix: str
+    secret_hash: str
+    host_id: str
+    scopes: List[str] = field(default_factory=list)
+    expires: Optional[float] = None
+    revoked_at: Optional[float] = None
+
+    def public(self) -> Dict[str, Any]:
+        """The fleet view: prefix and timestamps, never the hash."""
+        return {
+            "id": self.id,
+            "prefix": self.prefix,
+            "host_id": self.host_id,
+            "scopes": list(self.scopes),
+            "expires_at": _now_iso(self.expires),
+            "revoked_at": _now_iso(self.revoked_at),
+            "revoked": self.revoked_at is not None,
+        }
+
+
+def keys_version(keys: List[AgentKey]) -> int:
+    """A monotonic per-host key generation, derived without a new column.
+
+    Every issued key adds one and every newly revoked key adds one, so a
+    rotation or revocation always moves the counter forward while the schema
+    stays exactly ``001_init.sql``.
+    """
+    return len(keys) + sum(1 for key in keys if key.revoked_at is not None)
+
+
 class MemoryStore:
     """Thread-safe in-memory reference store.
 
@@ -150,6 +241,9 @@ class MemoryStore:
         self.users: Dict[Tuple[str, str], User] = dict(users or {})
         self.sessions: Dict[Tuple[str, str], Session] = dict(sessions or {})
         self.audit: List[AuditEntry] = list(audit or [])
+        self.enrollment_tokens: Dict[Tuple[str, str], EnrollmentToken] = {}
+        self.hosts: Dict[Tuple[str, str], Host] = {}
+        self.agent_keys: Dict[Tuple[str, str], AgentKey] = {}
         self._domains: Dict[Tuple[str, str], bool] = {}
 
     # -- orgs -----------------------------------------------------------
@@ -408,6 +502,226 @@ class MemoryStore:
         oid = _org_id(org_id) or ""
         with self._lock:
             return [entry for entry in self.audit if entry.org_id == oid]
+
+    # -- enrollment tokens ---------------------------------------------
+    def create_enrollment_token(self, org_id: Union[str, Org],
+                                host_name: Optional[str] = None, *,
+                                ttl: float = 3600,
+                                created_by: Optional[str] = None,
+                                now: Optional[float] = None,
+                                id: Optional[str] = None) -> Tuple[str, str]:
+        """Mint a token and store only its hash; returns ``(id, raw)``.
+
+        ``created_by`` is intentionally not stored: the schema has no column
+        for it and the calling route records the creator in ``audit_log``
+        beside the token id, never the token value.
+        """
+        oid = _org_id(org_id) or ""
+        if oid not in self.orgs:
+            raise NotFound("org not found")
+        if ttl <= 0:
+            raise ValueError("ttl must be positive")
+        at = _epoch() if now is None else float(now)
+        token_id = id or "et_" + secrets.token_hex(8)
+        raw = mint_enrollment_token(oid)
+        token = EnrollmentToken(org_id=oid, id=token_id,
+                                token_hash=hash_token(raw),
+                                host_name=host_name, expires=at + float(ttl))
+        with self._lock:
+            self.enrollment_tokens[(oid, token_id)] = token
+        return token_id, raw
+
+    def consume_enrollment_token(self, raw: str, *,
+                                 now: Optional[float] = None
+                                 ) -> Optional[EnrollmentToken]:
+        """Mark a valid token used exactly once; a second call returns None."""
+        from .enrollment import enrollment_org
+
+        org_id = enrollment_org(raw)
+        if org_id is None:
+            return None
+        at = _epoch() if now is None else float(now)
+        digest = hash_token(raw)
+        with self._lock:
+            for token in self.enrollment_tokens.values():
+                if token.org_id == org_id and token.token_hash == digest:
+                    if token.used_at is not None or at >= token.expires:
+                        return None
+                    token.used_at = at
+                    return token
+        return None
+
+    def enrollment_token_by_id(self, org_id: str,
+                               token_id: str) -> Optional[EnrollmentToken]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            return self.enrollment_tokens.get((oid, token_id))
+
+    # -- hosts ----------------------------------------------------------
+    def create_host(self, org_id: Union[str, Org], name: str, *,
+                    owner_subject: str, public_keys: Optional[List[Dict[str, Any]]] = None,
+                    state: str = "active", last_seen: Optional[float] = None,
+                    id: Optional[str] = None) -> Host:
+        oid = _org_id(org_id) or ""
+        if oid not in self.orgs:
+            raise NotFound("org not found")
+        if state not in HOST_STATES:
+            raise ValueError("unknown host state: {!r}".format(state))
+        with self._lock:
+            host = Host(org_id=oid, id=id or "host_" + secrets.token_hex(12),
+                        name=name, owner_subject=owner_subject,
+                        public_keys=list(public_keys or []), state=state,
+                        last_seen=last_seen)
+            self.hosts[(oid, host.id)] = host
+            return host
+
+    def _other_org_host(self, org_id: str, host_id: str) -> Optional[Host]:
+        for (other_org, other_id), host in self.hosts.items():
+            if other_id == host_id and other_org != org_id:
+                return host
+        return None
+
+    def host_by_id(self, org_id: str, host_id: str) -> Optional[Host]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            host = self.hosts.get((oid, host_id))
+            if host is not None:
+                return host
+            if self._other_org_host(oid, host_id) is not None:
+                raise CrossOrgAccess(
+                    "host {!r} belongs to another org".format(host_id)
+                )
+            return None
+
+    def list_hosts(self, org_id: str) -> List[Host]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            return sorted(
+                (host for host in self.hosts.values() if host.org_id == oid),
+                key=lambda host: host.id,
+            )
+
+    def set_host_state(self, org_id: str, host_id: str, state: str) -> Host:
+        if state not in HOST_STATES:
+            raise ValueError("unknown host state: {!r}".format(state))
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            host = self.hosts.get((oid, host_id))
+            if host is None:
+                if self._other_org_host(oid, host_id) is not None:
+                    raise CrossOrgAccess("host belongs to another org")
+                raise NotFound("host not found")
+            host.state = state
+            return host
+
+    def touch_host(self, org_id: str, host_id: str,
+                   last_seen: Optional[float] = None) -> Optional[Host]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            host = self.hosts.get((oid, host_id))
+            if host is None:
+                if self._other_org_host(oid, host_id) is not None:
+                    raise CrossOrgAccess("host belongs to another org")
+                return None
+            host.last_seen = _epoch() if last_seen is None else float(last_seen)
+            return host
+
+    # -- agent keys -----------------------------------------------------
+    def create_agent_key(self, org_id: str, host_id: str, *,
+                         prefix: str, secret_hash: str,
+                         scopes: Optional[List[str]] = None,
+                         expires: Optional[float] = None,
+                         id: Optional[str] = None) -> AgentKey:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            if (oid, host_id) not in self.hosts:
+                if self._other_org_host(oid, host_id) is not None:
+                    raise CrossOrgAccess("host belongs to another org")
+                raise NotFound("host not found")
+            key = AgentKey(org_id=oid, id=id or "key_" + secrets.token_hex(8),
+                           prefix=prefix, secret_hash=secret_hash,
+                           host_id=host_id, scopes=list(scopes or []),
+                           expires=expires, revoked_at=None)
+            self.agent_keys[(oid, key.id)] = key
+            return key
+
+    def agent_key_by_prefix(self, prefix: str, *,
+                            org_id: Optional[str] = None
+                            ) -> Optional[AgentKey]:
+        """Look up a key by its public prefix.
+
+        ``org_id`` is optional only for :class:`MemoryStore`; the Postgres
+        implementation requires it because row-level security hides rows
+        until the org context is set.
+        """
+        with self._lock:
+            found = None
+            for key in self.agent_keys.values():
+                if key.prefix != prefix:
+                    continue
+                if org_id is not None and key.org_id != _org_id(org_id):
+                    continue
+                found = key
+                break
+            return found
+
+    def agent_key_by_id(self, org_id: str, key_id: str) -> Optional[AgentKey]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            key = self.agent_keys.get((oid, key_id))
+            if key is not None:
+                return key
+            for (other_org, other_id), other in self.agent_keys.items():
+                if other_id == key_id and other_org != oid:
+                    raise CrossOrgAccess("agent key belongs to another org")
+            return None
+
+    def list_agent_keys(self, org_id: str,
+                        host_id: Optional[str] = None) -> List[AgentKey]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            return sorted(
+                (key for key in self.agent_keys.values()
+                 if key.org_id == oid
+                 and (host_id is None or key.host_id == host_id)),
+                key=lambda key: key.id,
+            )
+
+    def retire_agent_key(self, org_id: str, key_id: str, *,
+                         expires: float) -> AgentKey:
+        """Set the key's expiry; rotation retires the old key this way."""
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            key = self.agent_keys.get((oid, key_id))
+            if key is None:
+                raise NotFound("agent key not found")
+            key.expires = float(expires)
+            return key
+
+    def revoke_agent_key(self, org_id: str, key_id: str, *,
+                         now: Optional[float] = None) -> AgentKey:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            key = self.agent_keys.get((oid, key_id))
+            if key is None:
+                raise NotFound("agent key not found")
+            if key.revoked_at is None:
+                key.revoked_at = at
+            return key
+
+    def revoke_host_keys(self, org_id: str, host_id: str, *,
+                         now: Optional[float] = None) -> int:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            count = 0
+            for key in self.agent_keys.values():
+                if key.org_id == oid and key.host_id == host_id \
+                        and key.revoked_at is None:
+                    key.revoked_at = at
+                    count += 1
+            return count
 
     # -- RLS context ----------------------------------------------------
     @contextlib.contextmanager
@@ -830,6 +1144,319 @@ class PostgresStore:
             ))
         return out
 
+    # -- enrollment tokens ---------------------------------------------
+    def create_enrollment_token(self, org_id: Union[str, Org],
+                                host_name: Optional[str] = None, *,
+                                ttl: float = 3600,
+                                created_by: Optional[str] = None,
+                                now: Optional[float] = None,
+                                id: Optional[str] = None) -> Tuple[str, str]:
+        oid = _org_id(org_id) or ""
+        if ttl <= 0:
+            raise ValueError("ttl must be positive")
+        at = _epoch() if now is None else float(now)
+        token_id = id or "et_" + secrets.token_hex(8)
+        raw = mint_enrollment_token(oid)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "INSERT INTO enrollment_tokens "
+                "(org_id, id, token_hash, host_name, expires) "
+                "VALUES (%s, %s, %s, %s, to_timestamp(%s))",
+                (oid, token_id, hash_token(raw), host_name, at + float(ttl)),
+            )
+        return token_id, raw
+
+    _TOKEN_COLUMNS = ("org_id, id, token_hash, host_name, expires, used_at")
+
+    def _token_row(self, row: Tuple[Any, ...]) -> EnrollmentToken:
+        return EnrollmentToken(
+            org_id=row[0], id=row[1], token_hash=row[2], host_name=row[3],
+            expires=_timestamp(row[4]) or 0.0,
+            used_at=_timestamp(row[5]),
+        )
+
+    def consume_enrollment_token(self, raw: str, *,
+                                 now: Optional[float] = None
+                                 ) -> Optional[EnrollmentToken]:
+        from .enrollment import enrollment_org
+
+        org_id = enrollment_org(raw)
+        if org_id is None:
+            return None
+        at = _epoch() if now is None else float(now)
+        digest = hash_token(raw)
+        with self._transaction(org_id) as cur:
+            cur.execute(
+                "SELECT " + self._TOKEN_COLUMNS + " FROM enrollment_tokens "
+                "WHERE org_id = %s AND token_hash = %s",
+                (org_id, digest),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            token = self._token_row(row)
+            if token.used_at is not None or at >= token.expires:
+                return None
+            # Conditional on used_at so two concurrent consumers cannot both
+            # win: only one UPDATE reports a row.
+            cur.execute(
+                "UPDATE enrollment_tokens SET used_at = to_timestamp(%s) "
+                "WHERE org_id = %s AND id = %s AND used_at IS NULL "
+                "AND expires > to_timestamp(%s)",
+                (at, org_id, token.id, at),
+            )
+            if cur.rowcount != 1:
+                return None
+            token.used_at = at
+            return token
+
+    def enrollment_token_by_id(self, org_id: str,
+                               token_id: str) -> Optional[EnrollmentToken]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT " + self._TOKEN_COLUMNS + " FROM enrollment_tokens "
+                "WHERE org_id = %s AND id = %s",
+                (oid, token_id),
+            )
+            row = cur.fetchone()
+        return self._token_row(row) if row else None
+
+    # -- hosts ----------------------------------------------------------
+    _HOST_COLUMNS = "org_id, id, name, owner_subject, public_keys, state, last_seen"
+
+    def _host_row(self, row: Tuple[Any, ...]) -> Host:
+        return Host(org_id=row[0], id=row[1], name=row[2],
+                    owner_subject=row[3], public_keys=list(row[4] or []),
+                    state=row[5], last_seen=_timestamp(row[6]))
+
+    def create_host(self, org_id: Union[str, Org], name: str, *,
+                    owner_subject: str, public_keys: Optional[List[Dict[str, Any]]] = None,
+                    state: str = "active", last_seen: Optional[float] = None,
+                    id: Optional[str] = None) -> Host:
+        oid = _org_id(org_id) or ""
+        if state not in HOST_STATES:
+            raise ValueError("unknown host state: {!r}".format(state))
+        host = Host(org_id=oid, id=id or "host_" + secrets.token_hex(12),
+                    name=name, owner_subject=owner_subject,
+                    public_keys=list(public_keys or []), state=state,
+                    last_seen=last_seen)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "INSERT INTO hosts (org_id, id, name, owner_subject, "
+                "public_keys, state, last_seen) "
+                "VALUES (%s, %s, %s, %s, %s::jsonb, %s, "
+                "CASE WHEN %s::double precision IS NULL THEN NULL "
+                "ELSE to_timestamp(%s) END)",
+                (oid, host.id, name, owner_subject,
+                 json.dumps(host.public_keys), state,
+                 host.last_seen, host.last_seen),
+            )
+        return host
+
+    def host_by_id(self, org_id: str, host_id: str) -> Optional[Host]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT " + self._HOST_COLUMNS + " FROM hosts "
+                "WHERE org_id = %s AND id = %s",
+                (oid, host_id),
+            )
+            row = cur.fetchone()
+        return self._host_row(row) if row else None
+
+    def list_hosts(self, org_id: str) -> List[Host]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT " + self._HOST_COLUMNS + " FROM hosts "
+                "WHERE org_id = %s ORDER BY id",
+                (oid,),
+            )
+            return [self._host_row(row) for row in cur.fetchall()]
+
+    def set_host_state(self, org_id: str, host_id: str, state: str) -> Host:
+        if state not in HOST_STATES:
+            raise ValueError("unknown host state: {!r}".format(state))
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "UPDATE hosts SET state = %s WHERE org_id = %s AND id = %s",
+                (state, oid, host_id),
+            )
+            cur.execute(
+                "SELECT " + self._HOST_COLUMNS + " FROM hosts "
+                "WHERE org_id = %s AND id = %s",
+                (oid, host_id),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise NotFound("host not found")
+        return self._host_row(row)
+
+    def touch_host(self, org_id: str, host_id: str,
+                   last_seen: Optional[float] = None) -> Optional[Host]:
+        oid = _org_id(org_id) or ""
+        seen = _epoch() if last_seen is None else float(last_seen)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "UPDATE hosts SET last_seen = to_timestamp(%s) "
+                "WHERE org_id = %s AND id = %s",
+                (seen, oid, host_id),
+            )
+            cur.execute(
+                "SELECT " + self._HOST_COLUMNS + " FROM hosts "
+                "WHERE org_id = %s AND id = %s",
+                (oid, host_id),
+            )
+            row = cur.fetchone()
+        return self._host_row(row) if row else None
+
+    # -- agent keys -----------------------------------------------------
+    _KEY_COLUMNS = ("org_id, id, prefix, secret_hash, host_id, scopes, "
+                    "expires, revoked_at")
+
+    def _key_row(self, row: Tuple[Any, ...]) -> AgentKey:
+        return AgentKey(org_id=row[0], id=row[1], prefix=row[2],
+                        secret_hash=row[3], host_id=row[4],
+                        scopes=list(row[5] or []),
+                        expires=_timestamp(row[6]),
+                        revoked_at=_timestamp(row[7]))
+
+    def create_agent_key(self, org_id: str, host_id: str, *,
+                         prefix: str, secret_hash: str,
+                         scopes: Optional[List[str]] = None,
+                         expires: Optional[float] = None,
+                         id: Optional[str] = None) -> AgentKey:
+        oid = _org_id(org_id) or ""
+        key = AgentKey(org_id=oid, id=id or "key_" + secrets.token_hex(8),
+                       prefix=prefix, secret_hash=secret_hash,
+                       host_id=host_id, scopes=list(scopes or []),
+                       expires=expires, revoked_at=None)
+        with self._transaction(oid) as cur:
+            # The foreign key proves the host exists inside this org; a
+            # missing host raises the driver's integrity error rather than
+            # writing a dangling key.
+            cur.execute(
+                "INSERT INTO agent_keys (org_id, id, prefix, secret_hash, "
+                "host_id, scopes, expires) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb, "
+                "CASE WHEN %s::double precision IS NULL THEN NULL "
+                "ELSE to_timestamp(%s) END)",
+                (oid, key.id, prefix, secret_hash, host_id,
+                 json.dumps(key.scopes), expires, expires),
+            )
+        return key
+
+    def agent_key_by_prefix(self, prefix: str, *,
+                            org_id: Optional[str] = None
+                            ) -> Optional[AgentKey]:
+        if org_id is None:
+            # RLS hides agent_keys until interlock.org_id is set, so an
+            # org-less lookup would silently miss every real key. Refusing is
+            # louder and matches session_by_token_hash.
+            raise ValueError(
+                "org_id is required to resolve an agent key under row-level security"
+            )
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT " + self._KEY_COLUMNS + " FROM agent_keys "
+                "WHERE org_id = %s AND prefix = %s",
+                (oid, prefix),
+            )
+            row = cur.fetchone()
+        return self._key_row(row) if row else None
+
+    def agent_key_by_id(self, org_id: str, key_id: str) -> Optional[AgentKey]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT " + self._KEY_COLUMNS + " FROM agent_keys "
+                "WHERE org_id = %s AND id = %s",
+                (oid, key_id),
+            )
+            row = cur.fetchone()
+        return self._key_row(row) if row else None
+
+    def list_agent_keys(self, org_id: str,
+                        host_id: Optional[str] = None) -> List[AgentKey]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            if host_id is None:
+                cur.execute(
+                    "SELECT " + self._KEY_COLUMNS + " FROM agent_keys "
+                    "WHERE org_id = %s ORDER BY id",
+                    (oid,),
+                )
+            else:
+                cur.execute(
+                    "SELECT " + self._KEY_COLUMNS + " FROM agent_keys "
+                    "WHERE org_id = %s AND host_id = %s ORDER BY id",
+                    (oid, host_id),
+                )
+            return [self._key_row(row) for row in cur.fetchall()]
+
+    def retire_agent_key(self, org_id: str, key_id: str, *,
+                         expires: float) -> AgentKey:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "UPDATE agent_keys SET expires = to_timestamp(%s) "
+                "WHERE org_id = %s AND id = %s",
+                (float(expires), oid, key_id),
+            )
+            cur.execute(
+                "SELECT " + self._KEY_COLUMNS + " FROM agent_keys "
+                "WHERE org_id = %s AND id = %s",
+                (oid, key_id),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise NotFound("agent key not found")
+        return self._key_row(row)
+
+    def revoke_agent_key(self, org_id: str, key_id: str, *,
+                         now: Optional[float] = None) -> AgentKey:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "UPDATE agent_keys SET revoked_at = COALESCE(revoked_at, "
+                "to_timestamp(%s)) WHERE org_id = %s AND id = %s",
+                (at, oid, key_id),
+            )
+            cur.execute(
+                "SELECT " + self._KEY_COLUMNS + " FROM agent_keys "
+                "WHERE org_id = %s AND id = %s",
+                (oid, key_id),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise NotFound("agent key not found")
+        return self._key_row(row)
+
+    def revoke_host_keys(self, org_id: str, host_id: str, *,
+                         now: Optional[float] = None) -> int:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "UPDATE agent_keys SET revoked_at = to_timestamp(%s) "
+                "WHERE org_id = %s AND host_id = %s AND revoked_at IS NULL",
+                (at, oid, host_id),
+            )
+            return cur.rowcount
+
+
+def _timestamp(value: Any) -> Optional[float]:
+    """Postgres timestamps arrive as ``datetime``; tests may pass floats."""
+    if value is None:
+        return None
+    if hasattr(value, "timestamp"):
+        return float(value.timestamp())
+    return float(value)
+
 
 def _epoch() -> float:
     """Wall-clock seconds, kept here so stores do not import time twice."""
@@ -841,9 +1468,13 @@ def _epoch() -> float:
 Store = Union[MemoryStore, PostgresStore]
 
 __all__ = [
+    "AgentKey",
     "AuditEntry",
     "CloudDependencyMissing",
     "CrossOrgAccess",
+    "EnrollmentToken",
+    "HOST_STATES",
+    "Host",
     "MemoryStore",
     "NotFound",
     "Org",
@@ -852,4 +1483,5 @@ __all__ = [
     "Session",
     "Store",
     "User",
+    "keys_version",
 ]

@@ -18,8 +18,21 @@ from .db import INSTALL_HINT
 #: A public bind without TLS termination is a misconfiguration.
 PUBLIC_HOST = "0.0.0.0"
 
+#: ``python -m interlock.cloud run`` is the connector form used by the
+#: systemd unit. A leading connector verb is delegated to the real CLI so the
+#: unit command and the documented command are the same one; ``main([])``
+#: still runs the control-plane server.
+CONNECTOR_ACTIONS = frozenset(
+    ("enroll", "run", "status", "leave", "policy", "keys")
+)
+
 
 def main(argv: Optional[List[str]] = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if raw_args and raw_args[0] in CONNECTOR_ACTIONS:
+        from ..cli import main as cli_main
+
+        return cli_main(["cloud"] + raw_args)
     try:
         defaults = CloudConfig.from_env()
     except ConfigError as exc:

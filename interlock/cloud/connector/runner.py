@@ -1,0 +1,612 @@
+"""The outbound-only connector loop (FR-008 .. FR-014).
+
+``run_once`` is one cycle: reconcile pending reviews from the local queue,
+upload queued batches, long-poll grants, then heartbeat. A status is persisted
+only after the plane acknowledged it - ``cursor`` after a 2xx grants response
+and ``last_sync`` after a 2xx heartbeat - so a reconnect resumes exactly where
+the last acknowledgement left it.
+
+Retries live here, not in the transport: a 5xx or 429 is retried with capped
+exponential backoff and full jitter (1 s .. 5 min), honouring ``Retry-After``;
+every other 4xx is returned at once. ``410 revoked`` stops the connector and
+sets ``revoked`` in status; the connector never falls back to an
+unauthenticated mode.
+
+The class prints nothing. The CLI owns user output, and every value it prints
+goes through :func:`interlock.cloud.connector.config.redact` so the agent key
+cannot escape through an error path.
+"""
+from __future__ import annotations
+
+import email.utils
+import gzip
+import json
+import math
+import os
+import random
+import signal
+import tempfile
+import threading
+import time
+from pathlib import Path
+from typing import Any, Dict, Mapping, Optional
+
+from ... import __version__ as CONNECTOR_VERSION
+from ..identity import generate_host_seed, key_id, public_key_hex
+from .config import CloudHome, redact
+from .spool import Spool
+from .transport import Transport, TransportError
+
+DEFAULT_POLL_AFTER = 300
+
+#: A host whose last successful sync is older than this is "not connected".
+CONNECTED_WINDOW = 300
+
+#: Backoff bounds from FR-009.
+MIN_BACKOFF = 1.0
+MAX_BACKOFF = 300.0
+
+#: How many times one request is tried inside a single cycle.
+DEFAULT_MAX_ATTEMPTS = 4
+
+
+def _retry_after(headers: Mapping[str, str]) -> Optional[float]:
+    """Parse ``Retry-After`` (delta seconds or an HTTP date).
+
+    A header the plane sent but that cannot be parsed is treated as absent:
+    a hostile or broken value must never crash a cycle.
+    """
+    value = None
+    for name, item in (headers or {}).items():
+        if str(name).lower() == "retry-after":
+            value = item
+            break
+    if value is None:
+        return None
+    try:
+        seconds = float(str(value).strip())
+    except (TypeError, ValueError):
+        try:
+            parsed = email.utils.parsedate_to_datetime(str(value))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if parsed is None:
+            return None
+        try:
+            seconds = parsed.timestamp() - time.time()
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not math.isfinite(seconds):
+        return None
+    return max(0.0, seconds)
+
+
+def _review_id(review: Any) -> Optional[str]:
+    if isinstance(review, Mapping):
+        return review.get("id")
+    return getattr(review, "id", None)
+
+
+def _review_field(review: Any, name: str, default: Any = None) -> Any:
+    if isinstance(review, Mapping):
+        return review.get(name, default)
+    return getattr(review, name, default)
+
+
+class Connector:
+    """Enroll a host, then poll the plane for work."""
+
+    def __init__(self, home: Any, transport: Transport, queue: Any = None, *,
+                 clock: Any = time.time, sleep: Any = time.sleep,
+                 random_fn: Any = random.uniform,
+                 timeout: float = 30,
+                 max_attempts: int = DEFAULT_MAX_ATTEMPTS) -> None:
+        self.home = home if isinstance(home, CloudHome) else CloudHome(home)
+        self.transport = transport
+        self.queue = queue
+        self.clock = clock
+        self.sleep = sleep
+        self.random_fn = random_fn
+        self.timeout = timeout
+        self.max_attempts = max(1, int(max_attempts))
+        self._config: Optional[Dict[str, Any]] = None
+        self._state: Optional[Dict[str, Any]] = None
+        self._spool: Optional[Spool] = None
+
+    # -- paths and persistence -----------------------------------------
+    @property
+    def config(self) -> Optional[Dict[str, Any]]:
+        if self._config is None:
+            try:
+                self._config = self.home.document
+            except (FileNotFoundError, ValueError):
+                return None
+        return self._config
+
+    def _resolve(self, value: str) -> Path:
+        path = Path(value).expanduser()
+        return path if path.is_absolute() else self.home.root / path
+
+    @property
+    def spool(self) -> Spool:
+        if self._spool is None:
+            config = self.config or {}
+            directory = self._resolve(str(config.get("spool_dir") or "spool"))
+            self._spool = Spool(directory, clock=self.clock)
+        return self._spool
+
+    @property
+    def state_path(self) -> Path:
+        config = self.config or {}
+        directory = self._resolve(str(config.get("state_dir") or "state"))
+        return directory / "connector.json"
+
+    def _load_state(self) -> Dict[str, Any]:
+        if self._state is not None:
+            return dict(self._state)
+        state: Dict[str, Any] = {
+            "cursor": 0,
+            "last_sync": None,
+            "revoked": False,
+            "last_error": None,
+            "poll_after": DEFAULT_POLL_AFTER,
+        }
+        try:
+            doc = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            doc = None
+        if isinstance(doc, dict):
+            for key in state:
+                if key in doc:
+                    state[key] = doc[key]
+        self._state = state
+        return dict(state)
+
+    def _save_state(self, state: Mapping[str, Any]) -> None:
+        self._state = dict(state)
+        path = self.state_path
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        payload = json.dumps(self._state, sort_keys=True).encode("utf-8")
+        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent),
+                                        prefix=".connector.", suffix=".tmp")
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, str(path))
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+
+    # -- headers --------------------------------------------------------
+    def headers(self, *, auth: bool = True) -> Dict[str, str]:
+        headers = {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-interlock-version": str(CONNECTOR_VERSION),
+        }
+        config = self.config
+        if auth and config:
+            headers["authorization"] = "Bearer " + str(config["agent_key"])
+            headers["x-interlock-host"] = str(config["host_id"])
+            # Non-secret RLS hint; the server still verifies the hash.
+            headers["x-interlock-org"] = str(config["org_id"])
+        return headers
+
+    # -- requests and retry --------------------------------------------
+    def _backoff(self, attempt: int) -> float:
+        ceiling = min(MAX_BACKOFF, MIN_BACKOFF * (2 ** attempt))
+        return float(self.random_fn(0.0, ceiling))
+
+    def _request(self, method: str, path: str, body: Optional[bytes] = None, *,
+                 auth: bool = True, attempts: Optional[int] = None):
+        """Return ``(status, headers, body)``; retry 5xx/429 with jitter."""
+        tries = self.max_attempts if attempts is None else max(1, int(attempts))
+        last_response = None
+        last_error: Optional[BaseException] = None
+        for attempt in range(tries):
+            try:
+                status, headers, data = self.transport.request(
+                    method, path, body, headers=self.headers(auth=auth),
+                    timeout=self.timeout,
+                )
+            except TransportError as exc:
+                last_error = exc
+                status = None
+            else:
+                last_response = (status, headers, data)
+                if not (status >= 500 or status == 429):
+                    return status, headers, data
+            if attempt == tries - 1:
+                break
+            retry_after = None
+            if last_response is not None:
+                retry_after = _retry_after(last_response[1])
+            wait = retry_after if retry_after is not None \
+                else self._backoff(attempt)
+            self.sleep(wait)
+        if last_response is not None:
+            return last_response
+        raise TransportError(str(last_error or "request failed"))
+
+    @staticmethod
+    def _json_body(payload: Any) -> bytes:
+        return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    @staticmethod
+    def _error_code(data: bytes) -> str:
+        try:
+            payload = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return "request failed"
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict) and error.get("code"):
+            return str(error["code"])
+        return "request failed"
+
+    # -- enrollment -----------------------------------------------------
+    def enroll(self, url: str, token: str, host_name: Optional[str] = None, *,
+               seed: Optional[bytes] = None) -> Dict[str, Any]:
+        """Generate the host seed, enroll once and write ``cloud.json``."""
+        CloudHome._validate_url(url)
+        if not isinstance(token, str) or not token:
+            return {"ok": False, "error": "an enrollment token is required"}
+        seed = generate_host_seed() if seed is None else bytes(seed)
+        self.home.save_seed(seed)
+        public_hex = public_key_hex(seed)
+        host_key_id = key_id(public_hex)
+        if host_name is None:
+            import socket
+
+            host_name = socket.gethostname() or "unnamed-host"
+        body = self._json_body({
+            "token": token,
+            "host_name": host_name,
+            "host_public_key": public_hex,
+            "host_key_id": host_key_id,
+            "connector_version": str(CONNECTOR_VERSION),
+        })
+        # A single-use token is deliberately not retried: a retry after a
+        # timeout could consume a second token or double-enroll.
+        base_url = getattr(self.transport, "base_url", None)
+        if not base_url:
+            try:
+                self.transport.base_url = url.rstrip("/")
+            except Exception:
+                pass
+        try:
+            status, _headers, data = self._request(
+                "POST", "/v1/enroll", body, auth=False, attempts=1)
+        except TransportError as exc:
+            return {"ok": False, "error": redact(str(exc))}
+        if status not in (200, 201):
+            return {"ok": False, "status": status,
+                    "error": self._error_code(data)}
+        try:
+            payload = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return {"ok": False, "status": status,
+                    "error": "malformed enrollment response"}
+        if not isinstance(payload, dict) or not payload.get("agent_key") \
+                or not payload.get("host_id") or not payload.get("org_id"):
+            return {"ok": False, "status": status,
+                    "error": "incomplete enrollment response"}
+        document = {
+            "url": str(url).rstrip("/"),
+            "org_id": str(payload["org_id"]),
+            "host_id": str(payload["host_id"]),
+            "agent_key_id": str(payload.get("agent_key_id") or ""),
+            "agent_key": str(payload["agent_key"]),
+            "host_key_id": host_key_id,
+            "host_public_key": public_hex,
+            "plane_public_keys": dict(payload.get("plane_public_keys") or {}),
+            "spool_dir": "spool",
+            "state_dir": "state",
+        }
+        try:
+            self.home.save(document)
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "error": redact(str(exc))}
+        self._config = document
+        return {
+            "ok": True,
+            "host_id": document["host_id"],
+            "agent_key_id": document["agent_key_id"],
+            "org_id": document["org_id"],
+        }
+
+    # -- queue reconciliation ------------------------------------------
+    def on_file(self, review: Any) -> bool:
+        """Spool one metadata record; never raises into the review queue.
+
+        Only metadata and an argument digest leave the host. The default is
+        no preview at all; C3's masking policy owns any richer body.
+        """
+        try:
+            record = {
+                "review_id": _review_id(review),
+                "status": _review_field(review, "status", "pending"),
+                "action": _review_field(review, "action"),
+                "phase": _review_field(review, "phase"),
+                "principal": _review_field(review, "principal"),
+                "requester": _review_field(review, "requester"),
+                "args_digest": _review_field(review, "args_digest"),
+                "created": _review_field(review, "created"),
+                "pending_until": _review_field(review, "pending_until"),
+            }
+            if not record["review_id"]:
+                return False
+            config = self.config or {}
+            self.spool.add(
+                "security", self._json_body(record),
+                host=str(config.get("host_id") or "unassigned"),
+                sensor="reviews",
+            )
+            return True
+        except Exception:
+            # A full disk or a bad review must not break the queue's write.
+            return False
+
+    def _pending_reviews(self) -> list:
+        if self.queue is None:
+            return []
+        try:
+            pending = self.queue.list(status="pending")
+        except Exception:
+            return []
+        return list(pending or [])
+
+    def queue_lag(self) -> int:
+        if self.queue is None:
+            return 0
+        try:
+            return len(self.queue.list(status="pending"))
+        except Exception:
+            return 0
+
+    # -- one cycle ------------------------------------------------------
+    @staticmethod
+    def _upload_path(kind: str) -> str:
+        # C2 moves review metadata and receipts only; policy bodies are C5.
+        return "/v1/receipts" if kind == "observability" else "/v1/reviews"
+
+    def run_once(self) -> Dict[str, Any]:
+        """One reconcile/upload/poll/heartbeat cycle; never raises for a 4xx."""
+        config = self.config
+        if config is None:
+            return {"ok": False, "reviews": 0, "revoked": False,
+                    "error": "not enrolled"}
+        state = self._load_state()
+        if state.get("revoked"):
+            return {"ok": False, "reviews": 0, "revoked": True,
+                    "error": "revoked"}
+
+        errors = []
+        reviews = 0
+        uploaded = 0
+        revoked = False
+        poll_after = int(state.get("poll_after") or DEFAULT_POLL_AFTER)
+
+        # 1. Reconcile reviews filed while the connector was down.
+        for review in self._pending_reviews():
+            if self.on_file(review):
+                reviews += 1
+
+        # 2. Upload queued batches, removing each only after a 2xx.
+        try:
+            batches = self.spool.peek(limit=50)
+        except Exception as exc:
+            batches = []
+            errors.append(redact(str(exc)))
+        for batch in batches:
+            try:
+                body = gzip.decompress(batch.path.read_bytes())
+            except (OSError, EOFError, ValueError) as exc:
+                errors.append(redact(str(exc)))
+                continue
+            try:
+                status, _headers, data = self._request(
+                    "POST", self._upload_path(batch.kind), body)
+            except TransportError as exc:
+                errors.append(redact(str(exc)))
+                continue
+            if status == 410:
+                revoked = True
+                break
+            if 200 <= status < 300:
+                self.spool.remove(batch)
+                uploaded += 1
+            else:
+                errors.append(self._error_code(data))
+        if revoked:
+            return self._revoked(state, reviews, uploaded, errors)
+
+        # 3. Poll grants after the persisted cursor. Empty is normal in C2.
+        cursor = int(state.get("cursor") or 0)
+        path = "/v1/grants?cursor={}&wait=25".format(cursor)
+        try:
+            status, _headers, data = self._request("GET", path)
+        except TransportError as exc:
+            errors.append(redact(str(exc)))
+        else:
+            if status == 410:
+                return self._revoked(state, reviews, uploaded, errors)
+            if 200 <= status < 300:
+                try:
+                    payload = json.loads(data.decode("utf-8")) if data else {}
+                except (UnicodeDecodeError, ValueError):
+                    payload = {}
+                if not isinstance(payload, dict):
+                    payload = {}
+                # Persist the cursor only now, after the plane's ack.
+                new_cursor = payload.get("cursor")
+                if isinstance(new_cursor, int) and not isinstance(new_cursor, bool):
+                    state["cursor"] = new_cursor
+                else:
+                    state["cursor"] = cursor
+                try:
+                    poll_after = int(payload.get("poll_after") or poll_after)
+                except (TypeError, ValueError):
+                    pass
+                state["poll_after"] = poll_after
+            else:
+                errors.append(self._error_code(data))
+
+        # 4. Heartbeat; last_sync advances only on a 2xx.
+        heartbeat = self._json_body({
+            "connector_version": str(CONNECTOR_VERSION),
+            "last_seen": self.clock(),
+            "spool_depth": self.spool.count,
+            "spool_bytes": self.spool.bytes,
+            "queue_lag": self.queue_lag(),
+            "cursor": state.get("cursor", 0),
+        })
+        try:
+            status, _headers, data = self._request(
+                "POST", "/v1/hosts/self", heartbeat)
+        except TransportError as exc:
+            errors.append(redact(str(exc)))
+        else:
+            if status == 410:
+                return self._revoked(state, reviews, uploaded, errors)
+            if 200 <= status < 300:
+                state["last_sync"] = self.clock()
+                try:
+                    payload = json.loads(data.decode("utf-8")) if data else {}
+                except (UnicodeDecodeError, ValueError):
+                    payload = {}
+                if isinstance(payload, dict) and payload.get("poll_after"):
+                    try:
+                        poll_after = int(payload["poll_after"])
+                        state["poll_after"] = poll_after
+                    except (TypeError, ValueError):
+                        pass
+            else:
+                errors.append(self._error_code(data))
+
+        state["last_error"] = errors[0] if errors else None
+        self._save_state(state)
+        return {
+            "ok": not errors,
+            "reviews": reviews,
+            "uploaded": uploaded,
+            "poll_after": poll_after,
+            "revoked": False,
+            "error": errors[0] if errors else None,
+        }
+
+    def _revoked(self, state: Dict[str, Any], reviews: int, uploaded: int,
+                 errors: list) -> Dict[str, Any]:
+        state["revoked"] = True
+        state["last_error"] = "revoked"
+        self._save_state(state)
+        return {"ok": False, "reviews": reviews, "uploaded": uploaded,
+                "revoked": True, "error": "revoked"}
+
+    # -- long-running loop ---------------------------------------------
+    def run_forever(self, stop_event: Any = None) -> int:
+        """Alternate ``run_once`` and ``sleep(poll_after)`` until signalled."""
+        stop = stop_event if stop_event is not None else threading.Event()
+        previous = {}
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            try:
+                previous[signum] = signal.signal(
+                    signum, lambda *_: stop.set())
+            except (ValueError, OSError, AttributeError):
+                # Not the main thread: a caller-supplied event is the stop.
+                pass
+        try:
+            while not stop.is_set():
+                result = self.run_once()
+                if result.get("revoked"):
+                    return 1
+                wait = float(result.get("poll_after")
+                             or self._load_state().get("poll_after")
+                             or DEFAULT_POLL_AFTER)
+                if hasattr(stop, "wait"):
+                    stop.wait(max(0.0, wait))
+                else:
+                    self.sleep(max(0.0, wait))
+        finally:
+            for signum, handler in previous.items():
+                try:
+                    signal.signal(signum, handler)
+                except (ValueError, OSError):
+                    pass
+        return 0
+
+    # -- status / leave -------------------------------------------------
+    def status(self) -> Dict[str, Any]:
+        """The keys FR-014 names; never the agent key."""
+        config = self.config or {}
+        state = self._load_state()
+        if config:
+            try:
+                spool = self.spool
+                spool_batches = spool.count
+                spool_bytes = spool.bytes
+                dropped_batches = spool.dropped_batches
+            except Exception:
+                spool_batches = 0
+                spool_bytes = 0
+                dropped_batches = 0
+        else:
+            spool_batches = 0
+            spool_bytes = 0
+            dropped_batches = 0
+        last_sync = state.get("last_sync")
+        now = float(self.clock())
+        connected = bool(
+            last_sync is not None
+            and not state.get("revoked")
+            and now - float(last_sync) <= CONNECTED_WINDOW
+        )
+        return redact({
+            "connected": connected,
+            "last_sync": last_sync,
+            "url": config.get("url"),
+            "org_id": config.get("org_id"),
+            "host_id": config.get("host_id"),
+            "spool_batches": spool_batches,
+            "spool_bytes": spool_bytes,
+            "dropped_batches": dropped_batches,
+            "queue_lag": self.queue_lag(),
+            "cursor": state.get("cursor", 0),
+            "revoked": bool(state.get("revoked")),
+            "last_error": state.get("last_error"),
+        })
+
+    def leave(self, *, confirmed: bool = True) -> Dict[str, Any]:
+        """Forget the enrollment; the spool and state stay for the operator."""
+        config = self.config or {}
+        spool_dir = self._resolve(str(config.get("spool_dir") or "spool"))
+        state_dir = self._resolve(str(config.get("state_dir") or "state"))
+        removed = False
+        if confirmed:
+            removed = self.home.remove_config()
+            self._config = None
+            self._state = None
+            self._spool = None
+        return {
+            "removed": removed,
+            "config": str(self.home.config_path),
+            "seed": str(self.home.seed_path),
+            "spool": str(spool_dir),
+            "state": str(state_dir),
+            "spool_remains": spool_dir.exists(),
+        }
+
+
+__all__ = [
+    "CONNECTED_WINDOW",
+    "CONNECTOR_VERSION",
+    "Connector",
+    "DEFAULT_POLL_AFTER",
+    "MAX_BACKOFF",
+    "MIN_BACKOFF",
+]

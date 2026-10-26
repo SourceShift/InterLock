@@ -10,11 +10,13 @@ from typing import Any, List, Tuple
 
 import pytest
 
+from interlock.cloud.enrollment import generate_agent_key
 from interlock.cloud.store import (
     CrossOrgAccess,
     MemoryStore,
     NotFound,
     PostgresStore,
+    keys_version,
 )
 
 DSN = os.environ.get("IL_CLOUD_TEST_DSN")
@@ -110,6 +112,27 @@ def test_every_tenant_query_carries_org_id(monkeypatch):
     store.audit_list(org)
     store.verified_domain(org, "a@b.test")
 
+    token_id, raw = store.create_enrollment_token(org, "box", ttl=120,
+                                                 now=1000.0)
+    store.enrollment_token_by_id(org, token_id)
+    store.consume_enrollment_token(raw, now=1001.0)
+    store.create_host(org, "box", owner_subject="tester")
+    store.host_by_id(org, "host-1")
+    store.list_hosts(org)
+    with pytest.raises(NotFound):
+        store.set_host_state(org, "host-1", "disabled")
+    store.touch_host(org, "host-1", 1000.0)
+    _raw, prefix, digest = generate_agent_key()
+    store.create_agent_key(org, "host-1", prefix=prefix, secret_hash=digest)
+    store.agent_key_by_prefix(prefix, org_id=org)
+    store.agent_key_by_id(org, "key-1")
+    store.list_agent_keys(org)
+    with pytest.raises(NotFound):
+        store.retire_agent_key(org, "key-1", expires=2000.0)
+    with pytest.raises(NotFound):
+        store.revoke_agent_key(org, "key-1")
+    store.revoke_host_keys(org, "host-1")
+
     for sql, _params in recorder:
         if sql.startswith("SET LOCAL"):
             continue
@@ -164,6 +187,49 @@ def _contract(store):
     entries = store.audit_list(org.id)
     assert entries[-1].event == "member.updated"
     assert entries[-1].detail["target"] == user.id
+
+    # -- enrollment tokens and hosts (C2) ------------------------------
+    token_id, raw_token = store.create_enrollment_token(
+        org.id, "box-" + suffix, ttl=120, now=1000.0)
+    token = store.enrollment_token_by_id(org.id, token_id)
+    assert token is not None and token.public()["used"] is False
+    assert "token_hash" not in token.public()
+    consumed = store.consume_enrollment_token(raw_token, now=1001.0)
+    assert consumed is not None and consumed.id == token_id
+    assert store.consume_enrollment_token(raw_token, now=1002.0) is None
+
+    host = store.create_host(
+        org.id, "box-" + suffix,
+        owner_subject="enrollment-token:" + token_id,
+        public_keys=[{"id": "pin-1", "public_key": "ab" * 32}],
+        last_seen=1005.0,
+    )
+    assert store.host_by_id(org.id, host.id).name == "box-" + suffix
+    assert [item.id for item in store.list_hosts(org.id)] == [host.id]
+    touched = store.touch_host(org.id, host.id, 1010.0)
+    assert touched.last_seen == 1010.0
+    assert store.set_host_state(org.id, host.id, "disabled").state == "disabled"
+
+    _raw_key, prefix, secret_hash = generate_agent_key()
+    key = store.create_agent_key(
+        org.id, host.id, prefix=prefix, secret_hash=secret_hash,
+        scopes=["poll:grants"], expires=2000.0)
+    assert "secret_hash" not in key.public()
+    assert store.agent_key_by_prefix(prefix, org_id=org.id).id == key.id
+    assert store.agent_key_by_id(org.id, key.id).id == key.id
+    assert [item.id for item in store.list_agent_keys(org.id, host.id)] == [
+        key.id]
+    assert store.retire_agent_key(org.id, key.id, expires=1500.0).expires \
+        == 1500.0
+    revoked = store.revoke_agent_key(org.id, key.id, now=1600.0)
+    assert revoked.revoked_at == 1600.0
+    assert keys_version([revoked]) == 2
+
+    _second_raw, second_prefix, second_hash = generate_agent_key()
+    store.create_agent_key(org.id, host.id, prefix=second_prefix,
+                           secret_hash=second_hash)
+    assert store.revoke_host_keys(org.id, host.id, now=1700.0) == 1
+    assert store.revoke_host_keys(org.id, host.id, now=1800.0) == 0
 
 
 def test_contract_on_memory_store():

@@ -106,6 +106,9 @@ class Request:
     session: Any = None
     user: Any = None
     org: Any = None
+    #: The agent :class:`~interlock.cloud.auth.agent.KeyContext`, when the
+    #: request authenticated with a bearer agent key rather than a session.
+    key: Any = None
 
     def cookie(self, name: str) -> Optional[str]:
         return self.cookies.get(name)

@@ -6,4 +6,4 @@ inside the function that needs them.
 """
 from __future__ import annotations
 
-__all__ = ["oidc", "rbac", "sessions", "stepup"]
+__all__ = ["agent", "oidc", "rbac", "sessions", "stepup"]

@@ -503,19 +503,36 @@ interlock cloud status --json
 ```
 
 The connector is outbound-only: it polls the plane for reviews, grants and
-policy manifests, and the plane cannot dial this host. Every action is a stub
-in this release - it prints a notice and exits 3; the transport follows in its
-own milestone.
+policy manifests, and the plane cannot dial this host. `enroll`, `run`,
+`status` and `leave` are implemented; `policy` stays a stub until policy
+distribution ships.
 
-Exit codes: 0 ok, 3 the action is not implemented yet, 64 the command line was
-wrong (no action, or one that does not exist).
+`enroll` consumes a single-use enrollment token, writes an Ed25519 host seed
+and `cloud.json` under the connector home (`$IL_CLOUD_HOME`, default
+`~/.interlock`) with mode `0600`, and prints the host id and agent key id -
+never the agent key. `run` reconciles reviews from the local queue, uploads
+the metadata batch, long-polls for grants and heartbeats; `--once` does one
+cycle and exits non-zero when the sync failed. `status` reports connectivity,
+spool depth, queue lag and revocation without printing credentials. `leave`
+removes `cloud.json` and the seed and prints what it left on disk.
+
+`keys rotate|revoke` calls the admin API and needs an operator session, taken
+from `IL_CLOUD_ADMIN_COOKIE` and `IL_CLOUD_ADMIN_CSRF` - never from argv, which
+is visible in `ps` and shell history. The CLI never prompts for a password;
+without a session it prints how to rotate or revoke from the web UI instead.
+
+Exit codes: 0 ok, 1 the action failed, 2 no connector config, 3 the action is
+not implemented yet, 64 the command line was wrong (no action, or one that
+does not exist).
 
 ```text
 usage: interlock cloud [-h] ACTION ...
-usage: interlock cloud enroll [-h] [--url URL] [--token TOKEN]
-usage: interlock cloud run [-h] [--once] [--url URL]
-usage: interlock cloud status [-h] [--json]
-usage: interlock cloud leave [-h] [--url URL]
+usage: interlock cloud enroll [-h] [--url URL] [--token TOKEN] [--name NAME]
+                              [--home DIR]
+usage: interlock cloud run [-h] [--once] [--url URL] [--home DIR] [--verbose]
+usage: interlock cloud status [-h] [--json] [--home DIR]
+usage: interlock cloud leave [-h] [--yes] [--home DIR]
+usage: interlock cloud keys [-h] [--host HOST] [--key KEY] [--url URL]
+                            [--json] [--home DIR] [rotate|revoke]
 usage: interlock cloud policy [-h] [--policy FILE]
-usage: interlock cloud keys [-h] [--json]
 ```

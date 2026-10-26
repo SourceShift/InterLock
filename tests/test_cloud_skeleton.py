@@ -489,11 +489,11 @@ def test_unknown_cloud_action_is_a_usage_error():
     assert main(["cloud", "bogus"]) == 64
 
 
-def test_cloud_stub_prints_a_notice_and_returns_3(capsys):
+def test_cloud_policy_is_the_one_remaining_stub(capsys):
     from interlock.cli import main
 
-    assert main(["cloud", "status"]) == 3
-    assert "interlock cloud status: not implemented yet" in capsys.readouterr().err
+    assert main(["cloud", "policy"]) == 3
+    assert "interlock cloud policy: not implemented yet" in capsys.readouterr().err
 
 
 def test_cloud_enroll_help_exits_zero():

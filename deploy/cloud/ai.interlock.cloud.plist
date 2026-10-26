@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Run the interlock cloud connector as a per-user launchd agent.
+
+    cp deploy/cloud/ai.interlock.cloud.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/ai.interlock.cloud.plist
+
+  Enroll first with `interlock cloud enroll`; this file contains no
+  credentials and the connector opens no listening socket.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.interlock.cloud</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>python3</string>
+    <string>-m</string>
+    <string>interlock.cloud</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>IL_CLOUD_HOME</key>
+    <string>/Users/USERNAME/.interlock</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/USERNAME/.interlock/connector.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/USERNAME/.interlock/connector.err</string>
+</dict>
+</plist>

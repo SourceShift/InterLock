@@ -1,0 +1,36 @@
+# Run the interlock cloud connector as a user service.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/cloud/interlock-cloud.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now interlock-cloud
+#
+# Enroll first with `interlock cloud enroll`; the unit carries no credentials.
+# The connector is outbound-only, so no ports are opened and no secret is
+# placed in the unit file.
+[Unit]
+Description=interlock cloud connector
+Documentation=https://interlock.sourceshift.ai/docs/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# A user unit runs as the installing user; keep the dotfiles it owns.
+User=%u
+Environment=IL_CLOUD_HOME=%h/.interlock
+ExecStart=/usr/bin/env python3 -m interlock.cloud run
+Restart=on-failure
+RestartSec=10s
+# The connector needs only its own home and the local queue.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.interlock
+# SIGTERM is handled: the loop sleeps between cycles and exits 0.
+KillSignal=SIGTERM
+TimeoutStopSec=40s
+
+[Install]
+WantedBy=default.target
