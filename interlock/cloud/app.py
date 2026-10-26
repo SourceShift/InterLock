@@ -18,8 +18,10 @@ from . import db
 from .api.auth_routes import register as register_auth_routes
 from .api.grant_routes import register as register_grant_routes
 from .api.host_routes import register as register_host_routes
+from .api.policy_routes import register as register_policy_routes
 from .api.receipt_routes import register as register_receipt_routes
 from .api.review_routes import register as register_review_routes
+from ..mesh.ed25519 import public_key
 from .ui import register as register_ui_routes
 from .crypto import parse_kek
 from .db import CloudDependencyMissing
@@ -108,7 +110,8 @@ class CloudApp:
                  ping: Callable[[str], bool] = db.ping,
                  store: Any = None, oidc: Any = None,
                  clock: Callable[[], float] = time.time,
-                 approval_seed: Optional[bytes] = None) -> None:
+                 approval_seed: Optional[bytes] = None,
+                 policy_seed: Optional[bytes] = None) -> None:
         self.config = config or CloudConfig()
         self._ping = ping
         self._clock = clock
@@ -116,6 +119,9 @@ class CloudApp:
         #: directly; production reads the operator's 0600 key file.
         self._approval_seed_override = approval_seed
         self._approval_seed: Optional[bytes] = None
+        #: C5 policy signing material, kept separate from the approval key.
+        self._policy_seed_override = policy_seed
+        self._policy_seed: Optional[bytes] = None
         self._preview_kek: Optional[bytes] = None
         if store is None:
             store = (PostgresStore(self.config.dsn) if self.config.dsn
@@ -142,6 +148,7 @@ class CloudApp:
         register_review_routes(self)
         register_grant_routes(self)
         register_receipt_routes(self)
+        register_policy_routes(self)
         register_ui_routes(self)
 
     # -- C3 signing and encryption material -----------------------------
@@ -161,6 +168,26 @@ class CloudApp:
         """The public key an enrolling host pins; empty when unconfigured."""
         try:
             return _approval_public_key_hex(self.approval_seed())
+        except Exception:
+            return ""
+
+    # -- C5 policy signing ----------------------------------------------
+    def policy_seed(self) -> bytes:
+        """The policy signing seed, loaded once from its own key file."""
+        if self._policy_seed is None:
+            if self._policy_seed_override is not None:
+                self._policy_seed = bytes(self._policy_seed_override)
+            elif self.config.policy_key_file:
+                self._policy_seed = read_seed_file(self.config.policy_key_file)
+            else:
+                raise CloudDependencyMissing(
+                    "IL_CLOUD_POLICY_KEY_FILE is not configured")
+        return self._policy_seed
+
+    def policy_public_key_hex(self) -> str:
+        """The public key an enrolling host pins for policy; empty if unset."""
+        try:
+            return public_key(self.policy_seed()).hex()
         except Exception:
             return ""
 

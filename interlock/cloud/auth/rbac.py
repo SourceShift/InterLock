@@ -79,6 +79,14 @@ PERMISSIONS: Dict[Tuple[str, str], Set[str]] = {
     # Unfreezing receipt ingest after a fork is a deliberate, audited
     # administrator action with a required reason.
     ("POST", "/v1/hosts/{id}/unfreeze"): {"owner", "admin"},
+    # C5: compiling and publishing policy are administrative actions. A kill
+    # switch is an owner action; promot/rollback is administrative. Auditors
+    # may list rollouts but cannot change distribution.
+    ("POST", "/v1/policy/compile"): {"owner", "admin"},
+    ("POST", "/v1/policy/manifests"): {"owner", "admin"},
+    ("POST", "/v1/policy/kills"): {"owner"},
+    ("POST", "/v1/policy/rollouts/promote"): {"owner", "admin"},
+    ("GET", "/v1/policy/rollouts"): {"owner", "admin", "auditor"},
 }
 
 #: (method, literal route) -> required agent scope, or ``None`` when any
@@ -96,6 +104,15 @@ AGENT_ROUTES: Dict[Tuple[str, str], Optional[str]] = {
     # are scoped to the authenticated key's host, never a body-supplied one.
     ("POST", "/v1/receipts"): "ingest:receipts",
     ("POST", "/v1/checkpoints"): "ingest:receipts",
+    # C5 connector surface. The key must carry the policy-pull scope; every
+    # route is scoped to the authenticated key's host and org, never a
+    # body-supplied identity.
+    ("GET", "/v1/hints"): "pull:policy",
+    ("GET", "/v1/manifest"): "pull:policy",
+    ("GET", "/v1/kills"): "pull:policy",
+    # Variable route: the artifact is addressed by hash, and a host may only
+    # fetch bytes the plane stored for its own org.
+    ("GET", "/v1/artifacts/{sha256}"): "pull:policy",
 }
 
 
@@ -145,15 +162,30 @@ def is_authenticated_route(method: str, path: str) -> bool:
     return (method.upper(), normalize_route(path)) in AUTHENTICATED_ROUTES
 
 
-def agent_route(method: str, path: str) -> Optional[Tuple[str, str]]:
-    """The ``AGENT_ROUTES`` key for an exact agent route, else ``None``.
+_AGENT_VAR_ROUTES: List[Tuple[Pattern[str], Tuple[str, str]]] = sorted(
+    ((_compile(route), (method, route))
+     for method, route in AGENT_ROUTES if "{" in route),
+    key=lambda item: -len(item[1][1]),
+)
 
-    Agent routes are matched verbatim, before variable human routes are
+
+def agent_route(method: str, path: str) -> Optional[Tuple[str, str]]:
+    """The ``AGENT_ROUTES`` key for an agent route, else ``None``.
+
+    Literal entries are matched verbatim, before variable human routes are
     normalised, so ``/v1/hosts/self`` is never folded onto
-    ``/v1/hosts/{id}``.
+    ``/v1/hosts/{id}``. A parameterised agent route (the artifact-by-hash
+    fetch) is matched only against the agent table - it can never widen a
+    human permission row.
     """
-    key = (method.upper(), path.split("?", 1)[0])
-    return key if key in AGENT_ROUTES else None
+    clean = path.split("?", 1)[0]
+    key = (method.upper(), clean)
+    if key in AGENT_ROUTES:
+        return key
+    for pattern, route_key in _AGENT_VAR_ROUTES:
+        if route_key[0] == method.upper() and pattern.match(clean):
+            return route_key
+    return None
 
 
 def required_agent_scope(method: str, path: str) -> Optional[str]:

@@ -175,8 +175,9 @@ separately and are immutable.
 ```
 
 - `version` is strictly increasing per org; `epoch` is the identity of the
-  compiled rule set (`PolicyEngine.epoch`), so a receipt can name both the
-  rollout and the exact rules that produced a verdict.
+  compiled rule set, `sha256(canonical artifact body without epoch)[:16]`, so
+  a receipt can name both the rollout and the exact rules that produced a
+  verdict.
 - `target` names an org, a host group or a single host. A host applies only a
   manifest that names it; a target mismatch is refused, not ignored.
 - `expires_at` is at most 7 days out. Expiry is an alarm, not a licence: the
@@ -537,7 +538,10 @@ grant-like rotation document signed by the old key.
   proposed scope bindings through `ScopeRegistry`, lower them to a flat,
   documented artifact format, and verify the artifact by evaluating the source
   and compiled forms over the same corpus and comparing verdicts; a mismatch or
-  an invalid binding shall refuse the compile.
+  an invalid binding shall refuse the compile. Scope templates are code and
+  shall not be embedded in the artifact: the artifact carries a
+  `module:attr` reference, and a loader that cannot resolve that reference
+  shall refuse the artifact rather than fall back to a bare or local policy.
 - **FR-042** The compiler shall be deterministic — identical source yields
   byte-identical artifact bytes (canonical JSON, sorted keys, sorted rule
   order) — and the artifact's sha256 shall be its only identity.
@@ -1055,27 +1059,31 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
 
 ### M5 — Policy compilation and distribution
 
-- [ ] Define artifact format v1 in `interlock/policy/artifact.py`: flat rule
-      records, principals, detectors, per-class failure policy, format version;
-      canonical serializer with sorted keys and rule order.
-- [ ] Implement `interlock/policy/compile.py`: lower `ScopeRegistry` bindings
-      to the artifact and verify by evaluating source and compiled forms over a
-      corpus before signing anything.
-- [ ] Implement `POST /v1/policy/compile` and artifact storage by sha256 in
-      `policy_artifacts` plus object store; deterministic sha256 in tests.
-- [ ] Implement manifest signing, the strictly increasing version allocator,
-      expiry (≤7 days), target resolution and `policy_manifests`.
-- [ ] Implement `POST /v1/policy/publish` with rollout rings, hold on health
-      regression and rollback by publishing the old source above every host
-      version.
-- [ ] Implement `GET /v1/manifest`, `GET /v1/artifacts/{sha256}` and the
+- [x] Define artifact format v1 in `interlock/policy/artifact.py`: normalised
+      documents, scope bindings, a `module:attr` template reference, per-class
+      failure policy, format version; canonical serializer with sorted keys,
+      epoch recomputed from the body without it, and refusal of a module
+      mismatch or an unresolvable template reference.
+- [x] Implement `interlock/cloud/policy/compile.py`: lower `ScopeRegistry`
+      bindings to the artifact and verify by evaluating source and compiled
+      forms over a shared corpus before publishing anything; refuse the first
+      divergence, and report deterministic template ids and diffs.
+- [x] Implement `POST /v1/policy/compile` and artifact storage by sha256 in
+      `policy_artifacts`; deterministic sha256 in tests.
+- [x] Implement manifest signing, the strictly increasing version allocator,
+      expiry (≤7 days), target resolution and `policy_manifests`, published by
+      `POST /v1/policy/manifests`.
+- [x] Implement rollout rings in `POST /v1/policy/rollouts/promote` with hold
+      on health regression and rollback by publishing the old source above
+      every host version.
+- [x] Implement `GET /v1/manifest`, `GET /v1/artifacts/{sha256}` and the
       version-only `GET /v1/hints` long-poll.
-- [ ] Implement connector verification: signature, target, expiry, artifact
+- [x] Implement connector verification: signature, target, expiry, artifact
       hash, highest-version persistence **outside** the artifact directory,
       temp-file fetch, fsync, rename, atomic pointer swap, `.prev` fallback.
-- [ ] Implement signed kill switch (`POST /v1/policy/kill`), connector honouring
-      within one cycle, and its receipt stamp.
-- [ ] Load the active artifact once per hook process; fail closed when missing
+- [x] Implement signed kill switch (`POST /v1/policy/kills`, `GET /v1/kills`),
+      connector honouring within one cycle, and its receipt stamp.
+- [x] Load the active artifact once per hook process; fail closed when missing
       or invalid; keep the legacy source-policy loader for non-cloud installs.
 - [ ] Extend `interlock cloud status` with version, epoch, sha256, last swap
       and alarm state.
@@ -1088,8 +1096,6 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
 - [ ] Add the `PolicyEvaluator` protocol in `interlock/policy/evaluator.py` and
       `PurePythonEvaluator`, compiled from the artifact once per epoch with no
       per-call scope merging.
-- [ ] Add `--artifact` to `interlock install-hook` and `interlock hook`,
-      mutually exclusive with `--policy`, keeping the local path unchanged.
 - [ ] Add `rust/interlock_eval` (maturin cdylib) implementing `il_eval` over
       the C ABI, plus the `ctypes` binding and absent-library detection.
 - [ ] Add the parity corpus and a test asserting identical verdicts, rule ids

@@ -212,6 +212,11 @@ class Receipt:
     # receipts can say which published detector set decided. Omitted while
     # None, like the other optional fields, so older chains verify unchanged.
     catalog: Optional[str] = None
+    # The sha256 of the distributed policy artifact that decided the call
+    # (C5, FR-041), stamped only by a host running a manifest-delivered
+    # artifact. Declared last so the MAC of every older receipt is unchanged;
+    # omitted while None, so local-only installs write byte-identical chains.
+    policy_artifact: Optional[str] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape.
@@ -248,6 +253,7 @@ _FIELD_NAMES = tuple(f.name for f in dataclasses.fields(Receipt))
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
     "enforcer", "elapsed_us", "masked", "tokens", "scope_document", "catalog",
+    "policy_artifact",
 )
 
 # The catalog id receipts carry, once a mesh component has set it. None (the
@@ -404,6 +410,7 @@ def emit_receipt(
     elapsed_us: Optional[int] = None,
     phase: Optional[str] = None,
     scope_document: Optional[str] = None,
+    policy_artifact: Optional[str] = None,
 ) -> None:
     """Build one Receipt from the enforced decision and write it to the sink.
 
@@ -453,6 +460,7 @@ def emit_receipt(
         tokens=tokens,
         scope_document=scope_document,
         catalog=_CATALOG_ID,
+        policy_artifact=policy_artifact,
     )
     if sink is not None:
         _write(sink, receipt, event.action)

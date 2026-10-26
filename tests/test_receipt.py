@@ -170,3 +170,29 @@ def test_an_ed25519_chain_verifies_with_only_the_public_key():
     receipts[0].principal = "mallory"
     assert verify_chain(receipts, None, b"", verifier=verifier).startswith(
         "receipt 0:")
+
+
+def test_policy_artifact_is_optional_covered_by_the_mac_and_chain_safe():
+    from interlock.enforce import Decision
+    from interlock.event import SensorEvent
+    from interlock.receipt import emit_receipt, set_sink
+    from interlock.sink import InMemorySink
+
+    sink = InMemorySink(key=KEY)
+    set_sink(sink)
+    try:
+        event = SensorEvent("run_shell", {"cmd": "ls"}, principal="agent")
+        emit_receipt(event, Decision.allow(), policy_epoch="epoch-1")
+        emit_receipt(event, Decision.block("no", "p-1"),
+                     policy_epoch="epoch-2", policy_artifact="a" * 64)
+    finally:
+        set_sink(None)
+
+    local, artifact = sink.receipts
+    assert "policy_artifact" not in local.fields()
+    assert artifact.fields()["policy_artifact"] == "a" * 64
+    assert verify_chain(sink.receipts, hmac_sha256, KEY) is None
+
+    # Editing the field breaks the mac like every other covered field.
+    artifact.policy_artifact = "b" * 64
+    assert verify_chain(sink.receipts, hmac_sha256, KEY).startswith("receipt 1:")

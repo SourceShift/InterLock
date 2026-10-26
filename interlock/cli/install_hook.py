@@ -35,6 +35,9 @@ def add_arguments(parser) -> None:
     parser.add_argument("--settings", metavar="FILE",
                         help="the agent's settings file (default: its usual path)")
     parser.add_argument("--policy", metavar="FILE", help="pin this policy file in the hook")
+    parser.add_argument("--artifact", metavar="PATH",
+                        help="pin a distributed policy artifact (or its directory) in "
+                             "the hook; mutually exclusive with --policy")
     parser.add_argument("--sidecar", metavar="PATH", help="decide through this sidecar")
     parser.add_argument("--receipts", metavar="FILE", help="receipt log path")
     parser.add_argument("--key-file", metavar="FILE", help="receipt key path")
@@ -137,7 +140,9 @@ def hook_command(agent: str, args) -> str:
     parts = [shlex.quote(sys.executable), "-I", "-c",
              shlex.quote("exec({})".format(json.dumps(source))),
              "interlock", "hook", "--agent", shlex.quote(agent)]
-    for flag, value in (("--policy", args.policy), ("--sidecar", args.sidecar),
+    for flag, value in (("--policy", args.policy),
+                        ("--artifact", getattr(args, "artifact", None)),
+                        ("--sidecar", args.sidecar),
                         ("--receipts", args.receipts), ("--key-file", args.key_file),
                         ("--review-db", getattr(args, "review_db", None))):
         if value:
@@ -161,6 +166,10 @@ def run(args) -> int:
     from ..adapters.config import ensure_home
 
     names = sorted(ADAPTERS) if args.agents == "all" else [args.agents]
+    if getattr(args, "artifact", None) and getattr(args, "policy", None):
+        sys.stderr.write(
+            "interlock install-hook: --artifact cannot be combined with --policy\n")
+        return 64
     if args.settings and len(names) > 1:
         sys.stderr.write("interlock install-hook: --settings needs a single --for agent\n")
         return 64

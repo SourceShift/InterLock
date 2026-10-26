@@ -108,7 +108,8 @@ class Connector:
                  clock: Any = time.time, sleep: Any = time.sleep,
                  random_fn: Any = random.uniform,
                  timeout: float = 30,
-                 max_attempts: int = DEFAULT_MAX_ATTEMPTS) -> None:
+                 max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+                 poll_policy: bool = False) -> None:
         self.home = home if isinstance(home, CloudHome) else CloudHome(home)
         self.transport = transport
         self.queue = queue
@@ -117,9 +118,25 @@ class Connector:
         self.random_fn = random_fn
         self.timeout = timeout
         self.max_attempts = max(1, int(max_attempts))
+        #: C5 policy distribution is opt-in for the same connector loop. The
+        #: existing review/receipt/grants cycle keeps its exact request order
+        #: unless an operator (or a test) asks it to also pull policy.
+        self.poll_policy = bool(poll_policy)
+        self._policy: Any = None
         self._config: Optional[Dict[str, Any]] = None
         self._state: Optional[Dict[str, Any]] = None
         self._spool: Optional[Spool] = None
+
+    @property
+    def policy_distributor(self) -> Any:
+        """The C5 distributor sharing this connector's home, transport, clock."""
+        if self._policy is None:
+            from .policy import PolicyDistributor
+
+            self._policy = PolicyDistributor(
+                self.home, self.transport, self.clock,
+                timeout=self.timeout)
+        return self._policy
 
     # -- paths and persistence -----------------------------------------
     @property
@@ -511,7 +528,18 @@ class Connector:
         uploaded = 0
         receipts_spooled = 0
         revoked = False
+        policy = None
         poll_after = int(state.get("poll_after") or DEFAULT_POLL_AFTER)
+
+        # 0. Pull policy first when enabled: a new manifest must be active
+        #    before this cycle uploads receipts produced under it.
+        if self.poll_policy:
+            try:
+                policy = self.policy_distributor.poll_once()
+                if not policy.get("ok") and policy.get("last_error"):
+                    errors.append(str(policy["last_error"]))
+            except Exception as exc:  # a distribution bug must not stall upload
+                errors.append(redact(str(exc)))
 
         # 1. Reconcile reviews filed while the connector was down.
         for review in self._pending_reviews():
@@ -670,7 +698,7 @@ class Connector:
 
         state["last_error"] = errors[0] if errors else None
         self._save_state(state)
-        return {
+        result = {
             "ok": not errors,
             "reviews": reviews,
             "uploaded": uploaded,
@@ -679,6 +707,11 @@ class Connector:
             "revoked": False,
             "error": errors[0] if errors else None,
         }
+        if self.poll_policy:
+            # Only a policy-polling cycle has a policy outcome; a local-only
+            # connector keeps its original result shape exactly.
+            result["policy"] = policy
+        return result
 
     def _revoked(self, state: Dict[str, Any], reviews: int, uploaded: int,
                  errors: list) -> Dict[str, Any]:

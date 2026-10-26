@@ -232,6 +232,7 @@ async def enroll(app: Any, request: Request) -> Response:
     # strings are explicit "not configured", never a usable pin.
     plane_keys = {name: "" for name in PLANE_KEY_NAMES}
     plane_keys["approval"] = app.approval_public_key_hex()
+    plane_keys["policy"] = app.policy_public_key_hex()
     return json_response(201, {
         "host_id": host.id,
         "agent_key": raw_key,

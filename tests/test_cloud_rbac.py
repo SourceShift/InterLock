@@ -125,6 +125,12 @@ def test_agent_routes_are_literal_and_separate_from_the_human_matrix():
         ("POST", "/v1/grants/ack"): None,
         ("POST", "/v1/receipts"): "ingest:receipts",
         ("POST", "/v1/checkpoints"): "ingest:receipts",
+        # C5: the pull side of policy distribution, plus the by-sha artifact
+        # fetch (a variable route, matched by pattern rather than literally).
+        ("GET", "/v1/hints"): "pull:policy",
+        ("GET", "/v1/manifest"): "pull:policy",
+        ("GET", "/v1/kills"): "pull:policy",
+        ("GET", "/v1/artifacts/{sha256}"): "pull:policy",
     }
     for method, route in rbac.AGENT_ROUTES:
         assert (method, route) not in rbac.PERMISSIONS

@@ -87,6 +87,10 @@ class CloudConfig:
     #: The hex 32-byte Ed25519 approval seed. Never stored in the database,
     #: never logged; a self-hosted plane supplies it as a 0600 file.
     approval_key_file: str = ""
+    #: The hex 32-byte Ed25519 *policy* seed (C5). A distinct key from the
+    #: approval key: a manifest signature must never be interchangeable with a
+    #: grant signature.
+    policy_key_file: str = ""
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "CloudConfig":
@@ -125,6 +129,7 @@ class CloudConfig:
             ),
             preview_kek=env.get("IL_CLOUD_PREVIEW_KEK", ""),
             approval_key_file=env.get("IL_CLOUD_APPROVAL_KEY_FILE", ""),
+            policy_key_file=env.get("IL_CLOUD_POLICY_KEY_FILE", ""),
         )
 
     def validate(self) -> None:

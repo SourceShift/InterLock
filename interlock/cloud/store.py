@@ -14,6 +14,7 @@ this module needs no site-packages.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import secrets
 import threading
@@ -401,6 +402,16 @@ class MemoryStore:
         self.receipt_heads: Dict[Tuple[str, str], Dict[str, Any]] = {}
         #: Stored checkpoint documents, append-only.
         self.checkpoints: List[Dict[str, Any]] = []
+        #: C5: (org_id, sha256) -> artifact record (canonical bytes included).
+        self.policy_artifacts: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        #: (org_id, version) -> manifest record (the signed envelope included).
+        self.policy_manifests: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        #: (org_id, kill_epoch) -> kill record.
+        self.policy_kills: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        #: (org_id, rollout_id) -> rollout record.
+        self.policy_rollouts: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        #: (org_id, source_version) -> authored policy source.
+        self.policy_sources: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
     # -- orgs -----------------------------------------------------------
     def create_org(self, slug: str, name: str, *, id: Optional[str] = None,
@@ -1359,6 +1370,249 @@ class MemoryStore:
             "dry_run": bool(dry_run),
             "at": at,
         }
+
+    # -- C5 policy distribution -----------------------------------------
+    def put_artifact(self, org_id: str, sha256: str, data: bytes, *,
+                     epoch: Optional[str] = None, fmt: int = 1,
+                     compiler_version: str = "c5",
+                     now: Optional[float] = None) -> Dict[str, Any]:
+        """Store canonical artifact bytes idempotently by sha256."""
+        oid = _org_id(org_id) or ""
+        raw = bytes(data)
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != sha256:
+            raise ValueError("sha256 does not match the artifact bytes")
+        with self._lock:
+            existing = self.policy_artifacts.get((oid, sha256))
+            if existing is not None:
+                return dict(existing)
+            record = {
+                "org_id": oid,
+                "sha256": sha256,
+                "artifact": raw,
+                "artifact_size": len(raw),
+                "format": int(fmt),
+                "epoch": str(epoch or ""),
+                "compiler_version": str(compiler_version),
+                "created": _epoch() if now is None else float(now),
+            }
+            self.policy_artifacts[(oid, sha256)] = record
+            return dict(record)
+
+    def artifact_bytes(self, org_id: str, sha256: str) -> Optional[bytes]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            record = self.policy_artifacts.get((oid, sha256))
+            return None if record is None else bytes(record["artifact"])
+
+    def next_manifest_version(self, org_id: str) -> int:
+        """The next strictly increasing manifest version for one org."""
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            versions = [key[1] for key in self.policy_manifests if key[0] == oid]
+            return (max(versions) + 1) if versions else 1
+
+    def put_manifest(self, org_id: str, document: Mapping[str, Any], *,
+                     author: Optional[str] = None,
+                     now: Optional[float] = None) -> Dict[str, Any]:
+        """Store a signed manifest; its version must strictly increase."""
+        oid = _org_id(org_id) or ""
+        envelope = dict(document)
+        try:
+            version = int(envelope["version"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("a manifest needs an integer version") from None
+        target = envelope.get("target") or {}
+        artifact = envelope.get("artifact") or {}
+        if not isinstance(target, Mapping) or not isinstance(artifact, Mapping):
+            raise ValueError("a manifest needs target and artifact objects")
+        with self._lock:
+            versions = [key[1] for key in self.policy_manifests if key[0] == oid]
+            if versions and version <= max(versions):
+                raise ValueError(
+                    "manifest version {} does not increase past {}".format(
+                        version, max(versions))
+                )
+            record = {
+                "org_id": oid,
+                "version": version,
+                "manifest_id": envelope.get("manifest_id"),
+                "epoch": str(envelope.get("epoch") or ""),
+                "target_kind": str(target.get("kind") or ""),
+                "target_id": str(target.get("id") or ""),
+                "artifact_sha256": str(artifact.get("sha256") or ""),
+                "artifact_size": int(artifact.get("size") or 0),
+                "mode": envelope.get("mode"),
+                "issued_at": float(envelope.get("issued_at") or 0.0),
+                "expires_at": float(envelope.get("expires_at") or 0.0),
+                "minimum_agent": envelope.get("minimum_agent"),
+                "rules_digest": envelope.get("rules_digest"),
+                "key_id": envelope.get("key_id"),
+                "signature": envelope.get("sig"),
+                "manifest": envelope,
+                "author": author,
+                "created": _epoch() if now is None else float(now),
+            }
+            self.policy_manifests[(oid, version)] = record
+            return dict(record)
+
+    def manifest_for_host(self, org_id: str, host_id: str, *,
+                          ring: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The manifest that applies, honouring host > ring > org precedence."""
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            candidates = [record for (row_org, _v), record in
+                          self.policy_manifests.items() if row_org == oid]
+        for kind, identifier in (
+                ("host", host_id), ("ring", ring), ("org", oid)):
+            if identifier is None:
+                continue
+            matching = [record for record in candidates
+                        if record["target_kind"] == kind
+                        and record["target_id"] == identifier]
+            if matching:
+                newest = max(matching, key=lambda record: record["version"])
+                return dict(newest["manifest"])
+        return None
+
+    def kill_epoch(self, org_id: str) -> int:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            epochs = [key[1] for key in self.policy_kills if key[0] == oid]
+            return max(epochs) if epochs else 0
+
+    def put_kill(self, org_id: str, document: Mapping[str, Any], *,
+                 author: Optional[str] = None,
+                 now: Optional[float] = None) -> Dict[str, Any]:
+        """Store a signed kill and assign it the next per-org kill epoch."""
+        oid = _org_id(org_id) or ""
+        envelope = dict(document)
+        target = envelope.get("target") or {}
+        with self._lock:
+            other = [record for (row_org, _e), record in self.policy_kills.items()
+                     if row_org == oid and record["id"] == envelope.get("id")]
+            if other:
+                return dict(other[0])
+            epochs = [key[1] for key in self.policy_kills if key[0] == oid]
+            epoch = (max(epochs) + 1) if epochs else 1
+            record = {
+                "org_id": oid,
+                "kill_epoch": epoch,
+                "id": str(envelope.get("id") or ""),
+                "reason": str(envelope.get("reason") or ""),
+                "target_kind": str(target.get("kind") or "") if isinstance(target, Mapping) else "",
+                "target_id": str(target.get("id") or "") if isinstance(target, Mapping) else "",
+                "issued_at": float(envelope.get("issued_at") or 0.0),
+                "author": author,
+                "document": envelope,
+            }
+            self.policy_kills[(oid, epoch)] = record
+            return dict(record)
+
+    def kills_since(self, org_id: str, since: int = 0) -> List[Dict[str, Any]]:
+        """Signed kills whose epoch is greater than ``since``, in order."""
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            records = [record for (row_org, epoch), record
+                       in self.policy_kills.items()
+                       if row_org == oid and epoch > int(since)]
+        records.sort(key=lambda record: record["kill_epoch"])
+        return [dict(record["document"]) for record in records]
+
+    def rollout_open(self, org_id: str, rollout_id: str,
+                     manifest_version: int, ring: str, *,
+                     state: str = "canary", percent: int = 0,
+                     now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            if (oid, rollout_id) in self.policy_rollouts:
+                raise ValueError("rollout already exists: {}".format(rollout_id))
+            record = {
+                "org_id": oid, "id": rollout_id,
+                "manifest_version": int(manifest_version), "ring": ring,
+                "state": state, "percent": int(percent), "health": None,
+                "reason": None,
+                "promoted_at": _epoch() if now is None else float(now),
+                "rolled_back_at": None,
+                "updated_at": _epoch() if now is None else float(now),
+            }
+            self.policy_rollouts[(oid, rollout_id)] = record
+            return dict(record)
+
+    def rollout_promote(self, org_id: str, rollout_id: str, *,
+                        percent: Optional[int] = None,
+                        state: Optional[str] = None,
+                        health: Optional[str] = None,
+                        now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            record = self.policy_rollouts.get((oid, rollout_id))
+            if record is None:
+                raise NotFound("no such rollout")
+            if percent is not None:
+                record["percent"] = int(percent)
+                record["state"] = str(percent)
+            if state is not None:
+                record["state"] = str(state)
+            if health is not None:
+                record["health"] = str(health)
+            record["updated_at"] = at
+            if record["state"] == "rolled_back":
+                record["rolled_back_at"] = at
+            else:
+                record["promoted_at"] = at
+            return dict(record)
+
+    def rollout_record_failure(self, org_id: str, rollout_id: str,
+                               reason: str, *,
+                               now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            record = self.policy_rollouts.get((oid, rollout_id))
+            if record is None:
+                raise NotFound("no such rollout")
+            record["health"] = "failed"
+            record["reason"] = str(reason)
+            record["updated_at"] = _epoch() if now is None else float(now)
+            return dict(record)
+
+    def list_rollouts(self, org_id: str) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            records = [dict(record) for (row_org, _id), record
+                       in self.policy_rollouts.items() if row_org == oid]
+        return sorted(records, key=lambda record: record["id"])
+
+    def put_policy_source(self, org_id: str, documents: Any, scope: Any, *,
+                          rules_module: Optional[str] = None,
+                          now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            versions = [key[1] for key in self.policy_sources if key[0] == oid]
+            version = (max(versions) + 1) if versions else 1
+            record = {
+                "org_id": oid,
+                "source_version": version,
+                "documents": list(documents or []),
+                "scope": dict(scope or {}),
+                "rules_module": rules_module,
+                "updated_at": _epoch() if now is None else float(now),
+            }
+            self.policy_sources[(oid, version)] = record
+            return dict(record)
+
+    def policy_source(self, org_id: str, *,
+                      version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            if version is not None:
+                record = self.policy_sources.get((oid, int(version)))
+                return None if record is None else dict(record)
+            versions = [key[1] for key in self.policy_sources if key[0] == oid]
+            if not versions:
+                return None
+            return dict(self.policy_sources[(oid, max(versions))])
 
     # -- RLS context ----------------------------------------------------
     @contextlib.contextmanager
@@ -2677,6 +2931,344 @@ class PostgresStore:
             "skipped": skipped,
             "dry_run": bool(dry_run),
             "at": at,
+        }
+
+
+    # -- C5 policy distribution -----------------------------------------
+    def put_artifact(self, org_id: str, sha256: str, data: bytes, *,
+                     epoch: Optional[str] = None, fmt: int = 1,
+                     compiler_version: str = "c5",
+                     now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        raw = bytes(data)
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest != sha256:
+            raise ValueError("sha256 does not match the artifact bytes")
+        epoch = str(epoch or sha256[:16])
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "INSERT INTO policy_artifacts (org_id, sha256, storage_ref, "
+                "format, epoch, compiler_version, artifact, artifact_size, "
+                "created) VALUES (%s, %s, 'db', %s, %s, %s, %s, %s, "
+                "to_timestamp(%s)) ON CONFLICT (org_id, sha256) DO NOTHING",
+                (oid, sha256, str(fmt), epoch, str(compiler_version),
+                 raw, len(raw), at))
+            cur.execute(
+                "SELECT sha256, artifact, artifact_size, format, epoch, "
+                "compiler_version, created FROM policy_artifacts "
+                "WHERE org_id = %s AND sha256 = %s", (oid, sha256))
+            row = cur.fetchone()
+        return {
+            "org_id": oid, "sha256": row[0],
+            "artifact": bytes(row[1] or b""),
+            "artifact_size": int(row[2] or 0), "format": int(row[3] or 1),
+            "epoch": str(row[4] or ""), "compiler_version": str(row[5] or ""),
+            "created": _timestamp(row[6]),
+        }
+
+    def artifact_bytes(self, org_id: str, sha256: str) -> Optional[bytes]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT artifact FROM policy_artifacts WHERE org_id = %s "
+                "AND sha256 = %s", (oid, sha256))
+            row = cur.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return bytes(row[0])
+
+    def next_manifest_version(self, org_id: str) -> int:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (oid,))
+            cur.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM policy_manifests "
+                "WHERE org_id = %s", (oid,))
+            return int(cur.fetchone()[0])
+
+    def put_manifest(self, org_id: str, document: Mapping[str, Any], *,
+                     author: Optional[str] = None,
+                     now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        envelope = dict(document)
+        try:
+            version = int(envelope["version"])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("a manifest needs an integer version") from None
+        target = envelope.get("target") or {}
+        artifact = envelope.get("artifact") or {}
+        if not isinstance(target, Mapping) or not isinstance(artifact, Mapping):
+            raise ValueError("a manifest needs target and artifact objects")
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (oid,))
+            cur.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM policy_manifests "
+                "WHERE org_id = %s", (oid,))
+            highest = int(cur.fetchone()[0])
+            if version <= highest:
+                raise ValueError(
+                    "manifest version {} does not increase past {}".format(
+                        version, highest))
+            cur.execute(
+                "INSERT INTO policy_manifests (org_id, version, epoch, "
+                "target_kind, target_id, artifact_sha256, expires, key_id, "
+                "signature, author, manifest_id, mode, issued_at, "
+                "minimum_agent, rules_digest, artifact_size, document, created)"
+                " VALUES (%s, %s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, "
+                "%s, %s, %s, to_timestamp(%s), %s, %s, %s, %s::jsonb, "
+                "to_timestamp(%s))",
+                (oid, version, str(envelope.get("epoch") or ""),
+                 str(target.get("kind") or ""), str(target.get("id") or ""),
+                 str(artifact.get("sha256") or ""),
+                 float(envelope.get("expires_at") or 0.0),
+                 str(envelope.get("key_id") or ""),
+                 str(envelope.get("sig") or ""), author,
+                 envelope.get("manifest_id"), envelope.get("mode"),
+                 float(envelope.get("issued_at") or 0.0),
+                 envelope.get("minimum_agent"), envelope.get("rules_digest"),
+                 int(artifact.get("size") or 0), json.dumps(envelope), at))
+        return {
+            "org_id": oid, "version": version,
+            "manifest_id": envelope.get("manifest_id"),
+            "epoch": str(envelope.get("epoch") or ""),
+            "target_kind": str(target.get("kind") or ""),
+            "target_id": str(target.get("id") or ""),
+            "artifact_sha256": str(artifact.get("sha256") or ""),
+            "artifact_size": int(artifact.get("size") or 0),
+            "mode": envelope.get("mode"),
+            "issued_at": float(envelope.get("issued_at") or 0.0),
+            "expires_at": float(envelope.get("expires_at") or 0.0),
+            "minimum_agent": envelope.get("minimum_agent"),
+            "rules_digest": envelope.get("rules_digest"),
+            "key_id": envelope.get("key_id"),
+            "signature": envelope.get("sig"),
+            "manifest": envelope, "author": author, "created": at,
+        }
+
+    def manifest_for_host(self, org_id: str, host_id: str, *,
+                          ring: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT document FROM policy_manifests WHERE org_id = %s "
+                "AND ((target_kind = 'host' AND target_id = %s) "
+                "OR (target_kind = 'ring' AND target_id = %s) "
+                "OR (target_kind = 'org' AND target_id = %s)) "
+                "ORDER BY CASE target_kind WHEN 'host' THEN 0 "
+                "WHEN 'ring' THEN 1 ELSE 2 END, version DESC LIMIT 1",
+                (oid, host_id, ring or "", oid))
+            row = cur.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return dict(row[0])
+
+    def kill_epoch(self, org_id: str) -> int:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(kill_epoch), 0) FROM policy_kills "
+                "WHERE org_id = %s", (oid,))
+            return int(cur.fetchone()[0])
+
+    def put_kill(self, org_id: str, document: Mapping[str, Any], *,
+                 author: Optional[str] = None,
+                 now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        envelope = dict(document)
+        target = envelope.get("target") or {}
+        kind = str(target.get("kind") or "") if isinstance(target, Mapping) else ""
+        identifier = str(target.get("id") or "") if isinstance(target, Mapping) else ""
+        with self._transaction(oid) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (oid,))
+            cur.execute(
+                "SELECT kill_epoch, document FROM policy_kills WHERE org_id = %s "
+                "AND id = %s", (oid, str(envelope.get("id") or "")))
+            existing = cur.fetchone()
+            if existing is not None:
+                return {
+                    "org_id": oid, "kill_epoch": int(existing[0]),
+                    "id": str(envelope.get("id") or ""),
+                    "reason": str(envelope.get("reason") or ""),
+                    "target_kind": kind, "target_id": identifier,
+                    "issued_at": float(envelope.get("issued_at") or 0.0),
+                    "author": author, "document": dict(existing[1] or envelope),
+                }
+            cur.execute(
+                "SELECT COALESCE(MAX(kill_epoch), 0) + 1 FROM policy_kills "
+                "WHERE org_id = %s", (oid,))
+            epoch = int(cur.fetchone()[0])
+            cur.execute(
+                "INSERT INTO policy_kills (org_id, id, scope, reason, document, "
+                "author, issued_at, kill_epoch, target_kind, target_id) "
+                "VALUES (%s, %s, %s, %s, %s::jsonb, %s, to_timestamp(%s), %s, "
+                "%s, %s)",
+                (oid, str(envelope.get("id") or ""),
+                 "{}:{}".format(kind, identifier),
+                 str(envelope.get("reason") or ""), json.dumps(envelope),
+                 author or "", float(envelope.get("issued_at") or 0.0), epoch,
+                 kind, identifier))
+        return {
+            "org_id": oid, "kill_epoch": epoch,
+            "id": str(envelope.get("id") or ""),
+            "reason": str(envelope.get("reason") or ""),
+            "target_kind": kind, "target_id": identifier,
+            "issued_at": float(envelope.get("issued_at") or 0.0),
+            "author": author, "document": envelope,
+        }
+
+    def kills_since(self, org_id: str, since: int = 0) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT document FROM policy_kills WHERE org_id = %s "
+                "AND kill_epoch > %s ORDER BY kill_epoch", (oid, int(since)))
+            return [dict(row[0] or {}) for row in cur.fetchall()]
+
+    def rollout_open(self, org_id: str, rollout_id: str,
+                     manifest_version: int, ring: str, *,
+                     state: str = "canary", percent: int = 0,
+                     now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "INSERT INTO policy_rollouts (org_id, id, manifest_version, "
+                "ring, state, health, promoted_at, percent, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, NULL, to_timestamp(%s), %s, "
+                "to_timestamp(%s))",
+                (oid, rollout_id, int(manifest_version), ring, state, at,
+                 int(percent), at))
+        return {
+            "org_id": oid, "id": rollout_id,
+            "manifest_version": int(manifest_version), "ring": ring,
+            "state": state, "percent": int(percent), "health": None,
+            "reason": None, "promoted_at": at, "rolled_back_at": None,
+            "updated_at": at,
+        }
+
+    def rollout_promote(self, org_id: str, rollout_id: str, *,
+                        percent: Optional[int] = None,
+                        state: Optional[str] = None,
+                        health: Optional[str] = None,
+                        now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT state, percent, rolled_back_at FROM policy_rollouts "
+                "WHERE org_id = %s AND id = %s FOR UPDATE", (oid, rollout_id))
+            row = cur.fetchone()
+            if row is None:
+                raise NotFound("no such rollout")
+            next_state = str(state) if state is not None else (
+                str(percent) if percent is not None else row[0])
+            next_percent = int(percent) if percent is not None else int(row[1] or 0)
+            rolled = at if next_state == "rolled_back" else row[2]
+            cur.execute(
+                "UPDATE policy_rollouts SET state = %s, percent = %s, "
+                "health = COALESCE(%s, health), updated_at = to_timestamp(%s), "
+                "promoted_at = CASE WHEN %s = 'rolled_back' THEN promoted_at "
+                "ELSE to_timestamp(%s) END, rolled_back_at = to_timestamp(%s) "
+                "WHERE org_id = %s AND id = %s",
+                (next_state, next_percent, health, at, next_state, at,
+                 rolled, oid, rollout_id))
+        return self.rollout(org_id, rollout_id)
+
+    def rollout_record_failure(self, org_id: str, rollout_id: str,
+                               reason: str, *,
+                               now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "UPDATE policy_rollouts SET health = 'failed', reason = %s, "
+                "updated_at = to_timestamp(%s) WHERE org_id = %s AND id = %s",
+                (str(reason), at, oid, rollout_id))
+            if cur.rowcount == 0:
+                raise NotFound("no such rollout")
+        return self.rollout(org_id, rollout_id)
+
+    def rollout(self, org_id: str, rollout_id: str) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT id, manifest_version, ring, state, health, "
+                "promoted_at, rolled_back_at, percent, reason, updated_at "
+                "FROM policy_rollouts WHERE org_id = %s AND id = %s",
+                (oid, rollout_id))
+            row = cur.fetchone()
+        if row is None:
+            raise NotFound("no such rollout")
+        return {
+            "org_id": oid, "id": row[0],
+            "manifest_version": int(row[1]), "ring": row[2], "state": row[3],
+            "health": row[4], "promoted_at": _timestamp(row[5]),
+            "rolled_back_at": _timestamp(row[6]), "percent": int(row[7] or 0),
+            "reason": row[8], "updated_at": _timestamp(row[9]),
+        }
+
+    def list_rollouts(self, org_id: str) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT id, manifest_version, ring, state, health, "
+                "promoted_at, rolled_back_at, percent, reason, updated_at "
+                "FROM policy_rollouts WHERE org_id = %s ORDER BY id", (oid,))
+            rows = cur.fetchall()
+        return [{
+            "org_id": oid, "id": row[0],
+            "manifest_version": int(row[1]), "ring": row[2], "state": row[3],
+            "health": row[4], "promoted_at": _timestamp(row[5]),
+            "rolled_back_at": _timestamp(row[6]), "percent": int(row[7] or 0),
+            "reason": row[8], "updated_at": _timestamp(row[9]),
+        } for row in rows]
+
+    def put_policy_source(self, org_id: str, documents: Any, scope: Any, *,
+                          rules_module: Optional[str] = None,
+                          now: Optional[float] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (oid,))
+            cur.execute(
+                "SELECT COALESCE(MAX(source_version), 0) + 1 "
+                "FROM policy_sources WHERE org_id = %s", (oid,))
+            version = int(cur.fetchone()[0])
+            cur.execute(
+                "INSERT INTO policy_sources (org_id, source_version, documents, "
+                "scope, rules_module, updated_at) VALUES (%s, %s, %s::jsonb, "
+                "%s::jsonb, %s, to_timestamp(%s))",
+                (oid, version, json.dumps(list(documents or [])),
+                 json.dumps(dict(scope or {})), rules_module, at))
+        return {
+            "org_id": oid, "source_version": version,
+            "documents": list(documents or []), "scope": dict(scope or {}),
+            "rules_module": rules_module, "updated_at": at,
+        }
+
+    def policy_source(self, org_id: str, *,
+                      version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            if version is None:
+                cur.execute(
+                    "SELECT source_version, documents, scope, rules_module, "
+                    "updated_at FROM policy_sources WHERE org_id = %s "
+                    "ORDER BY source_version DESC LIMIT 1", (oid,))
+            else:
+                cur.execute(
+                    "SELECT source_version, documents, scope, rules_module, "
+                    "updated_at FROM policy_sources WHERE org_id = %s AND "
+                    "source_version = %s", (oid, int(version)))
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "org_id": oid, "source_version": int(row[0]),
+            "documents": list(row[1] or []), "scope": dict(row[2] or {}),
+            "rules_module": row[3], "updated_at": _timestamp(row[4]),
         }
 
 

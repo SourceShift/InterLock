@@ -297,6 +297,18 @@ def _same(value: Any) -> Any:
     return value
 
 
+def _policy_artifact(engine: Any) -> Optional[str]:
+    """The artifact sha256 when ``engine`` is a manifest-delivered policy.
+
+    A local engine (``PolicyEngine``/``ScopedEngine``) has no artifact bytes,
+    so the receipt field stays absent and local-only chains are unchanged.
+    """
+    if getattr(engine, "artifact_bytes", None) is None:
+        return None
+    sha = getattr(engine, "sha256", None)
+    return sha if isinstance(sha, str) and sha else None
+
+
 def run_hook(adapter: Adapter, payload: Dict[str, Any], engine: Any, *,
              enforcement: str = "blocking", reviews: Any = None,
              review_mode: str = "fallback") -> Rendered:
@@ -345,13 +357,16 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                           principal=call.agent, span_id=call.session_id,
                           call_id=call.call_id, cwd=call.cwd)
     epoch = epoch_of(engine, primary)
+    artifact = _policy_artifact(engine)
     policy = decision.verdict if decision.verdict in tuple(Verdict) else Verdict.BLOCK
 
     if policy == Verdict.ALLOW:
-        emit_receipt(primary, decision, policy_epoch=epoch, elapsed_us=elapsed)
+        emit_receipt(primary, decision, policy_epoch=epoch, elapsed_us=elapsed,
+                     policy_artifact=artifact)
         return adapter.render(call, HookOutcome(Verdict.ALLOW))
     if enforcement == "monitor":
-        emit_receipt(primary, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed)
+        emit_receipt(primary, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed,
+                     policy_artifact=artifact)
         return adapter.render(call, HookOutcome(Verdict.ALLOW, decision.reason,
                                                 decision.policy_id, policy, observed=True))
 
@@ -391,21 +406,23 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                     emit_receipt(primary, Decision(Verdict.BLOCK, reason, decision.policy_id,
                                                    attributed_to=decision.attributed_to),
                                  policy_epoch=epoch, elapsed_us=elapsed,
-                                 policy_verdict="ESCALATE", approval=note)
+                                 policy_verdict="ESCALATE", approval=note,
+                                 policy_artifact=artifact)
                     return adapter.render(call, HookOutcome(
                         Verdict.BLOCK, reason, decision.policy_id, Verdict.ESCALATE))
                 emit_receipt(primary, Decision(Verdict.MODIFY, decision.reason,
                                                decision.policy_id, decision.modified_args,
                                                attributed_to=decision.attributed_to),
                              policy_epoch=epoch, elapsed_us=elapsed,
-                             policy_verdict="ESCALATE", approval=note)
+                             policy_verdict="ESCALATE", approval=note,
+                             policy_artifact=artifact)
                 return adapter.render(call, HookOutcome(
                     Verdict.MODIFY, decision.reason, decision.policy_id, Verdict.ESCALATE,
                     modified_args=decision.modified_args))
             emit_receipt(primary, Decision(Verdict.ALLOW, decision.reason, decision.policy_id,
                                            attributed_to=decision.attributed_to),
                          policy_epoch=epoch, elapsed_us=elapsed, policy_verdict="ESCALATE",
-                         approval=note)
+                         approval=note, policy_artifact=artifact)
             return adapter.render(call, HookOutcome(Verdict.ALLOW))
         outcome = replace(outcome, verdict=Verdict.BLOCK, reason="{} - {}".format(
             decision.reason, pending_message(review)))
@@ -431,7 +448,7 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                         attributed_to=decision.attributed_to)
     emit_receipt(primary, enforced, policy_epoch=epoch, elapsed_us=elapsed,
                  policy_verdict=policy.name if outcome.verdict != policy else None,
-                 approval=approval)
+                 approval=approval, policy_artifact=artifact)
     return adapter.render(call, outcome)
 
 
@@ -447,16 +464,19 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
     decision = engine.evaluate(event)
     elapsed = int((time.perf_counter() - started) * 1_000_000)
     epoch = epoch_of(engine, event)
+    artifact = _policy_artifact(engine)
     policy = decision.verdict if decision.verdict in tuple(Verdict) else Verdict.BLOCK
     if policy == Verdict.ALLOW:
-        emit_receipt(event, decision, policy_epoch=epoch, elapsed_us=elapsed)
+        emit_receipt(event, decision, policy_epoch=epoch, elapsed_us=elapsed,
+                     policy_artifact=artifact)
         return adapter.render(call, HookOutcome(Verdict.ALLOW))
     able = {Verdict.BLOCK: call.can_block_result, Verdict.ESCALATE: call.can_block_result,
             Verdict.MODIFY: call.can_rewrite_result}.get(policy, call.can_block_result)
     if enforcement == "monitor" or not able:
         # The output already reached (or will reach) the agent: say what policy
         # wanted, and record that it was observed, not enforced.
-        emit_receipt(event, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed)
+        emit_receipt(event, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed,
+                     policy_artifact=artifact)
         return adapter.render(call, HookOutcome(Verdict.ALLOW, decision.reason,
                                                 decision.policy_id, policy, observed=True))
     verdict = Verdict.BLOCK if policy == Verdict.ESCALATE else policy
@@ -465,7 +485,8 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
                           if verdict == Verdict.MODIFY else decision.modified_result)
     emit_receipt(event, replace(decision, verdict=verdict), policy_epoch=epoch,
                  elapsed_us=elapsed,
-                 policy_verdict=policy.name if verdict != policy else None)
+                 policy_verdict=policy.name if verdict != policy else None,
+                 policy_artifact=artifact)
     return adapter.render(call, outcome)
 
 
@@ -490,6 +511,7 @@ def _decide_failure(adapter: Adapter, call: HookCall, engine: Any,
     decision = engine.evaluate(event)
     elapsed = int((time.perf_counter() - started) * 1_000_000)
     epoch = epoch_of(engine, event)
+    artifact = _policy_artifact(engine)
     policy = decision.verdict if decision.verdict in tuple(Verdict) else Verdict.BLOCK
     able = {Verdict.BLOCK: call.can_block_result,
             Verdict.ESCALATE: call.can_block_result,
@@ -497,12 +519,13 @@ def _decide_failure(adapter: Adapter, call: HookCall, engine: Any,
     if policy == Verdict.ALLOW or enforcement == "monitor" or not able:
         if policy != Verdict.ALLOW:
             emit_receipt(event, decision, observed=True, policy_epoch=epoch,
-                         elapsed_us=elapsed)
+                         elapsed_us=elapsed, policy_artifact=artifact)
         return "", "", 0
     verdict = Verdict.BLOCK if policy == Verdict.ESCALATE else policy
     emit_receipt(event, replace(decision, verdict=verdict), policy_epoch=epoch,
                  elapsed_us=elapsed,
-                 policy_verdict=policy.name if verdict != policy else None)
+                 policy_verdict=policy.name if verdict != policy else None,
+                 policy_artifact=artifact)
     # ``_render_post`` is the result-withholding shape; the call is presented
     # as a post event so the adapter renders the withhold it already knows. A
     # MODIFY here rewrites the error the model would read: the rule saw
@@ -523,7 +546,8 @@ def _record_failure(call: HookCall, engine: Any) -> None:
     event = SensorEvent(action=call.tool_name, args=strip_trust_labels(call.tool_input),
                         principal=call.agent, span_id=call.session_id, call_id=call.call_id)
     emit_receipt(event, Decision(Verdict.ALLOW, "tool failed"), policy_epoch=epoch_of(engine, event),
-                 outcome="failed", enforcer=enforcer, phase="outcome")
+                 outcome="failed", enforcer=enforcer, phase="outcome",
+                 policy_artifact=_policy_artifact(engine))
 
 
 # --- settings files -------------------------------------------------------------

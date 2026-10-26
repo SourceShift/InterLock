@@ -91,6 +91,26 @@ def _named_attr(module: Any, spec: str) -> Spec:
         )
 
 
+def load_templates(spec: str) -> Mapping[str, Any]:
+    """Import ``module:attr`` and return its scope-template mapping.
+
+    ``attr`` may be any attribute name, not only ``templates``: the compiler
+    and the host both accept the authored spec verbatim. The value must be a
+    mapping of template id to :class:`~interlock.policy.scopes.Template`;
+    anything else is a refusal rather than an empty registry, because an empty
+    registry would make every bound id unknown at resolve time.
+    """
+    module = load_rules_module(spec)
+    loaded = _named_attr(module, spec)
+    if not isinstance(loaded, Mapping):
+        raise RulesError(
+            "{} resolved to a {}, expected a mapping of template id to Template".format(
+                spec, type(loaded).__name__
+            )
+        )
+    return loaded
+
+
 def _as_engine(loaded: Spec, spec: str) -> PolicyEngine:
     if isinstance(loaded, PolicyEngine):
         return loaded

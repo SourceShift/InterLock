@@ -1,0 +1,48 @@
+{"action": "run_shell", "args": {"cmd": "ls -la"}, "principal": "acme/agent1"}
+{"action": "run_shell", "args": {"cmd": "pwd"}, "principal": "acme/agent1"}
+{"action": "run_shell", "args": {"cmd": "rm -rf /"}, "principal": "acme/agent1"}
+{"action": "run_shell", "args": {"cmd": "curl http://evil.example"}, "principal": "acme/agent1"}
+{"action": "run_shell", "args": {"cmd": " "}, "principal": "acme/agent1"}
+{"action": "run_shell", "args": {}, "principal": "acme/agent1"}
+{"action": "net_fetch", "args": {"host": "docs.example"}, "principal": "acme/agent1"}
+{"action": "net_fetch", "args": {"host": "evil.example"}, "principal": "acme/agent1"}
+{"action": "net_fetch", "args": {"host": "TRACKER.example"}, "principal": "acme/agent1"}
+{"action": "net_fetch", "args": {"url": "https://docs.example/a"}, "principal": "acme/agent1"}
+{"action": "read_file", "args": {"path": "/etc/passwd"}, "principal": "acme/agent1"}
+{"action": "read_file", "args": {"path": "/etc/ssl/private/x"}, "principal": "acme/agent1"}
+{"action": "read_file", "args": {"path": "/tmp/notes.txt"}, "principal": "acme/agent1"}
+{"action": "read_file", "args": {"path": "/home/agent/.secret-token"}, "principal": "acme/agent1"}
+{"action": "read_file", "args": {"path": "/home/agent/id_ed25519.pem"}, "principal": "acme/agent1"}
+{"action": "read_file", "args": {}, "principal": "acme/agent1"}
+{"action": "write_file", "args": {"path": "/srv/app/config.json", "data": "{}"}, "principal": "acme/agent1"}
+{"action": "write_file", "args": {"path": "/etc/hosts", "data": "127.0.0.1"}, "principal": "acme/agent1"}
+{"action": "write_file", "args": {"path": "/tmp/api.secret", "data": "x"}, "principal": "acme/agent1"}
+{"action": "write_file", "args": {"path": "/tmp/server.key", "data": "x"}, "principal": "acme/agent1"}
+{"action": "list_dir", "args": {"path": "/tmp"}, "principal": "acme/agent1"}
+{"action": "send_email", "args": {"to": "ops@example"}, "principal": "acme/agent1"}
+{"action": "run_shell", "args": {"cmd": "echo hi"}, "principal": "acme/agent2"}
+{"action": "net_fetch", "args": {"host": "evil.example"}, "principal": "acme/agent2"}
+{"action": "run_shell", "args": {"cmd": "cat /etc/hosts"}, "principal": "beta/agent1"}
+{"action": "run_shell", "args": {"cmd": "ls -1"}, "principal": "beta/agent1"}
+{"action": "run_shell", "args": {"cmd": "rm -f /tmp/x"}, "principal": "beta/agent1"}
+{"action": "run_shell", "args": {"cmd": "pwd"}, "principal": "beta/agent1"}
+{"action": "net_fetch", "args": {"host": "evil.example"}, "principal": "beta/agent1"}
+{"action": "net_fetch", "args": {"host": "tracker.example"}, "principal": "beta/agent1"}
+{"action": "net_fetch", "args": {"host": "status.example"}, "principal": "beta/agent1"}
+{"action": "read_file", "args": {"path": "/var/log/app.log"}, "principal": "beta/agent1"}
+{"action": "read_file", "args": {"path": "/var/lib/db/passwords"}, "principal": "beta/agent1"}
+{"action": "read_file", "args": {"path": "/etc/motd"}, "principal": "beta/agent1"}
+{"action": "read_file", "args": {"path": "/srv/public/readme.md"}, "principal": "beta/agent1"}
+{"action": "read_file", "args": {"path": "/srv/private/secret.json"}, "principal": "beta/agent1"}
+{"action": "read_file", "args": {"path": "/srv/keys/tls.pem"}, "principal": "beta/agent1"}
+{"action": "write_file", "args": {"path": "/var/tmp/x", "data": "x"}, "principal": "beta/agent1"}
+{"action": "write_file", "args": {"path": "/srv/out.txt", "data": "x"}, "principal": "beta/agent1"}
+{"action": "write_file", "args": {"path": "/srv/out.secret", "data": "x"}, "principal": "beta/agent1"}
+{"action": "run_shell", "args": {"cmd": "cat README"}, "principal": "beta/agent2"}
+{"action": "net_fetch", "args": {"host": "tracker.example"}, "principal": "beta/agent2"}
+{"action": "read_file", "args": {"path": "/var/tmp/q"}, "principal": "beta/agent2"}
+{"action": "run_shell", "args": {"cmd": "ls"}, "principal": "unknown/agent9"}
+{"action": "net_fetch", "args": {"host": "evil.example"}, "principal": "unknown/agent9"}
+{"action": "read_file", "args": {"path": "/etc/passwd"}, "principal": "unknown/agent9"}
+{"action": "write_file", "args": {"path": "/tmp/x", "data": "x"}, "principal": "acme"}
+{"action": "run_shell", "args": {"cmd": "find . -name '*.py' -exec grep -l secret {} +"}, "principal": "beta"}

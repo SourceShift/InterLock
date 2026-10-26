@@ -25,6 +25,9 @@ def add_arguments(parser) -> None:
     parser.add_argument("--policy", metavar="FILE",
                         help="policy file (default ~/.interlock/policy.json, else the "
                              "built-in coding-agent pack)")
+    parser.add_argument("--artifact", metavar="PATH",
+                        help="a manifest-delivered policy artifact, or a directory "
+                             "containing active.json; mutually exclusive with --policy")
     parser.add_argument("--rules", metavar="MODULE:ATTR", help="a Python policy module instead")
     parser.add_argument("--sidecar", metavar="PATH", help="ask this sidecar instead")
     parser.add_argument("--receipts", metavar="FILE",
@@ -50,7 +53,23 @@ def run(args) -> int:
     adapter = get_adapter(args.agent)
     fail_open = args.on_error == "allow"
     call = None
+    if getattr(args, "artifact", None) and (
+            getattr(args, "policy", None) or getattr(args, "rules", None)
+            or getattr(args, "sidecar", None)):
+        # The command line itself is wrong: a local policy source and a
+        # distributed artifact are two different authorities.
+        sys.stderr.write(
+            "interlock hook: --artifact cannot be combined with --policy, "
+            "--rules or --sidecar\n")
+        return 64
     try:
+        # A distributed artifact is loaded once, before any event is read. A
+        # corrupt or unmaterialisable artifact takes the fail-closed deny path
+        # below; it never falls back to a local policy.
+        artifact_engine = None
+        if getattr(args, "artifact", None):
+            from ..policy.artifact import load_artifact
+            artifact_engine = load_artifact(args.artifact)
         raw = sys.stdin.buffer.read(MAX_PAYLOAD + 1)
         if len(raw) > MAX_PAYLOAD:
             raise ValueError("hook input larger than {} bytes".format(MAX_PAYLOAD))
@@ -59,7 +78,7 @@ def run(args) -> int:
             raise ValueError("hook input is not a JSON object")
         call = adapter.parse(payload)
         cwd = call.cwd if isinstance(call.cwd, str) else None
-        engine = _engine(args, cwd)
+        engine = _engine(args, cwd, artifact_engine)
         _install_sink(args)
         queue = None
         if args.reviews != "off":
@@ -83,7 +102,9 @@ def run(args) -> int:
     return code
 
 
-def _engine(args, cwd):
+def _engine(args, cwd, artifact_engine=None):
+    if artifact_engine is not None:
+        return artifact_engine
     from ..adapters.config import load_engine
     return load_engine(policy=args.policy, rules=args.rules, sidecar=args.sidecar,
                        cwd=cwd, overlay=not args.no_overlay)
