@@ -223,6 +223,105 @@ jobs:
       - name: Build the shipped bundle
         run: npm run build
 
+  cloud:
+    name: cloud control plane
+    runs-on: ubuntu-latest
+    # The cloud extras (psycopg, cryptography, webauthn) are optional by
+    # contract, so they get their own job: the `python` job above proves the
+    # dependency-free import path still works, and this one proves the Postgres
+    # store, RLS and the OIDC/step-up code paths actually run.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: interlock_cloud
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # A non-owner, NOBYPASSRLS app role: connecting as the table owner or as
+      # a superuser would silently bypass row-level security and make the
+      # cross-org tests prove nothing.
+      IL_CLOUD_TEST_DSN: postgresql://interlock_app:interlock_app@127.0.0.1:5432/interlock_cloud
+      IL_CLOUD_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/interlock_cloud
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the package with the cloud extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev,cloud]'
+
+      - name: Provision the application role
+        run: |
+          psql "$IL_CLOUD_ADMIN_DSN" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE interlock_app LOGIN PASSWORD 'interlock_app'
+              NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+          SQL
+
+      - name: Apply the migrations as the owner
+        # The app role deliberately cannot create tables (and must not own
+        # them: a table owner is exempt from its own RLS policy). The step
+        # keeps the documented command shape and swaps in the owner DSN.
+        env:
+          IL_CLOUD_TEST_DSN: ${{ env.IL_CLOUD_ADMIN_DSN }}
+        run: python3 -m interlock.cloud.migrate --dsn "$IL_CLOUD_TEST_DSN"
+
+      - name: Grant the application role the table privileges it needs
+        # Ownership stays with postgres so RLS applies to interlock_app.
+        run: |
+          psql "$IL_CLOUD_ADMIN_DSN" -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE ON SCHEMA public TO interlock_app;
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
+              TO interlock_app;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO interlock_app;
+          SQL
+
+      - name: Assert row-level security applies to the application role
+        # A superuser or table owner would pass this by bypassing the policy.
+        # The check runs inside one transaction, exactly as the store does.
+        run: |
+          python - <<'PY'
+          import psycopg
+          dsn = __import__("os").environ["IL_CLOUD_TEST_DSN"]
+          with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+              cur.execute("SELECT rolsuper, rolbypassrls FROM pg_roles "
+                          "WHERE rolname = current_user")
+              superuser, bypassrls = cur.fetchone()
+              assert not superuser and not bypassrls, (superuser, bypassrls)
+              cur.execute("SET LOCAL interlock.org_id = 'no-such-org'")
+              cur.execute("SELECT count(*) FROM users")
+              assert cur.fetchone()[0] == 0
+          print("RLS applies to interlock_app")
+          PY
+
+      - name: Test
+        # The seven C1 files, including the Postgres cases that IL_CLOUD_TEST_DSN
+        # unlocks. The store-contract file is the same assertions as the
+        # in-memory store, so a divergence between the two implementations
+        # fails here.
+        run: |
+          python3 -m pytest -q \
+            tests/test_cloud_oidc.py \
+            tests/test_cloud_sessions.py \
+            tests/test_cloud_stepup.py \
+            tests/test_cloud_rbac.py \
+            tests/test_cloud_admin.py \
+            tests/test_cloud_cross_org.py \
+            tests/test_cloud_store_contract.py
+
   lint:
     name: lint
     runs-on: ubuntu-latest
@@ -254,7 +353,7 @@ jobs:
     # some branch-protection configurations, so the `if: always()` plus the
     # explicit result test is what makes this job meaningful.
     if: always()
-    needs: [python, rust, node, web, lint]
+    needs: [python, rust, node, web, cloud, lint]
     runs-on: ubuntu-latest
     steps:
       - name: Check every job succeeded
@@ -263,12 +362,14 @@ jobs:
           echo "rust:   ${{ needs.rust.result }}"
           echo "node:   ${{ needs.node.result }}"
           echo "web:    ${{ needs.web.result }}"
+          echo "cloud:  ${{ needs.cloud.result }}"
           echo "lint:   ${{ needs.lint.result }}"
           for result in \
             "${{ needs.python.result }}" \
             "${{ needs.rust.result }}" \
             "${{ needs.node.result }}" \
             "${{ needs.web.result }}" \
+            "${{ needs.cloud.result }}" \
             "${{ needs.lint.result }}"
           do
             if [ "$result" != "success" ]; then

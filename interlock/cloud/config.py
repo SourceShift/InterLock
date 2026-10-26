@@ -25,6 +25,10 @@ DEFAULT_BIND_HOST = "127.0.0.1"
 DEFAULT_BIND_PORT = 8787
 DEFAULT_LOG_LEVEL = "info"
 
+#: FR-049's session bounds: half an hour idle, twelve hours absolute.
+DEFAULT_SESSION_IDLE = 30 * 60
+DEFAULT_SESSION_ABSOLUTE = 12 * 60 * 60
+
 
 class ConfigError(ValueError):
     """A cloud configuration value is missing, malformed or unsafe."""
@@ -32,6 +36,19 @@ class ConfigError(ValueError):
 
 def _default_state_dir() -> Path:
     return Path.home() / ".interlock" / "cloud-plane"
+
+
+def _int_env(env: Mapping[str, str], name: str, default: int) -> int:
+    """Read an optional integer, naming the variable when it is malformed."""
+    raw = env.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise ConfigError(
+            "{} must be an integer, got {!r}".format(name, raw)
+        ) from None
 
 
 @dataclass(frozen=True)
@@ -50,6 +67,19 @@ class CloudConfig:
     session_secret: str = ""
     log_level: str = DEFAULT_LOG_LEVEL
     state_dir: Path = field(default_factory=_default_state_dir)
+    # -- identity (C1) ---------------------------------------------------
+    # Optional: the OIDC provider the plane trusts. An unset issuer means
+    # no interactive login is configured, which is how the health routes and
+    # the migration runner keep working on a bare interpreter.
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = ""
+    #: Slug of the org humans land in when a login has no per-org issuer.
+    oidc_org_slug: str = ""
+    #: Session lifetime bounds from FR-049: 30 minute idle, 12 hour absolute.
+    session_idle_seconds: int = DEFAULT_SESSION_IDLE
+    session_absolute_seconds: int = DEFAULT_SESSION_ABSOLUTE
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "CloudConfig":
@@ -75,6 +105,17 @@ class CloudConfig:
             session_secret=env.get("IL_CLOUD_SESSION_SECRET", ""),
             log_level=env.get("IL_CLOUD_LOG_LEVEL", DEFAULT_LOG_LEVEL),
             state_dir=state_dir,
+            oidc_issuer=env.get("IL_CLOUD_OIDC_ISSUER", ""),
+            oidc_client_id=env.get("IL_CLOUD_OIDC_CLIENT_ID", ""),
+            oidc_client_secret=env.get("IL_CLOUD_OIDC_CLIENT_SECRET", ""),
+            oidc_redirect_uri=env.get("IL_CLOUD_OIDC_REDIRECT_URI", ""),
+            oidc_org_slug=env.get("IL_CLOUD_OIDC_ORG_SLUG", ""),
+            session_idle_seconds=_int_env(
+                env, "IL_CLOUD_SESSION_IDLE", DEFAULT_SESSION_IDLE
+            ),
+            session_absolute_seconds=_int_env(
+                env, "IL_CLOUD_SESSION_ABSOLUTE", DEFAULT_SESSION_ABSOLUTE
+            ),
         )
 
     def validate(self) -> None:

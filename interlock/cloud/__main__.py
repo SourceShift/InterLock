@@ -8,6 +8,7 @@ third-party packages installed.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 from typing import List, Optional
 
@@ -45,14 +46,16 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="log threshold (default: %(default)s)")
     args = parser.parse_args(argv)
 
-    config = CloudConfig(
+    # ``replace`` copies every field the environment supplied, so a setting
+    # this file does not know about (the OIDC issuer, the session bounds) is
+    # never dropped by rebuilding the dataclass field by field.
+    config = dataclasses.replace(
+        defaults,
         dsn=args.dsn,
         bind_host=args.host,
         bind_port=args.port,
         public_url=args.public_url,
-        session_secret=defaults.session_secret,
         log_level=args.log_level,
-        state_dir=defaults.state_dir,
     )
     if config.bind_host == PUBLIC_HOST and not config.public_url.startswith("https://"):
         sys.stderr.write(

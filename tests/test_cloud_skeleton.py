@@ -457,7 +457,7 @@ def test_schema_documents_the_rls_role_property():
 def test_pyproject_declares_the_cloud_extra_and_sql_package_data():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert (
-        'cloud = ["uvicorn>=0.30", "psycopg[binary]>=3.1", "cryptography>=42"]'
+        'cloud = ["uvicorn>=0.30", "psycopg[binary]>=3.1", "cryptography>=42", "webauthn>=2.0"]'
         in text
     )
     assert '"interlock.cloud"' in text

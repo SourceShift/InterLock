@@ -35,6 +35,10 @@ CREATE TABLE users (
     id text not null,
     issuer text not null,
     subject text not null,
+    -- C1: the address an invited member was provisioned with and the address
+    -- an OIDC claim carries. Accounts are never merged by email (FR-048):
+    -- it is a display and invite attribute only.
+    email text,
     -- No default: every user is assigned an explicit role from the fixed
     -- model (FR-054), so no account is created with an implied privilege.
     role text not null
@@ -53,6 +57,11 @@ CREATE TABLE sessions (
     step_up_at timestamptz,
     step_up_method text,
     expires timestamptz not null,
+    -- C1 session bookkeeping: the absolute deadline is derived from created,
+    -- and last_seen drives the 30-minute idle timeout (FR-049). Touches are
+    -- throttled by the session manager, not by a trigger.
+    created timestamptz not null default now(),
+    last_seen timestamptz not null default now(),
     ip text,
     user_agent text,
     primary key (org_id, id),

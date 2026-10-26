@@ -1,55 +1,57 @@
-"""A framework-free ASGI app exposing the plane's liveness and readiness.
+"""A framework-free ASGI app for the cloud control plane.
 
-Exactly two routes exist in this skeleton: ``GET /healthz`` (the process is
-alive) and ``GET /readyz`` (a database ping succeeds). Everything else is a
-JSON 404, and a known path with any other method is a 405 with ``allow: GET``.
-Every response carries ``x-request-id`` and ``content-type: application/json``
-and is sent as one ``http.response.start`` plus one body event.
-
-There is no third-party import here. The module-level :data:`app` is built with
-the default (empty) config and therefore answers ``/readyz`` with 503 until a
-DSN is configured; it deliberately does not call ``CloudConfig.validate()`` at
-import time, because importing the app must work on a bare interpreter.
-
-The body reader is here for the routes that follow: it reads at most 64 KiB and
-:class:`PayloadTooLarge` maps to ``413 payload_too_large``.
+C0's two routes are still exactly ``GET /healthz`` and ``GET /readyz`` with
+their original bodies, envelope, ``x-request-id`` and one-start/one-body shape.
+C1 extends the same route table with path parameters and a request object, so
+authentication, authorization and org-scoped lookup happen in one place.
+There is no third-party import here.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import secrets
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple
+import time
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from . import db
+from .api.auth_routes import register as register_auth_routes
+from .auth import rbac
+from .auth.oidc import OIDCClient
+from .auth.sessions import SESSION_COOKIE, SessionManager, Unauthenticated
+from .auth.stepup import StepUpError
 from .config import CloudConfig
+from .http import (
+    ApiError,
+    PayloadTooLarge,
+    Request,
+    Response,
+    error_response,
+    header_map,
+    parse_cookies,
+    parse_query,
+    read_body,
+)
+from .log import log_event
+from .store import CrossOrgAccess, MemoryStore, PostgresStore
 
 #: Refuse a request body larger than this before reading a byte of it.
 MAX_BODY_BYTES = 64 * 1024
 
 #: An inbound request id is echoed only when it looks like one we would mint.
-#: ``fullmatch`` (rather than a trailing ``$``) matters: ``$`` also matches
-#: before a final newline, which would echo a header-injection payload.
 REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 JSON_HEADERS = ((b"content-type", b"application/json"),)
 
-Handler = Callable[[], Awaitable[Tuple[int, Dict[str, Any]]]]
+RouteResult = Union[Tuple[int, Dict[str, Any]], Response]
+Handler = Callable[[Request], Awaitable[RouteResult]]
 
-
-class PayloadTooLarge(Exception):
-    """A request body exceeded :data:`MAX_BODY_BYTES`."""
+_PARAM = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _header_map(headers: Iterable[Tuple[bytes, bytes]]) -> Dict[str, str]:
-    """Lowercase header names, first value wins (ASGI sends bytes)."""
-    out: Dict[str, str] = {}
-    for name, value in headers:
-        key = name.decode("latin-1").lower()
-        if key not in out:
-            out[key] = value.decode("latin-1")
-    return out
+    """Backwards-compatible alias for :func:`interlock.cloud.http.header_map`."""
+    return header_map(headers)
 
 
 def request_id_for(headers: Iterable[Tuple[bytes, bytes]]) -> str:
@@ -60,41 +62,83 @@ def request_id_for(headers: Iterable[Tuple[bytes, bytes]]) -> str:
     return secrets.token_hex(8)
 
 
-async def read_body(receive: Callable[[], Any], limit: int = MAX_BODY_BYTES) -> bytes:
-    """Read one request body, refusing anything larger than ``limit``."""
-    chunks: List[bytes] = []
-    total = 0
-    while True:
-        message = await receive()
-        if message.get("type") != "http.request":
-            break
-        chunk = message.get("body", b"") or b""
-        total += len(chunk)
-        if total > limit:
-            raise PayloadTooLarge("request body exceeds {} bytes".format(limit))
-        chunks.append(chunk)
-        if not message.get("more_body", False):
-            break
-    return b"".join(chunks)
+def compile_pattern(template: str) -> "re.Pattern[str]":
+    """Compile ``/v1/members/{id}`` to a named-group regular expression."""
+    parts: List[str] = []
+    position = 0
+    for match in _PARAM.finditer(template):
+        parts.append(re.escape(template[position:match.start()]))
+        parts.append(r"(?P<{}>[^/]+)".format(match.group(1)))
+        position = match.end()
+    parts.append(re.escape(template[position:]))
+    return re.compile("^" + "".join(parts) + "$")
 
 
 class CloudApp:
     """The ASGI callable: a route table plus the shared response envelope."""
 
     def __init__(self, config: Optional[CloudConfig] = None,
-                 ping: Callable[[str], bool] = db.ping) -> None:
+                 ping: Callable[[str], bool] = db.ping,
+                 store: Any = None, oidc: Any = None,
+                 clock: Callable[[], float] = time.time) -> None:
         self.config = config or CloudConfig()
         self._ping = ping
+        self._clock = clock
+        if store is None:
+            store = (PostgresStore(self.config.dsn) if self.config.dsn
+                     else MemoryStore())
+        self.store = store
+        secret = (self.config.session_secret
+                  or "interlock-development-session-secret")
+        self.sessions = SessionManager(
+            self.store, secret,
+            idle=self.config.session_idle_seconds,
+            absolute=self.config.session_absolute_seconds,
+            clock=clock,
+        )
+        self.oidc = oidc
+        self._oidc_client: Any = None
         self.routes: Dict[str, Dict[str, Handler]] = {
             "/healthz": {"GET": self._healthz},
             "/readyz": {"GET": self._readyz},
         }
+        #: ``(compiled, template, {method: handler})`` in registration order.
+        self._patterns: List[Tuple[Any, str, Dict[str, Handler]]] = []
+        register_auth_routes(self)
+
+    # -- route registration --------------------------------------------
+    def add_route(self, path: str, method: str, handler: Handler) -> None:
+        self.routes.setdefault(path, {})[method.upper()] = handler
+
+    def add_pattern(self, template: str, method: str, handler: Handler) -> None:
+        for _compiled, existing, methods in self._patterns:
+            if existing == template:
+                methods[method.upper()] = handler
+                return
+        self._patterns.append(
+            (compile_pattern(template), template, {method.upper(): handler})
+        )
+
+    def oidc_client(self) -> Any:
+        """The injected client, or one built from configuration."""
+        if self.oidc is not None:
+            return self.oidc
+        if self._oidc_client is None:
+            redirect = self.config.oidc_redirect_uri
+            if not redirect and self.config.public_url:
+                redirect = (self.config.public_url.rstrip("/")
+                            + "/v1/auth/callback")
+            self._oidc_client = OIDCClient(
+                self.config.oidc_issuer, self.config.oidc_client_id,
+                self.config.oidc_client_secret, redirect, clock=self._clock,
+            )
+        return self._oidc_client
 
     # -- routes ---------------------------------------------------------
-    async def _healthz(self) -> Tuple[int, Dict[str, Any]]:
+    async def _healthz(self, request: Optional[Request] = None) -> Tuple[int, Dict[str, Any]]:
         return 200, {"status": "ok", "service": "interlock-cloud"}
 
-    async def _readyz(self) -> Tuple[int, Dict[str, Any]]:
+    async def _readyz(self, request: Optional[Request] = None) -> Tuple[int, Dict[str, Any]]:
         # The driver is blocking, so the ping runs in a worker thread: an
         # unreachable database must not stall the event loop and every other
         # request with it.
@@ -102,7 +146,18 @@ class CloudApp:
             return 200, {"status": "ready"}
         return 503, {"status": "unavailable"}
 
-    # -- ASGI -----------------------------------------------------------
+    # -- dispatch -------------------------------------------------------
+    def _match(self, path: str) -> Tuple[Optional[Dict[str, Handler]],
+                                         Dict[str, str], Optional[str]]:
+        exact = self.routes.get(path)
+        if exact is not None:
+            return exact, {}, path
+        for compiled, template, methods in self._patterns:
+            match = compiled.match(path)
+            if match is not None:
+                return methods, match.groupdict(), template
+        return None, {}, None
+
     async def __call__(self, scope: Dict[str, Any], receive: Callable[[], Any],
                        send: Callable[[Dict[str, Any]], Any]) -> None:
         kind = scope.get("type")
@@ -114,49 +169,129 @@ class CloudApp:
 
         headers = scope.get("headers") or []
         request_id = request_id_for(headers)
-        header_map = _header_map(headers)
+        header_map_local = _header_map(headers)
 
-        declared = header_map.get("content-length")
+        declared = header_map_local.get("content-length")
         if declared is not None:
             try:
-                size = int(declared)
+                size: Optional[int] = int(declared)
             except ValueError:
                 size = None
             if size is not None and size > MAX_BODY_BYTES:
-                await self._respond(send, 413, {
-                    "error": {"code": "payload_too_large",
-                              "message": "request body exceeds {} bytes".format(
-                                  MAX_BODY_BYTES)},
-                }, request_id)
+                await self._send(send, error_response(
+                    413, "payload_too_large",
+                    "request body exceeds {} bytes".format(MAX_BODY_BYTES),
+                ), request_id)
                 return
 
         path = scope.get("path") or "/"
         method = str(scope.get("method") or "GET").upper()
-        route = self.routes.get(path)
+        route, params, _template = self._match(path)
         if route is None:
-            await self._respond(send, 404, {
-                "error": {"code": "not_found", "message": "no such route"},
-            }, request_id)
+            await self._send(send, error_response(
+                404, "not_found", "no such route"), request_id)
             return
         handler = route.get(method)
         if handler is None:
-            await self._respond(send, 405, {
-                "error": {"code": "method_not_allowed",
-                          "message": "method not allowed"},
-            }, request_id, {"allow": ", ".join(sorted(route))})
+            await self._send(send, error_response(
+                405, "method_not_allowed", "method not allowed",
+                [("allow", ", ".join(sorted(route)))]), request_id)
             return
 
-        status, payload = await handler()
-        await self._respond(send, status, payload, request_id)
+        try:
+            body = await read_body(receive, MAX_BODY_BYTES)
+        except PayloadTooLarge as exc:
+            await self._send(send, error_response(
+                413, "payload_too_large", str(exc)), request_id)
+            return
+
+        client = scope.get("client") or ("", 0)
+        try:
+            query = parse_query(scope.get("query_string") or b"")
+        except ApiError as exc:
+            await self._send(send, error_response(
+                exc.status, exc.code, exc.message), request_id)
+            return
+        request = Request(
+            method=method,
+            path=path,
+            params=params,
+            headers=header_map_local,
+            query=query,
+            body=body,
+            request_id=request_id,
+            cookies=parse_cookies(header_map_local.get("cookie")),
+            client_ip=str(client[0]) if client and client[0] else "",
+        )
+
+        try:
+            await self._authenticate(request)
+            result = await handler(request)
+        except ApiError as exc:
+            result = error_response(exc.status, exc.code, exc.message)
+        except Unauthenticated as exc:
+            result = error_response(401, exc.code, str(exc))
+        except rbac.Forbidden as exc:
+            result = error_response(403, exc.code, str(exc))
+        except StepUpError as exc:
+            result = error_response(403, exc.code, exc.message)
+        except CrossOrgAccess:
+            result = error_response(404, "not_found", "no such resource")
+        except Exception as exc:  # pragma: no cover - defensive
+            # Log the class only: an exception message can carry tenant data.
+            log_event("error", "unhandled_exception", request_id=request_id,
+                      error=type(exc).__name__)
+            result = error_response(500, "internal_error", "internal error")
+
+        await self._send(send, result, request_id)
+
+    async def _authenticate(self, request: Request) -> None:
+        """Authenticate, authorize the route, then enforce CSRF (FR-050)."""
+        if rbac.is_public(request.method, request.path):
+            return
+        raw = request.cookies.get(SESSION_COOKIE)
+        if not raw:
+            raise Unauthenticated("authentication required")
+        try:
+            session, user = self.sessions.resolve_cookie_session(raw)
+        except Unauthenticated:
+            raise
+        org = self.store.org_by_id(session.org_id)
+        if org is None:
+            raise Unauthenticated("authentication required")
+        request.session = session
+        request.user = user
+        request.org = org
+
+        rbac.authorize(user.role, request.method, request.path)
+
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            provided = request.header("x-csrf-token")
+            if not self.sessions.check_csrf(session, provided):
+                raise ApiError(403, "csrf", "CSRF token is missing or invalid")
+
+    # -- responses ------------------------------------------------------
+    async def _send(self, send: Callable[[Dict[str, Any]], Any],
+                    result: RouteResult, request_id: str) -> None:
+        if isinstance(result, Response):
+            body = result.body
+            content_type = result.content_type
+            extra = result.headers
+            status = result.status
+        else:
+            status, payload = result
+            body = json_module_dumps(payload)
+            content_type = "application/json"
+            extra = []
+        await self._respond(send, status, body, content_type, request_id, extra)
 
     async def _respond(self, send: Callable[[Dict[str, Any]], Any], status: int,
-                       payload: Dict[str, Any], request_id: str,
-                       extra: Optional[Dict[str, str]] = None) -> None:
-        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        headers = list(JSON_HEADERS)
+                       body: bytes, content_type: str, request_id: str,
+                       extra: Optional[Iterable[Tuple[str, str]]] = None) -> None:
+        headers = [(b"content-type", content_type.encode("latin-1"))]
         headers.append((b"x-request-id", request_id.encode("latin-1")))
         headers.append((b"content-length", str(len(body)).encode("ascii")))
-        for name, value in (extra or {}).items():
+        for name, value in (extra or ()):
             headers.append((name.encode("latin-1"), value.encode("latin-1")))
         await send({"type": "http.response.start", "status": status,
                     "headers": headers})
@@ -173,6 +308,13 @@ class CloudApp:
             elif kind == "lifespan.shutdown":
                 await send({"type": "lifespan.shutdown.complete"})
                 return
+
+
+def json_module_dumps(payload: Any) -> bytes:
+    """The one JSON encoder the envelope uses."""
+    import json
+
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
 
 app = CloudApp()
