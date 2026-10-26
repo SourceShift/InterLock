@@ -1688,11 +1688,20 @@ body.il-motion [data-il-reveal]:not(.il-in) {
 
 .il-sees__card--hero .il-sees__v:first-of-type { color: var(--il-fg); }
 
-/* --- limits --------------------------------------------------------------- */
+/* --- limits ---------------------------------------------------------------
+   The intro beside the card, and the card scrolling past it. The wrapper is
+   also the section's .il-sec__inner, which stacks its children in a column,
+   so the row direction is set here explicitly: without it the aside and the
+   card stack at every width, and a sticky aside then pins the intro over the
+   card as it scrolls up (the bug this comment was written after).
+   -------------------------------------------------------------------------- */
 .il-limits-wrap {
   display: flex;
+  flex-direction: row;
   flex-wrap: wrap;
+  align-items: flex-start;
   gap: 48px 64px;
+  container-type: inline-size;
 }
 
 .il-limits-aside {
@@ -1702,8 +1711,19 @@ body.il-motion [data-il-reveal]:not(.il-in) {
   flex-direction: column;
   gap: 16px;
   align-self: flex-start;
-  position: sticky;
-  top: 96px;
+  /* Static unless the card is beside it, below. */
+  position: static;
+}
+
+/* The aside stays in view only while the card is beside it: there is room
+   for both on one row from 300 + 64 (the column gap) + 600 = 964px of content
+   width. Under that the card wraps beneath the intro, and a sticky intro
+   would sit on top of it, so the query, not a viewport breakpoint, decides. */
+@container (min-width: 964px) {
+  .il-limits-aside {
+    position: sticky;
+    top: 96px;
+  }
 }
 
 .il-limits-aside p {
@@ -2009,7 +2029,6 @@ body.il-motion [data-il-reveal]:not(.il-in) {
 
 @media (max-width: 640px) {
   .il-console__side { display: none; }
-  .il-limits-aside { position: static; }
   .il-cta { padding: 40px 20px; }
   .il-receipt {
     grid-template-columns: auto minmax(0, 1fr);
