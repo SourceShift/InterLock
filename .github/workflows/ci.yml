@@ -386,7 +386,9 @@ jobs:
       - name: Generate a CycloneDX SBOM
         run: |
           python -m pip freeze > requirements-cloud.txt
-          cyclonedx-py requirements -i requirements-cloud.txt -o sbom.cdx.json
+          # The requirements file is positional. `-i` is pip's --index-url, so
+          # passing a filename there makes the tool read ./requirements.txt.
+          cyclonedx-py requirements requirements-cloud.txt --of JSON -o sbom.cdx.json
 
       - name: Upload the SBOM
         uses: actions/upload-artifact@v4
