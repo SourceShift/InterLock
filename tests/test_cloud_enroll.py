@@ -162,10 +162,23 @@ def test_agent_key_has_the_fixed_shape_and_a_sha256_hash():
 
     parsed = parse_agent_key(raw)
     assert parsed == (prefix, raw)
-    assert len(prefix) == 8 and prefix.islower()
+    # token_hex(4) is lowercase hex, but a digit-only draw is still valid and
+    # ".islower()" is False for "89714827" — assert the alphabet, not the case.
+    assert len(prefix) == 8 and all(c in "0123456789abcdef" for c in prefix)
     assert len(raw) == len("ilk_") + 8 + 1 + 43
     assert digest == hash_token(raw)
     assert raw not in digest
+
+
+def test_a_digit_only_prefix_is_still_a_valid_agent_key(monkeypatch):
+    """Regression: token_hex(4) can draw only digits, and "89714827".islower()
+    is False while the key is perfectly valid."""
+    monkeypatch.setattr("interlock.cloud.enrollment.secrets.token_hex",
+                        lambda n: "89714827")
+    raw, prefix, _digest = generate_agent_key()
+
+    assert prefix == "89714827"
+    assert parse_agent_key(raw) == (prefix, raw)
 
 
 @pytest.mark.parametrize("raw", [

@@ -464,7 +464,7 @@ def test_pyproject_declares_the_cloud_extra_and_sql_package_data():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert (
         'cloud = ["uvicorn>=0.30,<1", "psycopg[binary]>=3.1,<4", '
-        '"cryptography>=42,<47", "webauthn>=2.0,<3"]'
+        '"cryptography>=50,<52", "webauthn>=2.0,<3"]'
         in text
     )
     assert '"interlock.cloud"' in text
