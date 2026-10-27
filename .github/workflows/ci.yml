@@ -141,7 +141,7 @@ jobs:
           print("scope backend:", SCOPE_BACKEND)
           PY
 
-      - name: Native policy evaluator: handle lifecycle and artifact parity
+      - name: Native policy evaluator handle lifecycle and artifact parity
         # The C ABI smoke above already built rust/ffi, so the ctypes handle
         # tests find the library. The artifact parity half compares a native
         # documents base with the Python engine over the shipped corpus.
