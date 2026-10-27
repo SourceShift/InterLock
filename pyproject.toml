@@ -43,15 +43,15 @@ Security = "https://github.com/SourceShift/InterLock/blob/main/SECURITY.md"
 
 [project.optional-dependencies]
 mcp = ["wrapt>=1.15"]
-langchain = ["langchain-core>=0.3,<0.4"]
+langchain = ["langchain-core>=0.3,<1.8"]
 # The control plane's server, driver and signing primitives. Nothing in the
 # core package imports these; `import interlock.cloud` stays dependency-free.
 # cryptography 46 is audited out (PYSEC-2026-3552/3553/3554, GHSA-537c-gmf6-5ccf);
 # 50.x is the current line, and the cloud suite is exercised against it.
-cloud = ["uvicorn>=0.30,<1", "psycopg[binary]>=3.1,<4", "cryptography>=50,<52", "webauthn>=2.0,<3"]
+cloud = ["uvicorn>=0.30,<1", "psycopg[binary]>=3.1,<4", "cryptography>=50,<52", "webauthn>=2.0,<4"]
 # ruff is pinned here too: CI pins it (an unpinned linter turns a green repo red
 # on a release schedule), and a contributor should run the same version as CI.
-dev = ["pytest>=7", "langchain-core>=0.3,<0.4", "ruff==0.16.9",
+dev = ["pytest>=7", "langchain-core>=0.3,<1.8", "ruff==0.17.2",
        # tests/test_cloud_compose.py parses the shipped compose file.
        "PyYAML>=6,<7",
        # scripts/check_site.py reads the Zensical TOML; tomllib is 3.11+
