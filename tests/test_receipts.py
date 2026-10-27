@@ -570,7 +570,7 @@ def test_fields_is_a_shallow_copy_with_the_canonical_shape_of_asdict():
             del body["observed"]
         for name in ("call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
                      "enforcer", "elapsed_us", "masked", "tokens", "scope_document", "catalog",
-                     "policy_artifact"):
+                     "policy_artifact", "coverage_gap"):
             if body[name] is None:
                 del body[name]
         if not include_mac:

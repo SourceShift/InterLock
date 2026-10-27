@@ -114,8 +114,10 @@ def test_the_compiled_artifact_judges_the_bundled_corpus_identically():
     compiled = load_artifact(result.artifact_bytes)
     verdicts = {compiled.evaluate(event).verdict.name for event in events}
     assert verdicts == {"ALLOW", "BLOCK", "MODIFY", "ESCALATE"}
+    # 84 events: the original 48 plus operator, unicode, >4 KiB, non-string
+    # argument and two-scope cases.
     assert result.diffs["counts"] == {
-        "ALLOW": 18, "BLOCK": 18, "ESCALATE": 8, "MODIFY": 4,
+        "ALLOW": 34, "BLOCK": 31, "ESCALATE": 12, "MODIFY": 7,
     }
 
 
@@ -124,7 +126,8 @@ def test_the_first_divergence_refuses_the_compile(monkeypatch):
         def evaluate(self, event):
             return Decision.block("diverged", policy_id="other")
 
-    monkeypatch.setattr(compiler, "load_artifact", lambda raw: Divergent())
+    monkeypatch.setattr(
+        compiler, "load_artifact", lambda raw, **kwargs: Divergent())
     with pytest.raises(CompileError) as exc:
         compile_from_source([], _scope(), rules_module=MODULE)
     assert exc.value.code == "bad_artifact"

@@ -87,6 +87,10 @@ const RESPONSE_KEYS: ReadonlySet<string> = new Set([
   "attributed_to",
   "modified_args",
   "modified_result",
+  // Artifact mode only (C6): the sha256 and epoch the daemon is serving.
+  // Optional, so a non-artifact daemon's frames are unchanged.
+  "policy_artifact",
+  "policy_epoch",
 ]);
 const PHASES: readonly Phase[] = ["call", "result"];
 

@@ -82,6 +82,11 @@ empty, the same rule ``observed`` follows, so older chains verify unchanged:
   integer, so no policy content and no argument value rides along. Set by the
   sidecar when it serves a scoped engine, and by a request that carried a
   verified scope overlay.
+- ``coverage_gap`` is the action class whose out-of-process second opinion was
+  unavailable and the primary therefore decided (C6). It carries the class
+  name only, so ``interlock report`` can count gaps by class without any
+  argument value reaching the log. Omitted when the secondary answered or the
+  class was never delegated.
 
 A sink that fails to write is not allowed to turn into a silent gap: the
 failed write raises :class:`~interlock.enforce.Blocked` (fail closed), and the
@@ -217,6 +222,12 @@ class Receipt:
     # artifact. Declared last so the MAC of every older receipt is unchanged;
     # omitted while None, so local-only installs write byte-identical chains.
     policy_artifact: Optional[str] = None
+    # The action class whose second opinion was unavailable (C6), set on a
+    # receipt the primary decided under an ``open`` failure policy. The class
+    # name only - never an argument - so ``interlock report`` can count
+    # coverage gaps by class. Declared last so older receipts are byte-
+    # identical and their MACs unchanged.
+    coverage_gap: Optional[str] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape.
@@ -253,7 +264,7 @@ _FIELD_NAMES = tuple(f.name for f in dataclasses.fields(Receipt))
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
     "enforcer", "elapsed_us", "masked", "tokens", "scope_document", "catalog",
-    "policy_artifact",
+    "policy_artifact", "coverage_gap",
 )
 
 # The catalog id receipts carry, once a mesh component has set it. None (the
@@ -411,6 +422,7 @@ def emit_receipt(
     phase: Optional[str] = None,
     scope_document: Optional[str] = None,
     policy_artifact: Optional[str] = None,
+    coverage_gap: Optional[str] = None,
 ) -> None:
     """Build one Receipt from the enforced decision and write it to the sink.
 
@@ -461,6 +473,7 @@ def emit_receipt(
         scope_document=scope_document,
         catalog=_CATALOG_ID,
         policy_artifact=policy_artifact,
+        coverage_gap=coverage_gap,
     )
     if sink is not None:
         _write(sink, receipt, event.action)

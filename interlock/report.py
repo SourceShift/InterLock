@@ -103,6 +103,11 @@ def summarize(
     )
 
     escalations = Counter(r.approval for r in enforced if r.approval)
+    # A coverage gap is a delegated action class whose out-of-process second
+    # opinion was unavailable and whose failure policy let the primary decide.
+    # It is counted across every decision, monitored or enforced: the missing
+    # coverage is a property of the deployment, not of what was enforced.
+    coverage_gaps = Counter(r.coverage_gap for r in decisions if r.coverage_gap)
     outcomes = Counter(r.enforcer or "tool" for r in window if r.phase == "outcome")
     dropped = 0
     for r in window:
@@ -158,6 +163,7 @@ def summarize(
             ],
         },
         "escalations": dict(sorted(escalations.items())),
+        "coverage_gaps": dict(sorted(coverage_gaps.items())),
         "failed_outcomes": dict(sorted(outcomes.items())),
         "dropped_receipts": dropped,
         "masked": dict(masked.most_common()),
@@ -239,6 +245,9 @@ def render(summary: Dict[str, Any], verified: Dict[str, Optional[str]], *,
     if summary["escalations"]:
         lines.append("Escalations:      " + ", ".join(
             "{} {}".format(v, k) for k, v in summary["escalations"].items()))
+    if summary.get("coverage_gaps"):
+        lines.append("Coverage gaps:    " + ", ".join(
+            "{} {}".format(v, k) for k, v in summary["coverage_gaps"].items()))
     if summary["failed_outcomes"]:
         lines.append("Failed after allow: " + ", ".join(
             "{} by {}".format(v, k) for k, v in summary["failed_outcomes"].items()))

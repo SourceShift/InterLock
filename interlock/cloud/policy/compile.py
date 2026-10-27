@@ -339,7 +339,10 @@ def compile_from_source(
     sha256 = hashlib.sha256(artifact_bytes).hexdigest()
 
     try:
-        compiled = load_artifact(artifact_bytes)
+        # The round-trip check compares Python source to Python compiled. A
+        # native base here would make half the comparison a different backend
+        # and hide a source-vs-generated divergence behind the plan's parity.
+        compiled = load_artifact(artifact_bytes, native_enabled=False)
     except ArtifactError as exc:
         raise CompileError("bad_artifact", str(exc)) from None
 

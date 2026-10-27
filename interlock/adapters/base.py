@@ -341,7 +341,16 @@ def run_hook(adapter: Adapter, payload: Dict[str, Any], engine: Any, *,
 def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str,
                  reviews: Any = None, review_mode: str = "fallback") -> Rendered:
     started = time.perf_counter()
-    decisions = [engine.evaluate(event) for event in call.events]
+    decisions = []
+    coverage_gap = None
+    for event in call.events:
+        decisions.append(engine.evaluate(event))
+        # A tiered engine records how the last event was decided. When the
+        # secondary was unavailable and the class policy is open, the primary
+        # answered and the receipt says which class has no second opinion.
+        last = getattr(engine, "last", None)
+        if getattr(last, "coverage_gap", False):
+            coverage_gap = getattr(last, "class_", None) or coverage_gap
     elapsed = int((time.perf_counter() - started) * 1_000_000)
     decision = combine(decisions)
     # The primary event is what the receipt digests and what an approver is
@@ -360,13 +369,19 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
     artifact = _policy_artifact(engine)
     policy = decision.verdict if decision.verdict in tuple(Verdict) else Verdict.BLOCK
 
+    def emit(*args, **kwargs):
+        # Every decision receipt from this call carries the same coverage gap;
+        # a branch that forgets it would make the report undercount.
+        kwargs.setdefault("coverage_gap", coverage_gap)
+        return emit_receipt(*args, **kwargs)
+
     if policy == Verdict.ALLOW:
-        emit_receipt(primary, decision, policy_epoch=epoch, elapsed_us=elapsed,
-                     policy_artifact=artifact)
+        emit(primary, decision, policy_epoch=epoch, elapsed_us=elapsed,
+             policy_artifact=artifact)
         return adapter.render(call, HookOutcome(Verdict.ALLOW))
     if enforcement == "monitor":
-        emit_receipt(primary, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed,
-                     policy_artifact=artifact)
+        emit(primary, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed,
+             policy_artifact=artifact)
         return adapter.render(call, HookOutcome(Verdict.ALLOW, decision.reason,
                                                 decision.policy_id, policy, observed=True))
 
@@ -403,26 +418,26 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                     reason = (
                         "{} - the approval covers a rewritten call, and {}'s hooks cannot "
                         "apply a rewrite, so it is refused".format(decision.reason, adapter.title))
-                    emit_receipt(primary, Decision(Verdict.BLOCK, reason, decision.policy_id,
-                                                   attributed_to=decision.attributed_to),
-                                 policy_epoch=epoch, elapsed_us=elapsed,
-                                 policy_verdict="ESCALATE", approval=note,
-                                 policy_artifact=artifact)
+                    emit(primary, Decision(Verdict.BLOCK, reason, decision.policy_id,
+                                           attributed_to=decision.attributed_to),
+                         policy_epoch=epoch, elapsed_us=elapsed,
+                         policy_verdict="ESCALATE", approval=note,
+                         policy_artifact=artifact)
                     return adapter.render(call, HookOutcome(
                         Verdict.BLOCK, reason, decision.policy_id, Verdict.ESCALATE))
-                emit_receipt(primary, Decision(Verdict.MODIFY, decision.reason,
-                                               decision.policy_id, decision.modified_args,
-                                               attributed_to=decision.attributed_to),
-                             policy_epoch=epoch, elapsed_us=elapsed,
-                             policy_verdict="ESCALATE", approval=note,
-                             policy_artifact=artifact)
+                emit(primary, Decision(Verdict.MODIFY, decision.reason,
+                                       decision.policy_id, decision.modified_args,
+                                       attributed_to=decision.attributed_to),
+                     policy_epoch=epoch, elapsed_us=elapsed,
+                     policy_verdict="ESCALATE", approval=note,
+                     policy_artifact=artifact)
                 return adapter.render(call, HookOutcome(
                     Verdict.MODIFY, decision.reason, decision.policy_id, Verdict.ESCALATE,
                     modified_args=decision.modified_args))
-            emit_receipt(primary, Decision(Verdict.ALLOW, decision.reason, decision.policy_id,
-                                           attributed_to=decision.attributed_to),
-                         policy_epoch=epoch, elapsed_us=elapsed, policy_verdict="ESCALATE",
-                         approval=note, policy_artifact=artifact)
+            emit(primary, Decision(Verdict.ALLOW, decision.reason, decision.policy_id,
+                                   attributed_to=decision.attributed_to),
+                 policy_epoch=epoch, elapsed_us=elapsed, policy_verdict="ESCALATE",
+                 approval=note, policy_artifact=artifact)
             return adapter.render(call, HookOutcome(Verdict.ALLOW))
         outcome = replace(outcome, verdict=Verdict.BLOCK, reason="{} - {}".format(
             decision.reason, pending_message(review)))
@@ -446,9 +461,9 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
     enforced = Decision(outcome.verdict, outcome.reason, decision.policy_id,
                         decision.modified_args if outcome.verdict == Verdict.MODIFY else None,
                         attributed_to=decision.attributed_to)
-    emit_receipt(primary, enforced, policy_epoch=epoch, elapsed_us=elapsed,
-                 policy_verdict=policy.name if outcome.verdict != policy else None,
-                 approval=approval, policy_artifact=artifact)
+    emit(primary, enforced, policy_epoch=epoch, elapsed_us=elapsed,
+         policy_verdict=policy.name if outcome.verdict != policy else None,
+         approval=approval, policy_artifact=artifact)
     return adapter.render(call, outcome)
 
 

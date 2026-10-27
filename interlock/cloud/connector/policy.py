@@ -414,7 +414,9 @@ class PolicyDistributor:
         # Load before swapping: a bad module reference must never replace a
         # working active artifact. This is the only rules-module import.
         try:
-            loaded = load_artifact(raw)
+            # Validation of the candidate only; the enforcing load happens in
+            # active_policy(), where the native base is worth building.
+            loaded = load_artifact(raw, native_enabled=False)
         except Exception as exc:  # noqa: BLE001 - refusal path
             self._refuse(state, "artifact_invalid")
             state["last_error"] = redact(str(exc))

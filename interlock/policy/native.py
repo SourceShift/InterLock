@@ -96,44 +96,85 @@ def min_rules() -> int:
         return DEFAULT_MIN_RULES
 
 
-def plan_for(engine: Any) -> Optional[str]:
+def plan_for(engine: Any, *, minimum: Optional[int] = None) -> Optional[str]:
     """A compiled plan for ``engine``, or None if any part is unsupported.
 
     Reads ``engine.documents`` - the effective policy documents, in the order
     their rules were compiled - rather than the compiled callables, because a
     callable no longer carries the condition it was built from.
+
+    ``minimum`` overrides the size gate for this call. The default (``None``)
+    reads :func:`min_rules`; an artifact-backed policy passes ``0`` because it
+    was explicitly compiled for the native fast path, and a one-rule artifact
+    should not silently fall back to Python just because the JSON boundary
+    would cost more than the rule.
+    """
+    text, _ = plan_for_with_reason(engine, minimum=minimum)
+    return text
+
+
+def plan_for_with_reason(
+    engine: Any, *, minimum: Optional[int] = None
+) -> tuple:
+    """``(plan_json, reason)``; exactly one is None.
+
+    ``reason`` is a short human string for ``CompiledPolicy.status()`` and the
+    policy CLI. It never contains an event or an argument value: it is written
+    to a terminal and a quote of a rule id is deliberate, but nothing else is
+    carried out of the policy.
     """
     if getattr(engine, "quarantined", None):
-        return None
+        return None, "engine has quarantined rules"
     if getattr(engine, "overlays", None):
-        return None
+        return None, "engine has overlays"
     if getattr(engine, "_shadow", None):
-        return None
+        return None, "engine has shadow rules"
     if getattr(engine, "_code_rules", None):
-        return None
+        return None, "engine has code rules"
     documents = getattr(engine, "documents", None)
     if not documents:
-        return None
+        return None, "engine has no documents to plan"
     rules: List[Mapping[str, Any]] = []
     for document in documents:
         if not isinstance(document, Mapping):
-            return None
+            return None, "engine document is not an object"
         # An overlay document is applied by prepending its widened rules, which
         # documents do not record; a mesh parent carries ceilings; a `disable`
         # list removes rules that the documents still contain.
         if document.get("overlay") or document.get("extends") or document.get("disable"):
-            return None
+            return None, "engine document uses overlay, extends or disable"
         raw_rules = document.get("rules", [])
         if not isinstance(raw_rules, list):
-            return None
+            return None, "engine document rules are not a list"
         for raw in raw_rules:
             rule = _rule(raw)
             if rule is None:
-                return None
+                rule_id = raw.get("id") if isinstance(raw, Mapping) else None
+                if isinstance(rule_id, str) and rule_id:
+                    return None, "rule {!r} is not expressible natively".format(rule_id)
+                return None, "a rule is not expressible natively"
             rules.append(rule)
-    if len(rules) < min_rules():
+    floor = min_rules() if minimum is None else max(0, int(minimum))
+    if len(rules) < floor:
+        return None, "rule count {} is below the native minimum {}".format(
+            len(rules), floor
+        )
+    return json.dumps({"version": 1, "rules": rules}, sort_keys=True), None
+
+
+def available() -> bool:
+    """Whether the optional accelerator is importable in this process."""
+    return _plan_class() is not None
+
+
+def abi_version() -> Optional[int]:
+    """The accelerator's ``ENGINE_ABI``, or None when it is not installed."""
+    try:
+        import interlock_scopes  # type: ignore[import-not-found]
+    except Exception:  # pragma: no cover - the accelerator is optional
         return None
-    return json.dumps({"version": 1, "rules": rules}, sort_keys=True)
+    value = getattr(interlock_scopes, "ENGINE_ABI", None)
+    return value if isinstance(value, int) else None
 
 
 def _rule(raw: Any) -> Optional[Mapping[str, Any]]:
@@ -287,17 +328,17 @@ def _test(raw: Mapping[str, Any], subject: str, name: Any) -> Optional[Mapping[s
     return {subject: name, op: value}
 
 
-def build(engine: Any) -> Optional[Any]:
+def build(engine: Any, *, minimum: Optional[int] = None) -> Optional[Any]:
     """Compile ``engine``'s policy into a native plan, or None.
 
     A plan the Rust side rejects (a regex it cannot compile, a malformed
     document) is treated as ineligible, never as an error: the Python engine
-    is always the fallback.
+    is always the fallback. ``minimum`` is forwarded to :func:`plan_for`.
     """
     plan_class = _plan_class()
     if plan_class is None:
         return None
-    text = plan_for(engine)
+    text = plan_for(engine, minimum=minimum)
     if text is None:
         return None
     try:
@@ -342,3 +383,157 @@ def decide(plan: Any, event: Any) -> Decision:
     # other unknown verdict in the package.
     return Decision.block(reason or "unknown native verdict", policy_id,
                           attributed_to=attributed)
+
+
+#: The policy ``interlock policy doctor`` replays through both backends. It is
+#: deliberately small but exercises every comparison operator, nested
+#: all/any/not, an action glob, a unicode value, a long value and a missing
+#: argument - the cases where a hand-ported evaluator most often drifts.
+PARITY_RULES = [
+    {"id": "parity-eq", "verdict": "block", "reason": "eq",
+     "when": {"all": [{"action": "read_file"},
+                      {"arg": "path", "eq": "/etc/passwd"}]}},
+    {"id": "parity-ne", "verdict": "block", "reason": "ne",
+     "when": {"all": [{"action": "read_file"},
+                      {"arg": "path", "ne": "/tmp/ok"}]}},
+    {"id": "parity-in", "verdict": "block", "reason": "in",
+     "when": {"all": [{"action": "net_fetch"},
+                      {"arg": "host", "in": ["evil.example", "tracker.example"]}]}},
+    {"id": "parity-not-in", "verdict": "block", "reason": "not_in",
+     "when": {"all": [{"action": "net_fetch"},
+                      {"arg": "host", "not_in": ["docs.example", "api.acme.com"]}]}},
+    {"id": "parity-gt", "verdict": "block", "reason": "gt",
+     "when": {"all": [{"action": "write_file"},
+                      {"arg": "size", "gt": 1000}]}},
+    {"id": "parity-ge", "verdict": "block", "reason": "ge",
+     "when": {"all": [{"action": "write_file"},
+                      {"arg": "size", "ge": 1000}]}},
+    {"id": "parity-lt", "verdict": "block", "reason": "lt",
+     "when": {"all": [{"action": "write_file"},
+                      {"arg": "size", "lt": 10}]}},
+    {"id": "parity-le", "verdict": "block", "reason": "le",
+     "when": {"all": [{"action": "write_file"},
+                      {"arg": "size", "le": 10}]}},
+    {"id": "parity-contains", "verdict": "block", "reason": "contains",
+     "when": {"all": [{"action": "run_shell"},
+                      {"arg": "cmd", "contains": "rm -rf"}]}},
+    {"id": "parity-startswith", "verdict": "block", "reason": "startswith",
+     "when": {"all": [{"action": "run_shell"},
+                      {"arg": "cmd", "startswith": "curl "}]}},
+    {"id": "parity-endswith", "verdict": "block", "reason": "endswith",
+     "when": {"all": [{"action": "read_file"},
+                      {"arg": "path", "endswith": ".pem"}]}},
+    {"id": "parity-exists", "verdict": "block", "reason": "exists",
+     "when": {"all": [{"action": "read_file"},
+                      {"arg": "path", "exists": True}]}},
+    {"id": "parity-glob", "verdict": "block", "reason": "glob",
+     "when": {"all": [{"action": "net_fetch"},
+                      {"arg": "host", "glob": "*.internal"}]}},
+    {"id": "parity-matches", "verdict": "block", "reason": "matches",
+     "when": {"all": [{"action": "read_file"},
+                      {"arg": "path", "matches": "^/etc/"}]}},
+    {"id": "parity-nested", "verdict": "block", "reason": "nested",
+     "when": {"all": [
+         {"action": "run_shell"},
+         {"any": [
+             {"arg": "cmd", "contains": "sudo"},
+             {"not": {"arg": "cmd", "startswith": "echo"}},
+         ]},
+     ]}},
+    {"id": "parity-action-glob", "verdict": "block", "reason": "action glob",
+     "when": {"all": [
+         {"action": {"glob": "net_*"}},
+         {"arg": "host", "eq": "blocked.example"},
+     ]}},
+]
+
+#: Events for :data:`PARITY_RULES`: matches, non-matches, unicode, a value
+#: longer than 4 KiB, missing arguments, non-string numbers and case variants.
+PARITY_EVENTS = [
+    {"action": "read_file", "args": {"path": "/etc/passwd"}},
+    {"action": "read_file", "args": {"path": "/tmp/ok"}},
+    {"action": "read_file", "args": {"path": "/etc/ssl/key.pem"}},
+    {"action": "read_file", "args": {}},
+    {"action": "READ_FILE", "args": {"path": "/etc/passwd"}},
+    {"action": "net_fetch", "args": {"host": "evil.example"}},
+    {"action": "net_fetch", "args": {"host": "docs.example"}},
+    {"action": "net_fetch", "args": {"host": "svc.internal"}},
+    {"action": "net_fetch", "args": {"host": "blocked.example"}},
+    {"action": "net_fetch", "args": {"host": "héllo.example"}},
+    {"action": "write_file", "args": {"size": 5000}},
+    {"action": "write_file", "args": {"size": 5}},
+    {"action": "write_file", "args": {"size": "5000"}},
+    {"action": "run_shell", "args": {"cmd": "rm -rf /"}},
+    {"action": "run_shell", "args": {"cmd": "curl http://x"}},
+    {"action": "run_shell", "args": {"cmd": "echo héllo €"}},
+    {"action": "run_shell", "args": {"cmd": "x" * 5000}},
+    {"action": "run_shell", "args": {"cmd": "echo hi"}},
+    {"action": "python", "args": {}},
+    {"action": "", "args": {}},
+]
+
+
+def _shape(decision: Any) -> tuple:
+    return (
+        decision.verdict,
+        decision.policy_id,
+        decision.reason,
+        decision.attributed_to,
+        decision.modified_args,
+    )
+
+
+def parity_report() -> dict:
+    """Replay the embedded corpus through both backends and compare.
+
+    ``interlock policy doctor`` prints this so an operator can see that the
+    installed accelerator agrees with the Python engine on the exact cases
+    the planner translates. The check is self-contained (no test fixtures),
+    so it works from an installed wheel. A missing accelerator, an
+    inexpressible corpus or an import failure is reported, never raised: a
+    diagnostic must not crash.
+    """
+    if not available():
+        return {
+            "ran": False, "ok": None, "cases": 0, "mismatches": 0,
+            "detail": "the native accelerator is not installed",
+        }
+    from ..event import SensorEvent
+    from .declarative import load_policy
+
+    try:
+        engine = load_policy({"version": 1, "rules": PARITY_RULES})
+        plan = build(engine, minimum=0)
+    except Exception as exc:  # pragma: no cover - depends on the wheel
+        return {
+            "ran": False, "ok": False, "cases": 0, "mismatches": 0,
+            "detail": "could not build the parity policy: {}".format(exc),
+        }
+    if plan is None:
+        return {
+            "ran": True, "ok": False, "cases": 0, "mismatches": 0,
+            "detail": "the embedded parity policy is not expressible natively",
+        }
+    mismatches = []
+    for item in PARITY_EVENTS:
+        event = SensorEvent(action=item["action"], args=item.get("args") or {})
+        try:
+            native_decision = decide(plan, event)
+        except Exception as exc:  # pragma: no cover - depends on the wheel
+            mismatches.append("{}: native raised {}".format(item["action"], exc))
+            continue
+        try:
+            python_decision = engine.evaluate(event)
+        except Exception as exc:  # pragma: no cover - depends on the wheel
+            mismatches.append("{}: python raised {}".format(item["action"], exc))
+            continue
+        if _shape(native_decision) != _shape(python_decision):
+            mismatches.append("{}: native {} != python {}".format(
+                item["action"], _shape(native_decision), _shape(python_decision)))
+    return {
+        "ran": True,
+        "ok": not mismatches,
+        "cases": len(PARITY_EVENTS),
+        "mismatches": len(mismatches),
+        "detail": mismatches[0] if mismatches else None,
+    }

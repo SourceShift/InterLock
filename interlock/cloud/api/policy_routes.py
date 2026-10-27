@@ -189,7 +189,9 @@ def _artifact_for_publish(app: Any, oid: str, body: Dict[str, Any],
             raise ApiError(404, "unknown_artifact",
                            "no compiled artifact with that sha256")
         try:
-            compiled = load_artifact(raw)
+            # Validation is metadata only; do not build a native plan on a
+            # control-plane host that will never evaluate this artifact.
+            compiled = load_artifact(raw, native_enabled=False)
         except ArtifactError as exc:
             raise ApiError(422, "bad_artifact", str(exc)) from None
         return {

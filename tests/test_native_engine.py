@@ -272,7 +272,7 @@ def _library() -> ctypes.CDLL:
 def test_c_abi_evaluates_and_reports_errors():
     lib = _library()
     lib.il_abi_version.restype = ctypes.c_uint32
-    assert lib.il_abi_version() == 1
+    assert lib.il_abi_version() == 2
     lib.il_eval_plan.restype = ctypes.c_int
     lib.il_eval_plan.argtypes = [
         ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t,

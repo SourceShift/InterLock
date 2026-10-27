@@ -7,7 +7,7 @@ import interlock
 from interlock import Decision, deny_tool, guard, install, monitor
 from interlock.cli import main
 from interlock.receipt import Receipt, set_sink
-from interlock.report import parse_since, read_receipts, summarize, verification
+from interlock.report import parse_since, read_receipts, render, summarize, verification
 from interlock.sink import FileSink
 
 KEY = b"r" * 32
@@ -110,6 +110,35 @@ def test_dropped_notices_are_summed():
     notice = Receipt(ts=1.0, action="receipts.dropped", verdict="ALLOW",
                      reason="3 receipt(s) could not be written; last error: OSError")
     assert summarize([notice])["dropped_receipts"] == 3
+
+
+def test_coverage_gaps_are_counted_by_class():
+    receipts = [
+        Receipt(ts=1.0, action="run_shell", verdict="ALLOW",
+                policy_id="coverage_gap", reason="coverage_gap: shell",
+                coverage_gap="shell"),
+        Receipt(ts=2.0, action="delete_file", verdict="ALLOW",
+                policy_id="coverage_gap", coverage_gap="shell"),
+        Receipt(ts=3.0, action="send_email", verdict="BLOCK",
+                policy_id="fail_closed", coverage_gap="email"),
+        Receipt(ts=4.0, action="run_shell", verdict="ALLOW"),
+    ]
+
+    summary = summarize(receipts)
+
+    # Sorted by class, so two shell gaps and one email gap.
+    assert summary["coverage_gaps"] == {"email": 1, "shell": 2}
+    assert "Coverage gaps:    1 email, 2 shell" in render(
+        summary, verification(receipts))
+
+
+def test_coverage_gap_is_optional_and_round_trips():
+    receipt = Receipt(ts=1.0, action="a", verdict="ALLOW", coverage_gap="shell")
+    assert json.loads(receipt.to_json())["coverage_gap"] == "shell"
+    assert Receipt.from_json(receipt.to_json()).coverage_gap == "shell"
+    # Omitted while None, so every older receipt's MAC still verifies.
+    assert "coverage_gap" not in json.loads(
+        Receipt(ts=1.0, action="a", verdict="ALLOW").to_json())
 
 
 def test_cli_json(log, tmp_path, capsys):

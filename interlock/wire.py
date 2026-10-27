@@ -81,6 +81,12 @@ _RESPONSE_KEYS = frozenset(
         "attributed_to",
         "modified_args",
         "modified_result",
+        # Artifact mode only (C6): the sha256 and epoch the daemon is serving,
+        # so a client that pinned an artifact can refuse a different one. Both
+        # are optional; a non-artifact daemon's frames are byte-identical to
+        # the R19 shape.
+        "policy_artifact",
+        "policy_epoch",
     }
 )
 _PHASES = ("call", "result")
@@ -484,17 +490,27 @@ def parse_request(frame: Dict[str, Any]) -> Tuple[str, SensorEvent]:
     )
 
 
-def response_frame(op_id: str, decision: Decision) -> Dict[str, Any]:
+def response_frame(
+    op_id: str,
+    decision: Decision,
+    *,
+    policy_epoch: Optional[str] = None,
+    policy_artifact: Optional[str] = None,
+) -> Dict[str, Any]:
     """Build the frame carrying one decision. Raises on an unrepresentable
     rewrite, which the caller turns into an error frame - the far end then has
-    no verdict and blocks."""
+    no verdict and blocks.
+
+    ``policy_epoch``/``policy_artifact`` are added only in artifact mode, so a
+    daemon serving a plain rule set keeps emitting the R19 frame exactly.
+    """
     if decision.modified_args is not None and not isinstance(
         decision.modified_args, dict
     ):
         raise WireError(
             "internal", "modified_args must be an object or null"
         )
-    return {
+    frame = {
         "v": PROTOCOL_VERSION,
         "id": op_id,
         "verdict": int(decision.verdict),
@@ -504,6 +520,11 @@ def response_frame(op_id: str, decision: Decision) -> Dict[str, Any]:
         "modified_args": encode_value(decision.modified_args),
         "modified_result": encode_value(decision.modified_result),
     }
+    if policy_epoch is not None:
+        frame["policy_epoch"] = policy_epoch
+    if policy_artifact is not None:
+        frame["policy_artifact"] = policy_artifact
+    return frame
 
 
 def parse_response(frame: Dict[str, Any], op_id: str) -> Decision:

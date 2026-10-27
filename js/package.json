@@ -5,6 +5,7 @@
   "license": "Apache-2.0",
   "author": "Amir Khakshour",
   "type": "module",
+  "packageManager": "npm@11.8.0",
   "engines": {
     "node": ">=20.6"
   },

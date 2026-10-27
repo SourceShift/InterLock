@@ -25,11 +25,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping, Optional, Union
+
+_log = logging.getLogger("interlock")
 
 #: The only artifact format this build understands.
 ARTIFACT_FORMAT = 1
@@ -375,6 +378,114 @@ def evaluate_layers(base: Any, scoped: Any, event: Any) -> Any:
 
 
 
+class _NativeBase:
+    """The document floor, evaluated natively with a Python per-call fallback.
+
+    Only ``evaluate`` is overridden; everything else (``__len__``, ``epoch``,
+    the documents) delegates to the Python engine, so callers that introspect
+    the base keep seeing the engine that was actually loaded. A native failure
+    must never change the answer - the Python engine evaluates the same policy
+    - so the exception is logged, counted on the owning policy, and the same
+    event is replayed on Python.
+    """
+
+    def __init__(self, engine: Any, plan: Any, owner: "CompiledPolicy") -> None:
+        self._engine = engine
+        self._plan = plan
+        self._owner = owner
+
+    def evaluate(self, event: Any) -> Any:
+        from . import native as native_policy
+
+        try:
+            return native_policy.decide(self._plan, event)
+        except Exception as exc:
+            self._owner.native_fallbacks += 1
+            _log.warning(
+                "interlock: native document evaluation failed (%s); using the "
+                "Python engine", exc,
+            )
+            return self._engine.evaluate(event)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._engine, name)
+
+    def __len__(self) -> int:
+        return len(self._engine)
+
+
+class _NativeScoped:
+    """A ``ScopedEngine`` that uses a scope's native plan when one was built.
+
+    The scope engine is still the source of truth: a native failure is counted
+    and the same event is replayed on Python, and a scope without a plan (or
+    whose cached engine has been rebuilt since the plan was made) delegates
+    unchanged. Only ``evaluate`` is overridden; ``scope_of``,
+    ``default_scope``, ``epoch_for`` and ``registry`` pass through.
+    """
+
+    def __init__(self, engine: Any, plans: Mapping[tuple, tuple],
+                 owner: "CompiledPolicy") -> None:
+        self._engine = engine
+        self._plans = plans
+        self._owner = owner
+
+    def evaluate(self, event: Any) -> Any:
+        from . import native as native_policy
+
+        scope = tuple(self._engine.scope_of(event) or self._engine.default_scope)
+        entry = self._plans.get(scope) if scope else None
+        if entry is None:
+            return self._engine.evaluate(event)
+        engine, plan = entry
+        try:
+            current = self._engine.registry.for_scope(scope)
+        except Exception:
+            return self._engine.evaluate(event)
+        if current is not engine:
+            # The registry rebuilt the scope's engine (a rebind), so the plan
+            # was compiled from a policy this event must not be judged under.
+            return self._engine.evaluate(event)
+        try:
+            return native_policy.decide(plan, event)
+        except Exception as exc:
+            self._owner.native_fallbacks += 1
+            _log.warning(
+                "interlock: native scope evaluation failed (%s); using the "
+                "Python engine", exc,
+            )
+            return self._engine.evaluate(event)
+
+    def __getattr__(self, name: str) -> Any:
+        if name in ("_engine", "_plans", "_owner"):
+            raise AttributeError(name)
+        return getattr(self._engine, name)
+
+
+def _scope_paths(scope: Mapping[str, Any]) -> list:
+    try:
+        bindings = _bindings(scope)
+    except ArtifactError:
+        return []
+    return sorted(str(key) for key in bindings)
+
+
+def _leaf(key: str) -> tuple:
+    return tuple(part for part in str(key).split("/") if part)
+
+
+def native_forced_off() -> bool:
+    """Whether ``INTERLOCK_NATIVE=0`` (or false/no/off) forces Python.
+
+    The artifact path is native-on by default, but the operator's documented
+    escape hatch must still win: a host that sets ``INTERLOCK_NATIVE=0`` is
+    asking for the Python evaluator everywhere, artifacts included.
+    """
+    return os.environ.get("INTERLOCK_NATIVE", "").strip().lower() in {
+        "0", "false", "no", "off",
+    }
+
+
 class CompiledPolicy:
     """A loaded artifact plus the engines it materialised.
 
@@ -385,7 +496,8 @@ class CompiledPolicy:
 
     def __init__(self, artifact: Mapping[str, Any], engine: Any, *,
                  raw: bytes, rules_module: Optional[str],
-                 template_ids: list, base: Any = None) -> None:
+                 template_ids: list, base: Any = None,
+                 native_enabled: bool = True) -> None:
         self.artifact = dict(artifact)
         self.engine = engine
         self.base = base
@@ -398,9 +510,139 @@ class CompiledPolicy:
         self.failure_policy = dict(artifact.get("failure_policy") or {})
         self.documents = list(artifact.get("documents") or [])
         self.scope = dict(artifact.get("scope") or {})
+        # Native evaluation is on by default for an artifact: unlike a local
+        # engine, an artifact is an explicitly compiled, parity-gated rule set.
+        # ``python_scopes`` records every scope that stays on Python (scope
+        # templates are Python callables, so today that is all of them), and
+        # ``native_scopes`` the ones a native plan could decide. The documents
+        # base and each bound scope are planned once, here, at load time.
+        self._native_requested = bool(native_enabled)
+        self._native_forced_off = native_forced_off()
+        self.native_enabled = self._native_requested and not self._native_forced_off
+        self.native_plan: Optional[Any] = None
+        self.native_base = False
+        self.native_scopes: list = []
+        self.python_scopes = _scope_paths(self.scope)
+        self.native_unavailable_reason: Optional[str] = None
+        self.native_fallbacks = 0
+        self._scope_plans: dict = {}
+        self._base_eval = base
+        self._attach_native(base)
+        self._attach_native_scopes()
+        self._scope_eval = (
+            _NativeScoped(self.engine, self._scope_plans, self)
+            if self._scope_plans else self.engine
+        )
+
+    def _reason(self, text: str) -> None:
+        """Append one refusal reason, keeping every earlier one."""
+        if self.native_unavailable_reason:
+            self.native_unavailable_reason = (
+                self.native_unavailable_reason + "; " + text)
+        else:
+            self.native_unavailable_reason = text
+
+    def _attach_native(self, base: Any) -> None:
+        """Plan the documents base once, recording why it could not be done.
+
+        A missing accelerator, a base with no rules, or a document the planner
+        cannot translate whole all leave evaluation on the Python engine. None
+        of them is an error: the Python engine is the definition of semantics.
+        """
+        if not self.native_enabled:
+            self.native_unavailable_reason = (
+                "INTERLOCK_NATIVE=0 forces Python evaluation"
+                if self._native_forced_off else "native evaluation is disabled"
+            )
+            return
+        from . import native as native_policy
+
+        if base is None:
+            self.native_unavailable_reason = "artifact has no document rules to plan"
+            return
+        if not native_policy.available():
+            self.native_unavailable_reason = (
+                "the native accelerator interlock_scopes is not installed"
+            )
+            return
+        # Artifacts bypass the size gate: the policy was explicitly compiled
+        # for the fast path, and a small document set must not silently run on
+        # Python only.
+        plan = native_policy.build(base, minimum=0)
+        if plan is None:
+            _, reason = native_policy.plan_for_with_reason(base, minimum=0)
+            self.native_unavailable_reason = (
+                reason or "the document base is not expressible natively")
+            return
+        self.native_plan = plan
+        self.native_base = True
+        self._base_eval = _NativeBase(base, plan, self)
+
+    def _attach_native_scopes(self) -> None:
+        """Plan each bound scope's engine once, exactly as the base is planned.
+
+        A scope whose engine is not expressible stays on Python and is listed
+        in ``python_scopes``; the per-scope reason is carried in
+        ``native_unavailable_reason`` so ``verify``/``doctor`` can explain it.
+        """
+        keys = list(self.python_scopes)
+        if not keys:
+            return
+        from . import native as native_policy
+
+        if not self.native_enabled or not native_policy.available():
+            return
+        reasons = []
+        for key in keys:
+            path = _leaf(key)
+            try:
+                engine = self.engine.registry.for_scope(path)
+            except Exception as exc:
+                reasons.append(
+                    "scope {!r} could not be resolved: {}".format(key, exc))
+                continue
+            plan = native_policy.build(engine, minimum=0)
+            if plan is None:
+                _, why = native_policy.plan_for_with_reason(engine, minimum=0)
+                reasons.append("scope {!r}: {}".format(
+                    key, why or "not expressible natively"))
+                continue
+            self._scope_plans[path] = (engine, plan)
+            self.native_scopes.append(key)
+        self.python_scopes = [key for key in keys if key not in self.native_scopes]
+        if self.python_scopes and reasons:
+            self._reason(
+                "scope templates are Python callables; scope(s) stayed on "
+                "Python: " + "; ".join(reasons[:3]))
+
+    def status(self) -> dict:
+        """A machine-readable picture of which backend decided what.
+
+        ``native_base`` is the documents floor; ``native_scopes`` and
+        ``python_scopes`` partition the bound scopes. ``native_fallbacks``
+        counts calls where the native path failed and Python answered instead.
+        """
+        if self._native_forced_off:
+            rule = "INTERLOCK_NATIVE=0 forces Python"
+        elif not self._native_requested:
+            rule = "native_enabled=False"
+        else:
+            rule = "artifact default (native-on)"
+        return {
+            "enabled": self.native_enabled,
+            "rule": rule,
+            "native_base": self.native_base,
+            "native_scopes": list(self.native_scopes),
+            "python_scopes": list(self.python_scopes),
+            "native_fallbacks": self.native_fallbacks,
+            "native_unavailable_reason": self.native_unavailable_reason,
+            "epoch": self.epoch,
+            "sha256": self.sha256,
+            "scope_epochs": self.scope_epochs(),
+        }
 
     def evaluate(self, event: Any) -> Any:
-        return evaluate_layers(self.base, self.engine, event)
+        return evaluate_layers(self._base_eval, self._scope_eval, event)
 
     def evaluate_with_epoch(self, event: Any) -> tuple:
         """``(Decision, scope_epoch)``; the scope epoch is None when unbound.
@@ -409,7 +651,7 @@ class CompiledPolicy:
         artifact's own ``epoch`` identifies the rules it was judged under.
         """
         return (
-            evaluate_layers(self.base, self.engine, event),
+            evaluate_layers(self._base_eval, self._scope_eval, event),
             self.engine.epoch_for(event),
         )
 
@@ -423,6 +665,28 @@ class CompiledPolicy:
             except Exception:
                 out[str(key)] = None
         return out
+
+    def rule_count(self) -> int:
+        """Rules that can actually decide an event.
+
+        The documents floor plus every bound scope's compiled rules. This is
+        the emptiness test a host needs before serving an artifact: a count of
+        templates would say a scope exists even when its template carries no
+        rule, and an artifact that decides nothing would allow everything.
+        """
+        total = 0
+        if self.base is not None:
+            try:
+                total += len(self.base)
+            except TypeError:
+                pass
+        for key in sorted(_bindings(self.scope)):
+            path = tuple(part for part in str(key).split("/") if part)
+            try:
+                total += len(self.engine.registry.for_scope(path))
+            except Exception:
+                continue
+        return total
 
 
 def _load_templates(spec: str) -> Mapping[str, Any]:
@@ -439,12 +703,19 @@ def load_artifact(
     path_or_bytes: Union[str, os.PathLike, bytes, bytearray],
     *,
     module: Optional[str] = None,
+    native_enabled: bool = True,
 ) -> CompiledPolicy:
     """Validate artifact bytes and materialise the engine they describe.
 
     ``module`` pins the ``module:attr`` spec the caller believes it is loading;
     a mismatch with the artifact raises ``ArtifactError("module_mismatch")`` so
     two hosts cannot run different code under one artifact hash.
+
+    ``native_enabled`` plans the documents base and every bound scope for the
+    native evaluator. It is on by default because this is the artifact fast
+    path; a control-plane validation call that wants a pure Python round-trip
+    passes ``False``. ``INTERLOCK_NATIVE=0`` in the environment forces Python
+    even when the default is native-on.
     """
     raw = _read_bytes(path_or_bytes)
     artifact = parse_artifact(raw)
@@ -498,7 +769,7 @@ def load_artifact(
     })
     return CompiledPolicy(
         artifact, engine, raw=raw, rules_module=rules_module,
-        template_ids=resolved_ids, base=base,
+        template_ids=resolved_ids, base=base, native_enabled=native_enabled,
     )
 
 
@@ -571,6 +842,7 @@ __all__ = [
     "evaluate_layers",
     "load_artifact",
     "materialize",
+    "native_forced_off",
     "parse_artifact",
     "seal_artifact",
     "validate_failure_policy",

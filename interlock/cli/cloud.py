@@ -146,14 +146,14 @@ def add_arguments(parser) -> None:
 # -- helpers ------------------------------------------------------------
 
 def _home(args):
-    from interlock.cloud.connector.config import CloudHome
+    from ..cloud.connector.config import CloudHome
 
     return CloudHome(getattr(args, "home", None))
 
 
 def _connector(home, url: Optional[str] = None, *, queue: bool = False):
-    from interlock.cloud.connector.runner import Connector
-    from interlock.cloud.connector.transport import UrllibTransport
+    from ..cloud.connector.runner import Connector
+    from ..cloud.connector.transport import UrllibTransport
 
     config = home.document
     base_url = url or str(config.get("url") or "")
@@ -184,7 +184,7 @@ def _fail(message: str) -> int:
 
 
 def _print(value: Any) -> None:
-    from interlock.cloud.connector.config import redact
+    from ..cloud.connector.config import redact
 
     sys.stdout.write(json.dumps(redact(value), indent=2, sort_keys=True) + "\n")
 
@@ -198,8 +198,8 @@ def _enroll(args) -> int:
         sys.stderr.write(
             "interlock cloud enroll: --url and --token are required\n")
         return EXIT_USAGE
-    from interlock.cloud.connector.runner import Connector
-    from interlock.cloud.connector.transport import UrllibTransport
+    from ..cloud.connector.runner import Connector
+    from ..cloud.connector.transport import UrllibTransport
 
     home = _home(args)
     connector = Connector(home, UrllibTransport(url))
@@ -313,8 +313,8 @@ def _leave(args) -> int:
             home.config_path))
         if answer.strip().lower() not in ("y", "yes"):
             return EXIT_FAILURE
-    from interlock.cloud.connector.runner import Connector
-    from interlock.cloud.connector.transport import UrllibTransport
+    from ..cloud.connector.runner import Connector
+    from ..cloud.connector.transport import UrllibTransport
 
     connector = Connector(home, UrllibTransport(""))
     result = connector.leave(confirmed=True)
@@ -335,8 +335,8 @@ def _admin_request(url: str, path: str, *, cookie: str, csrf: str,
     redirects and caps the response, so the admin session cookie cannot be
     downgraded or replayed to another origin.
     """
-    from interlock.cloud.connector.config import CloudHome
-    from interlock.cloud.connector.transport import UrllibTransport
+    from ..cloud.connector.config import CloudHome
+    from ..cloud.connector.transport import UrllibTransport
 
     CloudHome._validate_url(url)
     payload = None if body is None else json.dumps(body).encode("utf-8")
@@ -386,8 +386,8 @@ def _keys(args) -> int:
         return EXIT_USAGE
     host = getattr(args, "host", None)
     key = getattr(args, "key", None)
-    from interlock.cloud.connector.config import HomeError
-    from interlock.cloud.connector.transport import TransportError
+    from ..cloud.connector.config import HomeError
+    from ..cloud.connector.transport import TransportError
 
     try:
         if action == "rotate":

@@ -158,7 +158,12 @@ class _Handler(socketserver.StreamRequestHandler):
             # without an audit trail by a caller's fallback path. Answer with no
             # verdict and serve the next frame; the write is not retried.
             try:
-                emit_receipt(event, decision, scope_document=scope_document)
+                emit_receipt(
+                    event, decision,
+                    scope_document=scope_document,
+                    policy_epoch=self.server.policy_epoch,  # type: ignore[attr-defined]
+                    policy_artifact=self.server.artifact_sha256,  # type: ignore[attr-defined]
+                )
             except Exception as exc:
                 _log.exception("sidecar: receipt sink failed; refusing the call")
                 self._reply(error_frame(
@@ -168,7 +173,11 @@ class _Handler(socketserver.StreamRequestHandler):
                 return
 
             try:
-                self._reply(response_frame(op_id, decision))
+                self._reply(response_frame(
+                    op_id, decision,
+                    policy_epoch=self.server.policy_epoch,  # type: ignore[attr-defined]
+                    policy_artifact=self.server.artifact_sha256,  # type: ignore[attr-defined]
+                ))
             except WireError as exc:
                 self._reply(error_frame(op_id, exc.code, str(exc)))
         except WireError as exc:
@@ -297,6 +306,19 @@ class SidecarServer(socketserver.ThreadingUnixStreamServer):
         # it is handed (there is no key to prove one with).
         self.scope_key = scope_key
         self.scope_document = scope_document
+        # Artifact mode (C6): when the engine was materialised from artifact
+        # bytes, every receipt and every response frame carries the artifact's
+        # sha256 and epoch. A plain rule set leaves both None, so its receipts
+        # and frames are byte-identical to the R19 shape.
+        artifact_bytes = getattr(engine, "artifact_bytes", None)
+        sha = getattr(engine, "sha256", None)
+        epoch = getattr(engine, "epoch", None)
+        self.artifact_sha256 = (
+            sha if artifact_bytes is not None and isinstance(sha, str) and sha else None
+        )
+        self.policy_epoch = (
+            epoch if artifact_bytes is not None and isinstance(epoch, str) and epoch else None
+        )
         # Connections whose handler thread is still running. ``server_close``
         # shuts them down: a daemon thread would otherwise keep answering on an
         # open connection long after the server stopped accepting new ones.

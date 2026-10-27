@@ -197,11 +197,44 @@ def _engine_size(engine: Any) -> int:
         return len(engine)
     except TypeError:
         pass
+    # A CompiledPolicy has no ``__len__``: its size is the document floor plus
+    # the templates its scope registry can bind.
+    base = getattr(engine, "base", None)
+    scoped = getattr(engine, "engine", None)
+    if base is not None or scoped is not None:
+        size = 0
+        if base is not None:
+            try:
+                size += len(base)
+            except TypeError:
+                pass
+        registry = getattr(scoped, "registry", None)
+        templates = getattr(registry, "templates", None)
+        if isinstance(templates, dict):
+            size += len(templates)
+        if size:
+            return size
     registry = getattr(engine, "registry", None)
     templates = getattr(registry, "templates", None)
     if isinstance(templates, dict):
         return len(templates)
     return 0
+
+
+def _effective_rule_count(engine: Any) -> int:
+    """Rules that can decide an event, not just templates that could bind.
+
+    A ``CompiledPolicy`` answers with the documents floor plus every bound
+    scope's compiled rules. Everything else falls back to ``_engine_size``,
+    which is the right banner count for a plain or scoped rules module.
+    """
+    counter = getattr(engine, "rule_count", None)
+    if callable(counter):
+        try:
+            return int(counter())
+        except Exception:  # noqa: BLE001 - a diagnostic helper, never fatal
+            pass
+    return _engine_size(engine)
 
 
 def _scope_key(key_file: Optional[str]) -> bytes:
@@ -274,17 +307,39 @@ def _load_scope(args: Any) -> "tuple":
     return engine, key, envelope
 
 
-def _publish_fallback(policy_file: Optional[str], key_file: Optional[str], socket_path: str) -> None:
-    """Validate, sign and write the offline fallback policy next to the socket."""
+def _publish_fallback(
+    policy_file: Optional[str],
+    key_file: Optional[str],
+    socket_path: str,
+    *,
+    engine: Any = None,
+) -> None:
+    """Validate, sign and write the offline fallback policy next to the socket.
+
+    In artifact mode the file also carries the artifact's sha256 and epoch
+    under their own MAC, so a client that pinned an artifact can refuse a
+    fallback published for a different one.
+    """
     if not policy_file:
         return
     if not key_file:
         raise RulesError("--fallback-policy needs --key-file to sign it")
     from ..policy.declarative import PolicyError, read_policy_file
     from .fallback import FallbackError, fallback_path, write_fallback
+    artifact_sha256 = None
+    epoch = None
+    if engine is not None and getattr(engine, "artifact_bytes", None) is not None:
+        sha = getattr(engine, "sha256", None)
+        artifact_sha256 = sha if isinstance(sha, str) and sha else None
+        epoch = getattr(engine, "epoch", None)
+        if not isinstance(epoch, str):
+            epoch = None
     try:
         doc, _ = read_policy_file(policy_file)
-        write_fallback(fallback_path(socket_path), doc, _read_key(key_file))
+        write_fallback(
+            fallback_path(socket_path), doc, _read_key(key_file),
+            artifact_sha256=artifact_sha256, epoch=epoch,
+        )
     except (PolicyError, FallbackError, OSError) as exc:
         raise RulesError("fallback policy {}: {}".format(policy_file, exc))
 
@@ -296,9 +351,19 @@ def _parse_args(argv):
     )
     parser.add_argument(
         "--rules",
-        required=True,
+        required=False,
         metavar="MODULE:ATTR",
-        help="dotted module path and attribute holding a PolicyEngine or a list of rules",
+        help="dotted module path and attribute holding a PolicyEngine or a list of rules "
+             "(exactly one of --rules or --artifact is required)",
+    )
+    parser.add_argument(
+        "--artifact",
+        default=None,
+        metavar="PATH",
+        help="serve a manifest-delivered policy artifact, or a directory containing "
+             "active.json; mutually exclusive with --rules and --scope-document. The "
+             "artifact's scope bindings are served as their own engine and every "
+             "receipt/response carries its sha256 and epoch",
     )
     parser.add_argument(
         "--socket",
@@ -352,16 +417,50 @@ def _parse_args(argv):
 def main(argv: Optional[list] = None) -> int:
     args = _parse_args(argv)
 
+    if args.artifact and args.rules:
+        sys.stderr.write(
+            "interlock-sidecar: choose one policy source: --rules or --artifact\n")
+        return EXIT_BAD_RULES
+    if not args.artifact and not args.rules:
+        sys.stderr.write(
+            "interlock-sidecar: one policy source is required: --rules or --artifact\n")
+        return EXIT_BAD_RULES
+    if args.artifact and args.scope_document:
+        sys.stderr.write(
+            "interlock-sidecar: --scope-document cannot be combined with "
+            "--artifact; the artifact carries its scope bindings\n")
+        return EXIT_BAD_RULES
+
     try:
-        engine = load_rules(args.rules)
+        if args.artifact:
+            from ..policy.artifact import load_artifact
+            from ..policy.killswitch import apply_kill_marker
+            try:
+                engine = apply_kill_marker(
+                    load_artifact(args.artifact), args.artifact)
+            except Exception as exc:  # noqa: BLE001 - refusal to start
+                raise RulesError(
+                    "artifact {}: {}".format(args.artifact, exc)) from None
+            if _effective_rule_count(engine) == 0:
+                # An empty rule set allows everything. An artifact that signs,
+                # verifies and decides nothing is the one failure a guard must
+                # not present as a working guard.
+                raise RulesError(
+                    "artifact {} has no effective rules; refusing to serve a "
+                    "policy that would allow every call".format(args.artifact))
+        else:
+            engine = load_rules(args.rules)
     except RulesError as exc:
         sys.stderr.write("interlock-sidecar: {}\n".format(exc))
         return EXIT_BAD_RULES
 
     if args.check:
+        source = args.artifact or args.rules
+        sha = getattr(engine, "sha256", None)
         sys.stderr.write(
-            "interlock-sidecar: {} rules loaded from {}\n".format(
-                len(engine), args.rules
+            "interlock-sidecar: {} rule(s) loaded from {}{}\n".format(
+                _engine_size(engine), source,
+                " (artifact sha256 {})".format(sha) if sha else "",
             )
         )
         return 0
@@ -374,12 +473,20 @@ def main(argv: Optional[list] = None) -> int:
         except RulesError as exc:
             sys.stderr.write("interlock-sidecar: {}\n".format(exc))
             return EXIT_BAD_RULES
+    elif args.artifact and args.key_file:
+        # Artifact mode still verifies a client's signed scope overlay when a
+        # key is available; without one, overlays are refused as unsigned.
+        try:
+            scope_key = _read_key(args.key_file)
+        except RulesError as exc:
+            sys.stderr.write("interlock-sidecar: {}\n".format(exc))
+            return EXIT_BAD_RULES
 
     path = args.socket or default_socket_path()
     try:
         sink = _build_sink(args.receipts, args.key_file)
         _prepare_socket(path)
-        _publish_fallback(args.fallback_policy, args.key_file, path)
+        _publish_fallback(args.fallback_policy, args.key_file, path, engine=engine)
     except RulesError as exc:
         sys.stderr.write("interlock-sidecar: {}\n".format(exc))
         return EXIT_BAD_RULES
@@ -404,7 +511,7 @@ def main(argv: Optional[list] = None) -> int:
         "  scopes:   {}\n"
         "  receipts: {}\n".format(
             path,
-            args.rules,
+            args.artifact or args.rules,
             _engine_size(engine),
             args.scope_document
             if args.scope_document

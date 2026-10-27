@@ -57,7 +57,7 @@ host keeps the only copy of the key material that can release a call.
 | Plane stack | New ASGI service under `interlock/cloud/` with Postgres |
 | Policy delivery | Compiled flat artifact + signed manifest (version, epoch, expiry, target, hashes), polled with jitter; not a live policy file |
 | Verdict path | Host-local only: cached artifact, hook in-process; no network and no remote reasoning |
-| Fast check | `PolicyEvaluator` seam; pure Python by default, optional native evaluator over a C ABI with a fixed latency budget |
+| Fast check | Compiled artifact; pure Python by default, optional native plan over a load-once C ABI with a fixed latency budget |
 | Distribution safety | Highest-version persistence, rollback refusal, expiry alarm + last-known-good, rings, signed kill switch |
 | v1 scope | Remote approvals, receipt ingest and audit search, org/user admin, compiled policy distribution |
 
@@ -230,42 +230,66 @@ policy change can retune it without shipping code:
 
 ### Fast path: the evaluator seam
 
-Evaluation goes through one protocol, `PolicyEvaluator`, with two
-implementations. The pure-Python one is the default, is always available and
-defines the semantics; the native one is an optimisation that must match it
-exactly.
+Evaluation goes through one engine contract, `evaluate(event) -> Decision`.
+An artifact materialises into a `CompiledPolicy`: the declarative documents
+compile to a `PolicyEngine` (the org-wide floor) and the scope bindings compile
+to a `ScopedEngine` (the per-principal refinement). The pure-Python engines are
+the default, are always available and define the semantics; the native plan is
+an optimisation that must match them exactly.
+
+`rust/ffi` (crate `interlock_engine_ffi`) exposes the load-once C ABI:
 
 ```c
-/* rust/interlock_eval, built with maturin like interlock_scopes. */
-typedef struct il_artifact il_artifact;   /* opaque, loaded once per epoch */
+/* Opaque plan handle, parsed once per artifact/epoch. */
+typedef struct il_plan il_plan;
 
-il_artifact *il_artifact_load(const unsigned char *bytes, size_t len,
-                              int *err);
-void il_artifact_free(il_artifact *art);
+il_plan *il_plan_load(const char *plan_json, size_t plan_len, int *err);
+void il_plan_free(il_plan *plan);
 
-/* Returns 0 on success, non-zero on error. Never writes a verdict on error. */
-int il_eval(const il_artifact *art,
-            const unsigned char *event,     size_t event_len,
-            const unsigned char *principal, size_t principal_len,
-            int64_t now_ms,
-            int *verdict,             /* 0 allow, 1 block, 2 modify */
-            char *reason, size_t reason_cap);
+/* Returns 0 on success and -1 on any error. Never writes a verdict on error. */
+int il_eval_plan_handle(const il_plan *plan,
+                        const char *event_json, size_t event_len,
+                        int *verdict,       /* 0 allow, 1 block, 2 modify, 3 escalate */
+                        char *policy, size_t policy_cap,
+                        char *reason, size_t reason_cap);
+
+/* Stateless R31 entry point, retained unchanged: plan JSON on every call. */
+int il_eval_plan(const char *event_json, size_t event_len,
+                 const char *plan_json, size_t plan_len,
+                 int *verdict, char *policy, size_t policy_cap,
+                 char *reason, size_t reason_cap);
 ```
 
-- The artifact is parsed and indexed **once per epoch**, not per call. The C
-  ABI receives the already-loaded handle; the JSON event is the only per-call
-  allocation on the boundary.
+- **Per-scope Python materialisation.** The artifact carries documents and
+  scope bindings, not code. Documents are plan-eligible; scope leaves are
+  template factories (Python callables), so a bound scope is materialised on
+  Python and stays there. `CompiledPolicy.status()` reports `native_scopes`
+  and `python_scopes` rather than claiming a mixed engine per rule. Each scope
+  is fully native or fully Python.
+- The plan is parsed and indexed **once per epoch**, not per call; the handle
+  is reused and the JSON event is the only per-call allocation on the
+  boundary. `il_eval_plan` keeps the R31 string-in form for hosts that do not
+  hold a handle.
+- **A stdlib-only host never loads the library.** Without the optional
+  accelerator, `load_artifact` reports a reason and every scope runs on Python;
+  the package has no hard dependency on the native build.
 - A missing shared library, a load failure or a non-zero return falls back to
   the Python evaluator for read-only classes and fails closed for irreversible
-  ones. It never defaults to allow.
+  ones. It never defaults to allow, and a native evaluation error is counted
+  (`native_fallbacks`) and replayed on Python for the same event.
 - Native and Python verdicts must agree on the shipped parity corpus in CI,
-  including `modify` payloads and denial reasons keyed by rule id.
+  including denial reasons keyed by rule id and modify payloads. The planner is
+  all-or-nothing per engine: a detector without a Rust port, a rewrite, an
+  overlay, a shadow rule or a mesh ceiling keeps that engine on Python.
 - A swap replaces the active artifact pointer; calls already in flight finish
   on the snapshot they started with. Receipts stamp `epoch` and
   `artifact_sha256`, so a mixed-epoch window is auditable rather than invisible.
 - `interlock install-hook` gains `--artifact PATH` (mutually exclusive with
-  `--policy`); local-only installs keep the existing source-policy path
-  unchanged, so the cloud feature is additive.
+  `--policy`); `--artifact` may be combined with `--sidecar` to run the
+  two-tier path, where high-risk classes consult the daemon under a 2 ms
+  deadline and the artifact's per-class failure policy. Local-only installs
+  keep the existing source-policy path unchanged, so the cloud feature is
+  additive.
 
 ## Architecture
 
@@ -634,15 +658,18 @@ grant-like rotation document signed by the old key.
 - **FR-067** When an owner publishes a signed kill switch, a targeted connector
   shall stop releasing calls within one poll or hint cycle irrespective of
   artifact freshness, and shall record the kill on the receipt stream.
-- **FR-068** Evaluation shall go through one `PolicyEvaluator` protocol whose
-  pure-Python implementation is the default, always available, and the
-  definition of semantics; a native implementation is optional and may never
-  be required for interlock to run.
+- **FR-068** Evaluation shall go through one engine contract whose pure-Python
+  implementation is the default, always available, and the definition of
+  semantics; a native implementation is optional and may never be required for
+  interlock to run. An artifact's documents base may be planned natively; its
+  scope bindings are materialised on Python because templates are code, and
+  each engine is wholly native or wholly Python.
 - **FR-069** Where the native evaluator is installed, it shall be reached
-  through a stable C ABI, receive the already-loaded artifact handle rather
-  than reparsing per call, and return the verdict through an out-parameter
-  with 0 allow, 1 block, 2 modify; an error return shall never be read as
-  allow.
+  through a stable C ABI (`il_plan_load`, `il_eval_plan_handle`,
+  `il_plan_free`, and the stateless `il_eval_plan`), receive the already-loaded
+  plan handle rather than reparsing per call, and return the verdict through
+  an out-parameter with 0 allow, 1 block, 2 modify and 3 escalate; an error
+  return of -1 shall never be read as allow and shall write no verdict.
 - **FR-070** The native and pure-Python evaluators shall produce identical
   verdicts, rule ids and modify payloads over the shipped parity corpus in CI.
 - **FR-071** High-risk and irreversible action classes shall additionally be
@@ -845,9 +872,9 @@ was in force.
    deterministic compiler, round-trip verification, manifest versioning and
    expiry, artifact fetch by hash, connector verify/persist/atomic swap, rings
    and rollback by higher version, signed kill switch, status surfaces.
-7. **M6 — Fast path and two-tier data plane.** `PolicyEvaluator` seam, compiled
-   pure-Python evaluator, native `rust/interlock_eval` over the C ABI, parity
-   and budget benchmarks, sidecar deadline path for high-risk classes,
+7. **M6 — Fast path and two-tier data plane.** Compiled `CompiledPolicy` with a
+   planned documents base, native `rust/ffi` load-once handle over the C ABI,
+   parity and budget benchmarks, sidecar deadline path for high-risk classes,
    per-class failure policy, epoch-stamped receipts, spool priorities.
 8. **M7 — Operations.** Webhooks, admin audit, metrics, compose stack,
    threat-model page, runbook, public guide.
@@ -1096,21 +1123,24 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
 
 ### M6 — Fast path and two-tier data plane
 
-- [ ] Add the `PolicyEvaluator` protocol in `interlock/policy/evaluator.py` and
-      `PurePythonEvaluator`, compiled from the artifact once per epoch with no
-      per-call scope merging.
-- [ ] Add `rust/interlock_eval` (maturin cdylib) implementing `il_eval` over
-      the C ABI, plus the `ctypes` binding and absent-library detection.
-- [ ] Add the parity corpus and a test asserting identical verdicts, rule ids
-      and modify payloads between backends.
-- [ ] Add the budget benchmarks (native p99 < 5 ms, Python p99 < 10 ms at
+- [x] Plan an artifact's documents base once per epoch in `CompiledPolicy`
+      (`native_enabled`, `native_scopes`/`python_scopes`, `status()`), with no
+      per-call scope merging; scope templates stay on Python.
+- [x] Extend `rust/ffi` with `il_plan_load` / `il_eval_plan_handle` /
+      `il_plan_free` over the existing plan, keep the stateless `il_eval_plan`,
+      and add the `ctypes` handle tests and absent-library detection.
+- [x] Add the parity corpus and a test asserting identical verdicts, rule ids,
+      reason, attribution and modify payloads between backends.
+- [x] Add the budget benchmarks (native p99 < 5 ms, Python p99 < 10 ms at
       1 MiB artifact / 32 KiB event) and wire them into CI.
-- [ ] Extend `interlock-sidecar` to load the active artifact, enforce the 2 ms
-      deadline and fail according to the class policy; route high-risk classes
-      through it from the hook.
-- [ ] Implement per-class failure policy from the artifact, the expiry grace
-      behaviour and the `coverage_gap` receipt.
-- [ ] Stamp `epoch` and `artifact_sha256` on every receipt; keep
+- [x] Extend `interlock-sidecar` to load the active artifact (`--artifact`),
+      report its sha256/epoch, enforce the 2 ms deadline and fail according to
+      the class policy; route high-risk classes through it from the hook
+      (`TieredEvaluator`).
+- [x] Implement per-class failure policy from the artifact (plus a synthesized
+      `irreversible: closed`), the expiry grace behaviour and the
+      `coverage_gap` receipt.
+- [x] Stamp `epoch` and `artifact_sha256` on every receipt; keep
       `verify_chain` compatibility.
 - [ ] Implement the bounded sensor ring and disk spool with
       `(host, sensor, sequence)` keys, batch upload off the verdict path, and

@@ -64,7 +64,13 @@ without the module and once with it.
 `rust/engine` holds the R31 evaluator, `interlock_engine`: the declarative
 policy rule subset compiled to a Rust plan and evaluated without CPython. The
 wheel carries a PyO3 front end to it; a separate cdylib serves everything else.
-The path is off unless `INTERLOCK_NATIVE=1`.
+For a local policy the path is off unless `INTERLOCK_NATIVE=1`. An artifact
+loaded by `interlock.policy.artifact` is different: it was explicitly compiled
+and parity-gated, so `CompiledPolicy` plans its **documents base** on by
+default (`native_enabled=True`, `INTERLOCK_NATIVE=0` still overrides it through
+the legacy engine) and reports `native_scopes`/`python_scopes` in `status()`.
+Scope templates are Python callables, so bound scopes stay on the Python
+engine: one engine is wholly native or wholly Python, never mixed per rule.
 
 The plan is all-or-nothing per policy. `interlock/policy/native.py` translates a
 policy only when every rule is a plain `when` over `action`/`field`/`arg` with a
@@ -88,13 +94,23 @@ Two front ends share `Plan::evaluate`:
 - **PyO3:** `interlock_scopes.NativePlan(plan_json).evaluate(event_json)` returns
   `(verdict, policy_id, reason, attributed_to)`; `interlock_scopes.ENGINE_ABI`
   is the schema version.
-- **C ABI:** `il_eval_plan(...)` and `il_abi_version()` in `rust/ffi` (crate
-  `interlock_engine_ffi`), for a Node, Go, Rust or C host. It is a separate
-  cdylib because the PyO3 extension is built with `extension-module` and
-  deliberately leaves CPython symbols unresolved, so a non-Python `dlopen` of
-  the wheel fails. The call is string-in, buffer-out: `0` means success and
-  writes a NUL-terminated policy id and reason into caller buffers; `-1` means
-  any error and writes nothing, so a caller must fail closed.
+- **C ABI:** `rust/ffi` (crate `interlock_engine_ffi`), for a Node, Go, Rust or
+  C host. It is a separate cdylib because the PyO3 extension is built with
+  `extension-module` and deliberately leaves CPython symbols unresolved, so a
+  non-Python `dlopen` of the wheel fails. ABI version 2 adds the load-once
+  handle:
+  - `il_plan_load(plan_json, len, &err)` parses a plan once and returns an
+    opaque handle (null and `err = -1` on error);
+  - `il_eval_plan_handle(handle, event_json, len, &verdict, policy, cap,
+    reason, cap)` evaluates against it;
+  - `il_plan_free(handle)` releases it; null, unknown and double frees are
+    no-ops because handles live in a registry, never in dereferenced memory.
+  - `il_eval_plan(...)` is the R31 stateless call, unchanged: plan JSON on
+    every invocation.
+  Both eval calls are buffer-out: `0` means success and writes a
+  NUL-terminated policy id and reason into caller buffers; `-1` means any error
+  and writes nothing, so a caller must fail closed. Verdicts are 0 allow,
+  1 block, 2 modify (never planned) and 3 escalate.
 
 The C path has a genuinely non-Python caller in-tree: `rust/abi-smoke/smoke.c`
 `dlopen`s the library and checks a block, an allow and a fail-closed error.

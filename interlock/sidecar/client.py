@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from ..enforce import Blocked, Decision, Verdict
 from ..event import SensorEvent
-from .fallback import FallbackError, fallback_path, read_fallback
+from .fallback import FallbackError, fallback_path, read_fallback_metadata
 from ..wire import (
     MAX_LINE,
     WireError,
@@ -80,8 +80,21 @@ class RemoteEngine:
     ``timeout`` bounds each socket operation (connect, send, and waiting for a
     reply), in seconds. It defaults to :data:`DEFAULT_TIMEOUT`; pass ``None`` to
     wait forever. A timeout raises ``Blocked``, like any other transport
-    failure.
+    failure. A single call may bound itself with ``evaluate(event,
+    timeout=...)``; the previous value is restored afterwards, including on the
+    already-open socket, so a short tier deadline cannot leak into a later
+    direct call.
+
+    ``artifact_sha256`` pins the artifact the daemon must be serving. Every
+    response frame in artifact mode carries the daemon's sha; a mismatch (or a
+    daemon that reports none) is a refusal, not an outage, so a fallback can
+    never silently substitute a different policy. ``artifact_epoch``, when
+    given, is checked the same way.
     """
+
+    #: Tells a caller (``TieredEvaluator``) that a per-call ``timeout`` keyword
+    #: is honoured, including on a warm socket.
+    supports_timeout = True
 
     def __init__(
         self,
@@ -94,11 +107,19 @@ class RemoteEngine:
         fallback_max_age: float = 7 * 86400,
         scope: Optional[str] = None,
         scope_key: Optional[bytes] = None,
+        artifact_sha256: Optional[str] = None,
+        artifact_epoch: Optional[str] = None,
     ) -> None:
         if unreachable not in UNREACHABLE_LEVELS:
             raise ValueError("unreachable must be one of {}".format(", ".join(UNREACHABLE_LEVELS)))
         if unreachable == "degraded" and fallback_key is None:
             raise ValueError("unreachable='degraded' needs fallback_key to verify the fallback file")
+        if artifact_sha256 is not None and (
+            not isinstance(artifact_sha256, str) or not artifact_sha256
+        ):
+            raise ValueError("artifact_sha256 must be a non-empty string")
+        if artifact_epoch is not None and not isinstance(artifact_epoch, str):
+            raise ValueError("artifact_epoch must be a string")
         if scope is None:
             if scope_key is not None:
                 raise ValueError("scope_key was given without scope: pass the daemon's "
@@ -112,6 +133,8 @@ class RemoteEngine:
             self.scope_envelope = read_scope_envelope(scope, scope_key)
         self.path = str(path)
         self.timeout = timeout
+        self.artifact_sha256 = artifact_sha256
+        self.artifact_epoch = artifact_epoch
         self.unreachable = unreachable
         self.fallback = fallback or fallback_path(self.path)
         self._fallback_key = fallback_key
@@ -124,24 +147,47 @@ class RemoteEngine:
         self._reader = None
         self._ids = itertools.count(1)
 
-    def evaluate(self, event: SensorEvent) -> Decision:
+    def evaluate(self, event: SensorEvent, *, timeout: Optional[float] = None) -> Decision:
         """Ask the daemon for the verdict, or raise ``Blocked``.
 
         When the daemon is *unreachable* (no socket, refused, timed out, hung
         up) and ``unreachable`` is ``degraded`` or ``allow``, the call is
         decided without it, and a warning is logged every time. A daemon that
         answers with an error frame is reachable and refusing: always blocked.
+
+        ``timeout`` bounds this call only. It is applied to a live socket too,
+        because ``_connect`` caches the socket and its original timeout would
+        otherwise keep governing every later call.
         """
         with self._lock:
+            previous = self.timeout
+            if timeout is not None:
+                self.timeout = float(timeout)
+                self._apply_timeout(self.timeout)
             try:
-                return self._exchange(event)
-            except Exception as exc:
-                self._drop()
-                if self.unreachable != "deny" and _is_unreachable(exc):
-                    return self._without_daemon(event, exc)
-                raise Blocked(
-                    Decision.block(self._reason_for(exc)), event.action
-                )
+                try:
+                    return self._exchange(event)
+                except Exception as exc:
+                    self._drop()
+                    if self.unreachable != "deny" and _is_unreachable(exc):
+                        return self._without_daemon(event, exc)
+                    raise Blocked(
+                        Decision.block(self._reason_for(exc)), event.action
+                    )
+            finally:
+                if timeout is not None:
+                    self.timeout = previous
+                    self._apply_timeout(previous)
+
+    def _apply_timeout(self, value: Optional[float]) -> None:
+        """Re-apply a timeout to an already-open socket, if there is one."""
+        sock = self._sock
+        if sock is None:
+            return
+        try:
+            sock.settimeout(value)
+        except OSError:
+            pass
 
     def _without_daemon(self, event: SensorEvent, exc: Exception) -> Decision:
         self.fallbacks += 1
@@ -179,8 +225,26 @@ class RemoteEngine:
             return self._fallback_engine
         from ..policy.declarative import load_policy
         assert self._fallback_key is not None
-        doc = read_fallback(self.fallback, self._fallback_key, max_age=self.fallback_max_age)
-        self._fallback_engine = load_policy(doc, source=self.fallback)
+        metadata = read_fallback_metadata(
+            self.fallback, self._fallback_key, max_age=self.fallback_max_age
+        )
+        if self.artifact_sha256 is not None:
+            if metadata["artifact_sha256"] is None:
+                raise FallbackError(
+                    "fallback policy is not pinned to an artifact, but the "
+                    "client pinned {}".format(self.artifact_sha256)
+                )
+            if metadata["artifact_sha256"] != self.artifact_sha256:
+                raise FallbackError(
+                    "fallback policy belongs to artifact {}, not the pinned "
+                    "{}".format(metadata["artifact_sha256"], self.artifact_sha256)
+                )
+            if self.artifact_epoch is not None and metadata["epoch"] != self.artifact_epoch:
+                raise FallbackError(
+                    "fallback policy belongs to epoch {!r}, not the pinned "
+                    "{!r}".format(metadata["epoch"], self.artifact_epoch)
+                )
+        self._fallback_engine = load_policy(metadata["policy"], source=self.fallback)
         self._fallback_stamp = stamp
         return self._fallback_engine
 
@@ -227,7 +291,42 @@ class RemoteEngine:
             raise WireError("bad_response", "daemon closed the connection")
         if len(line) > MAX_LINE:
             raise WireError("too_large", "response exceeded the frame limit")
-        return parse_response(decode_line(line), op_id)
+        frame = decode_line(line)
+        self._check_artifact_pin(frame)
+        return parse_response(frame, op_id)
+
+    def _check_artifact_pin(self, frame: dict) -> None:
+        """Refuse a reply from a daemon serving a different artifact.
+
+        Only a pinned client checks, so a non-artifact client's frames are
+        unchanged. A live daemon that cannot prove its artifact is a refusal:
+        accepting the decision would let a rollback or a wrong-environment
+        daemon decide under a policy the caller never pinned.
+        """
+        if self.artifact_sha256 is None:
+            return
+        got = frame.get("policy_artifact")
+        if not isinstance(got, str) or not got:
+            raise WireError(
+                "artifact_mismatch",
+                "daemon reported no policy artifact to match the pin",
+            )
+        if got != self.artifact_sha256:
+            raise WireError(
+                "artifact_mismatch",
+                "daemon serves artifact {} but the client pinned {}".format(
+                    got, self.artifact_sha256
+                ),
+            )
+        if self.artifact_epoch is not None:
+            epoch = frame.get("policy_epoch")
+            if epoch != self.artifact_epoch:
+                raise WireError(
+                    "artifact_mismatch",
+                    "daemon serves epoch {!r} but the client pinned {!r}".format(
+                        epoch, self.artifact_epoch
+                    ),
+                )
 
     def _connect(self) -> socket.socket:
         if self._sock is not None:

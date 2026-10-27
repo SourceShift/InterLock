@@ -141,6 +141,19 @@ jobs:
           print("scope backend:", SCOPE_BACKEND)
           PY
 
+      - name: Native policy evaluator: handle lifecycle and artifact parity
+        # The C ABI smoke above already built rust/ffi, so the ctypes handle
+        # tests find the library. The artifact parity half compares a native
+        # documents base with the Python engine over the shipped corpus.
+        run: python -m pytest -q tests/test_native_handle.py tests/test_native_artifact.py
+
+      - name: Native evaluator budget gate
+        # Committed measurements, gated on the env var: native p99 < 5 ms and
+        # Python p99 < 10 ms at a 1 MiB artifact / 32 KiB event.
+        env:
+          IL_EVAL_BENCH: "1"
+        run: python -m pytest -q tests/test_native_budget.py
+
       - name: Test
         # The FULL suite, not just tests/test_scope_backend.py. The parity
         # assertions (test_native_matches_python and friends) fire the moment

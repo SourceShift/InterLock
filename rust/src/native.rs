@@ -47,8 +47,10 @@ impl NativePlan {
 }
 
 /// Plan schema version, exposed on the module as `ENGINE_ABI`. The C ABI has
-/// its own `il_abi_version` in `rust/ffi`; both bump together.
-pub(crate) const ABI_VERSION: u32 = 1;
+/// its own `il_abi_version` in `rust/ffi`; both bump together. Version 2 adds
+/// the opaque load-once handle to the C side; the plan JSON schema is
+/// unchanged, so a v1 plan still parses.
+pub(crate) const ABI_VERSION: u32 = 2;
 
 pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativePlan>()?;

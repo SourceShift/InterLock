@@ -38,7 +38,7 @@ import json
 import os
 import tempfile
 import time
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 FALLBACK_SUFFIX = ".fallback.json"
 DEFAULT_MAX_AGE = 7 * 86400
@@ -115,8 +115,36 @@ def _mac(key: bytes, written_at: int, policy: str) -> str:
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
-def write_fallback(path: str, doc: Mapping[str, Any], key: bytes) -> Dict[str, Any]:
-    """Validate, sign and atomically write a fallback file (mode 0600)."""
+def _artifact_mac(
+    key: bytes, written_at: int, artifact_sha256: str, epoch: str
+) -> str:
+    """The second MAC: artifact identity, covered separately from the policy.
+
+    The legacy ``mac`` keeps the v1 formula so the Node client still verifies
+    the file. The artifact fields get their own MAC because a field outside a
+    MAC is strippable: an attacker could replay an older signed fallback and
+    rewrite the sha to whatever the client pinned.
+    """
+    message = "{}\n{}\n{}".format(written_at, artifact_sha256, epoch).encode("utf-8")
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+def write_fallback(
+    path: str,
+    doc: Mapping[str, Any],
+    key: bytes,
+    *,
+    artifact_sha256: Optional[str] = None,
+    epoch: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Validate, sign and atomically write a fallback file (mode 0600).
+
+    ``artifact_sha256``/``epoch`` pin the offline policy to the artifact the
+    daemon is serving, so a degraded client can refuse a fallback that belongs
+    to a different (possibly older) artifact. They are covered by their own
+    MAC, added only when a sha is given, and ignored by the JS reader, so the
+    legacy file shape and its MAC are unchanged.
+    """
     validate_offline(doc)
     from ..policy.declarative import load_policy
     engine = load_policy(doc, source="fallback")  # it must also load as a policy
@@ -126,6 +154,15 @@ def write_fallback(path: str, doc: Mapping[str, Any], key: bytes) -> Dict[str, A
     written_at = int(time.time())
     body = {"version": 1, "written_at": written_at, "policy": policy,
             "mac": _mac(key, written_at, policy)}
+    if artifact_sha256 is not None:
+        if not isinstance(artifact_sha256, str) or not artifact_sha256:
+            raise FallbackError("artifact_sha256 must be a non-empty string")
+        artifact_epoch = "" if epoch is None else str(epoch)
+        body["artifact_sha256"] = artifact_sha256
+        body["epoch"] = artifact_epoch
+        body["artifact_mac"] = _artifact_mac(
+            key, written_at, artifact_sha256, artifact_epoch
+        )
     directory = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=".fallback-")
     try:
@@ -142,10 +179,16 @@ def write_fallback(path: str, doc: Mapping[str, Any], key: bytes) -> Dict[str, A
     return body
 
 
-def read_fallback(path: str, key: bytes, *, max_age: float = DEFAULT_MAX_AGE,
-                  now: float = 0.0) -> Dict[str, Any]:
-    """The verified fallback policy document. Raises :class:`FallbackError` for
-    a missing, malformed, unsigned, tampered or stale file."""
+def read_fallback_metadata(
+    path: str, key: bytes, *, max_age: float = DEFAULT_MAX_AGE, now: float = 0.0
+) -> Dict[str, Any]:
+    """The verified fallback document plus its signed artifact identity.
+
+    Returns ``{"policy": doc, "artifact_sha256": str|None, "epoch": str|None}``.
+    A file with no artifact fields (an older daemon's) is valid and reports
+    ``None`` for both; a file carrying one of them without a verifying
+    ``artifact_mac`` is refused rather than silently downgraded.
+    """
     try:
         with open(path, "r", encoding="utf-8") as fh:
             body = json.load(fh)
@@ -165,4 +208,28 @@ def read_fallback(path: str, key: bytes, *, max_age: float = DEFAULT_MAX_AGE,
         raise FallbackError("fallback policy is stale ({:.0f}s old)".format(age))
     doc = json.loads(policy)
     validate_offline(doc)
-    return doc
+
+    artifact_sha256 = body.get("artifact_sha256")
+    epoch = body.get("epoch")
+    artifact_mac = body.get("artifact_mac")
+    if artifact_sha256 is None and epoch is None and artifact_mac is None:
+        return {"policy": doc, "artifact_sha256": None, "epoch": None}
+    if (
+        not isinstance(artifact_sha256, str)
+        or not artifact_sha256
+        or not isinstance(epoch, str)
+        or not isinstance(artifact_mac, str)
+        or not artifact_mac
+    ):
+        raise FallbackError("fallback artifact identity is unsigned or malformed")
+    expected = _artifact_mac(key, written_at, artifact_sha256, epoch)
+    if not hmac.compare_digest(expected, artifact_mac):
+        raise FallbackError("fallback artifact identity does not verify")
+    return {"policy": doc, "artifact_sha256": artifact_sha256, "epoch": epoch}
+
+
+def read_fallback(path: str, key: bytes, *, max_age: float = DEFAULT_MAX_AGE,
+                  now: float = 0.0) -> Dict[str, Any]:
+    """The verified fallback policy document. Raises :class:`FallbackError` for
+    a missing, malformed, unsigned, tampered or stale file."""
+    return read_fallback_metadata(path, key, max_age=max_age, now=now)["policy"]

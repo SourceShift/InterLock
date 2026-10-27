@@ -54,13 +54,14 @@ def run(args) -> int:
     fail_open = args.on_error == "allow"
     call = None
     if getattr(args, "artifact", None) and (
-            getattr(args, "policy", None) or getattr(args, "rules", None)
-            or getattr(args, "sidecar", None)):
+            getattr(args, "policy", None) or getattr(args, "rules", None)):
         # The command line itself is wrong: a local policy source and a
-        # distributed artifact are two different authorities.
+        # distributed artifact are two different authorities. --sidecar is
+        # allowed: the artifact is the primary and the daemon is the second,
+        # out-of-process tier.
         sys.stderr.write(
-            "interlock hook: --artifact cannot be combined with --policy, "
-            "--rules or --sidecar\n")
+            "interlock hook: --artifact cannot be combined with --policy "
+            "or --rules\n")
         return 64
     try:
         # A distributed artifact is loaded once, before any event is read. A
@@ -70,10 +71,20 @@ def run(args) -> int:
         if getattr(args, "artifact", None):
             from ..policy.artifact import load_artifact
             from ..policy.killswitch import apply_kill_marker
+            loaded = load_artifact(args.artifact)
+            if loaded.rule_count() == 0:
+                # An empty rule set allows every call. A hook that would allow
+                # everything is not a working guard, so this is a configuration
+                # error: refuse it whatever --on-error says, before any event
+                # is read. The sidecar daemon refuses the same artifact.
+                sys.stderr.write(
+                    "interlock hook: artifact {} has no effective rules; "
+                    "refusing to run a policy that would allow every call\n"
+                    .format(args.artifact))
+                return 64
             # The marker the connector writes beside the artifact is a
             # decision, not an error: it denies whatever --on-error says.
-            artifact_engine = apply_kill_marker(
-                load_artifact(args.artifact), args.artifact)
+            artifact_engine = apply_kill_marker(loaded, args.artifact)
         raw = sys.stdin.buffer.read(MAX_PAYLOAD + 1)
         if len(raw) > MAX_PAYLOAD:
             raise ValueError("hook input larger than {} bytes".format(MAX_PAYLOAD))
@@ -108,7 +119,29 @@ def run(args) -> int:
 
 def _engine(args, cwd, artifact_engine=None):
     if artifact_engine is not None:
-        return artifact_engine
+        sidecar = getattr(args, "sidecar", None)
+        if not sidecar:
+            return artifact_engine
+        # Artifact + sidecar: the artifact is the local primary for every
+        # class, and high-risk classes are additionally asked of the daemon
+        # under the artifact's failure policy. The kill check stays outermost
+        # inside TieredEvaluator, before any socket call.
+        from ..policy.tiers import DEFAULT_DEADLINE, TieredEvaluator, TierEngine
+        from ..sidecar.client import RemoteEngine
+
+        # Pin the daemon to the artifact this hook is running. A second tier
+        # that decides under a different artifact is not a second opinion on
+        # this policy: a daemon reporting another sha (or none) is refused, so
+        # the class falls to its failure policy rather than to an unknown rule
+        # set. The deadline is passed as the daemon's own socket timeout too,
+        # so a hung daemon does not depend on the join to bound the call.
+        secondary = RemoteEngine(
+            sidecar,
+            timeout=DEFAULT_DEADLINE,
+            artifact_sha256=getattr(artifact_engine, "sha256", None) or None,
+            artifact_epoch=getattr(artifact_engine, "epoch", None) or None,
+        )
+        return TierEngine(TieredEvaluator(artifact_engine, secondary=secondary))
     from ..adapters.config import load_engine
     return load_engine(policy=args.policy, rules=args.rules, sidecar=args.sidecar,
                        cwd=cwd, overlay=not args.no_overlay)
