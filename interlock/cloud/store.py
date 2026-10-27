@@ -122,6 +122,9 @@ class Org:
     sso_client_id: Optional[str] = None
     step_up_policy: str = "webauthn"
     retention_days: int = 365
+    #: C7 org deletion is a tombstone, not a cascading delete: receipts and
+    #: audit rows stay for the retention period, so the org row must remain.
+    deleted_at: Optional[float] = None
 
     def public(self) -> Dict[str, Any]:
         """The fields a route may return; no secrets live here anyway."""
@@ -131,6 +134,7 @@ class Org:
             "name": self.name,
             "step_up_policy": self.step_up_policy,
             "retention_days": self.retention_days,
+            "deleted": self.deleted_at is not None,
         }
 
 
@@ -412,6 +416,13 @@ class MemoryStore:
         self.policy_rollouts: Dict[Tuple[str, str], Dict[str, Any]] = {}
         #: (org_id, source_version) -> authored policy source.
         self.policy_sources: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        #: C7: (org_id, id) -> webhook endpoint (secret fields internal only).
+        self.webhook_endpoints: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        #: C7: the outbox; one row per (event, endpoint).
+        self.webhook_outbox: List[Dict[str, Any]] = []
+        #: C7: per-org manifest floor, advanced on publish and never lowered
+        #: silently (restore is the only path that may reset it).
+        self.version_floors: Dict[str, int] = {}
 
     # -- orgs -----------------------------------------------------------
     def create_org(self, slug: str, name: str, *, id: Optional[str] = None,
@@ -458,9 +469,106 @@ class MemoryStore:
                                 else step_up_policy),
                 retention_days=(org.retention_days if retention_days is None
                                 else int(retention_days)),
+                deleted_at=org.deleted_at,
             )
             self.orgs[org.id] = updated
             return updated
+
+    # -- C7: org deletion and version floor -----------------------------
+    def org_tombstone(self, org_id: str, *, now: Optional[float] = None) -> Org:
+        """Mark an org deleted; the row stays so receipts/audit survive."""
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            org = self.orgs.get(oid)
+            if org is None:
+                raise NotFound("org not found")
+            if org.deleted_at is None:
+                org = Org(id=org.id, slug=org.slug, name=org.name,
+                          sso_issuer=org.sso_issuer,
+                          sso_client_id=org.sso_client_id,
+                          step_up_policy=org.step_up_policy,
+                          retention_days=org.retention_days,
+                          deleted_at=at)
+                self.orgs[oid] = org
+            return org
+
+    def revoke_org_keys(self, org_id: str, *, now: Optional[float] = None) -> int:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            count = 0
+            for key in self.agent_keys.values():
+                if key.org_id == oid and key.revoked_at is None:
+                    key.revoked_at = at
+                    count += 1
+            return count
+
+    def delete_org_sessions(self, org_id: str) -> int:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            keys = [key for key in self.sessions if key[0] == oid]
+            for key in keys:
+                self.sessions.pop(key, None)
+            return len(keys)
+
+    def delete_org_previews(self, org_id: str) -> int:
+        """Drop preview ciphertext only; the review row and its metadata stay."""
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            count = 0
+            for record in self.reviews.values():
+                if record.org_id == oid and record.preview_enc is not None:
+                    record.preview_enc = None
+                    count += 1
+            return count
+
+    def delete_org_webhook_secrets(self, org_id: str) -> int:
+        """Null every endpoint secret and disable it; delivery history stays."""
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            count = 0
+            for endpoint in self.webhook_endpoints.values():
+                if endpoint["org_id"] != oid:
+                    continue
+                endpoint["secret_hash"] = None
+                endpoint["secret_enc"] = None
+                endpoint["active"] = False
+                endpoint["disabled_at"] = endpoint.get("disabled_at") or _epoch()
+                count += 1
+            return count
+
+    def stop_org_enrollment(self, org_id: str, *, now: Optional[float] = None) -> int:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            count = 0
+            for token in self.enrollment_tokens.values():
+                if token.org_id == oid and token.used_at is None:
+                    token.used_at = at
+                    count += 1
+            return count
+
+    def version_floor_get(self, org_id: str) -> int:
+        with self._lock:
+            return int(self.version_floors.get(_org_id(org_id) or "", 0))
+
+    def version_floor_bump(self, org_id: str, version: int, *,
+                           now: Optional[float] = None) -> int:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            current = int(self.version_floors.get(oid, 0))
+            updated = max(current, int(version))
+            self.version_floors[oid] = updated
+            return updated
+
+    def version_floor_reset(self, org_id: str, version: int = 0, *,
+                            now: Optional[float] = None) -> int:
+        """The deliberate ``--reset-floor`` path; never called by a publish."""
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            self.version_floors[oid] = int(version)
+            return int(version)
 
     def add_org_domain(self, org_id: str, domain: str, *,
                        verified: bool = True) -> None:
@@ -977,6 +1085,13 @@ class MemoryStore:
         page = rows[start:start + int(limit)]
         next_cursor = start + len(page) if start + len(page) < len(rows) else None
         return page, next_cursor
+
+    def pending_review_count(self, org_id: str) -> int:
+        """How many reviews await a decision (the pending gauge)."""
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            return sum(1 for record in self.reviews.values()
+                       if record.org_id == oid and record.status == "pending")
 
     def record_decision(self, org_id: str, review_id: str, *, reviewer: str,
                         step_up_method: str, step_up_at: float,
@@ -1630,6 +1745,162 @@ class MemoryStore:
                 return None
             return dict(self.policy_sources[(oid, max(versions))])
 
+    # -- C7: webhook endpoints and the outbox ---------------------------
+    @staticmethod
+    def _webhook_public(endpoint: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": endpoint["id"],
+            "url": endpoint["url"],
+            "events": list(endpoint.get("events") or []),
+            "active": bool(endpoint.get("active")),
+            "created": _now_iso(endpoint.get("created")),
+            "disabled_at": _now_iso(endpoint.get("disabled_at")),
+        }
+
+    def webhook_create_endpoint(self, org_id: str, url: str,
+                                events: List[str], secret_hash: str,
+                                secret_enc: bytes, *,
+                                now: Optional[float] = None,
+                                id: Optional[str] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        endpoint = {
+            "org_id": oid, "id": id or "wh_" + uuid.uuid4().hex[:16],
+            "url": url, "events": list(events), "active": True,
+            "secret_hash": secret_hash, "secret_enc": bytes(secret_enc),
+            "created": at, "disabled_at": None,
+        }
+        with self._lock:
+            self.webhook_endpoints[(oid, endpoint["id"])] = endpoint
+        return self._webhook_public(endpoint)
+
+    def webhook_endpoint_by_id(self, org_id: str,
+                               endpoint_id: str) -> Optional[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            return self.webhook_endpoints.get((oid, endpoint_id))
+
+    def webhook_list_endpoints(self, org_id: str) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            endpoints = [endpoint for endpoint in self.webhook_endpoints.values()
+                         if endpoint["org_id"] == oid]
+            deliveries = [dict(row) for row in self.webhook_outbox
+                          if row["org_id"] == oid]
+        out: List[Dict[str, Any]] = []
+        for endpoint in endpoints:
+            public = self._webhook_public(endpoint)
+            rows = [row for row in deliveries
+                    if row["endpoint_id"] == endpoint["id"]]
+            pending = [row for row in rows
+                       if row.get("status") == "pending"]
+            from .webhooks import RETRY_HORIZON
+
+            public.update({
+                "last_delivery": (_now_iso(max(
+                    (row.get("created") or 0) for row in rows))
+                    if rows else None),
+                "failures": sum(1 for row in rows
+                                if row.get("status") == "failed"),
+                "pending": len(pending),
+                # When the oldest pending delivery reaches the retry horizon
+                # and is marked failed. Nothing is auto-disabled in v1; the
+                # state tells an operator when delivery will be given up.
+                "disable_after": (_now_iso(max(
+                    (row.get("created") or 0) for row in pending)
+                    + RETRY_HORIZON) if pending else None),
+            })
+            out.append(public)
+        out.sort(key=lambda item: item["id"])
+        return out
+
+    def webhook_disable_endpoint(self, org_id: str, endpoint_id: str, *,
+                                 now: Optional[float] = None
+                                 ) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._lock:
+            endpoint = self.webhook_endpoints.get((oid, endpoint_id))
+            if endpoint is None:
+                raise NotFound("webhook endpoint not found")
+            endpoint["active"] = False
+            endpoint["disabled_at"] = endpoint.get("disabled_at") or at
+            return self._webhook_public(endpoint)
+
+    def webhook_fanout(self, org_id: str, event: str,
+                       payload: Mapping[str, Any], *,
+                       now: Optional[float] = None) -> int:
+        """Write one due outbox row per active endpoint subscribed to event."""
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        created = 0
+        with self._lock:
+            for endpoint in list(self.webhook_endpoints.values()):
+                if endpoint["org_id"] != oid or not endpoint.get("active"):
+                    continue
+                if event not in (endpoint.get("events") or []):
+                    continue
+                self.webhook_outbox.append({
+                    "org_id": oid,
+                    "id": "whd_" + secrets.token_hex(10),
+                    "endpoint_id": endpoint["id"],
+                    "event": event,
+                    "payload": dict(payload),
+                    "status": "pending",
+                    "attempts": 0,
+                    "last_error": None,
+                    "next_attempt": at,
+                    "delivered_at": None,
+                    "duration_ms": None,
+                    "response_status": None,
+                    "body_digest": None,
+                    "created": at,
+                })
+                created += 1
+        return created
+
+    def webhook_due(self, org_id: str, now: float, *,
+                    limit: int = 50) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            rows = [dict(row) for row in self.webhook_outbox
+                    if row["org_id"] == oid and row.get("status") == "pending"
+                    and row.get("next_attempt") is not None
+                    and float(row["next_attempt"]) <= float(now)]
+        rows.sort(key=lambda row: (row.get("created") or 0, row["id"]))
+        return rows[:max(0, int(limit))]
+
+    def webhook_update_delivery(self, org_id: str, delivery_id: str,
+                                **fields: Any) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        allowed = {"status", "attempts", "last_error", "next_attempt",
+                   "delivered_at", "duration_ms", "response_status",
+                   "body_digest"}
+        with self._lock:
+            for row in self.webhook_outbox:
+                if row["org_id"] == oid and row["id"] == delivery_id:
+                    for key, value in fields.items():
+                        if key in allowed:
+                            row[key] = value
+                    return dict(row)
+        raise NotFound("webhook delivery not found")
+
+    def webhook_deliveries(self, org_id: str, endpoint_id: str, *,
+                           cursor: int = 0,
+                           limit: int = 50
+                           ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        oid = _org_id(org_id) or ""
+        with self._lock:
+            rows = [dict(row) for row in self.webhook_outbox
+                    if row["org_id"] == oid
+                    and row["endpoint_id"] == endpoint_id]
+        rows.sort(key=lambda row: (-(row.get("created") or 0), row["id"]))
+        start = max(0, int(cursor))
+        page = rows[start:start + max(1, int(limit))]
+        next_cursor = (start + len(page)
+                       if start + len(page) < len(rows) else None)
+        return page, next_cursor
+
     # -- RLS context ----------------------------------------------------
     @contextlib.contextmanager
     def set_org_context(self, org_id: str) -> Iterator["MemoryStore"]:
@@ -1714,12 +1985,15 @@ class PostgresStore:
         return org
 
     def _org_row(self, row: Tuple[Any, ...]) -> Org:
+        deleted = row[7] if len(row) > 7 else None
         return Org(id=row[0], slug=row[1], name=row[2], sso_issuer=row[3],
                    sso_client_id=row[4], step_up_policy=row[5],
-                   retention_days=row[6])
+                   retention_days=row[6],
+                   deleted_at=(deleted.timestamp()
+                               if hasattr(deleted, "timestamp") else deleted))
 
     _ORG_COLUMNS = ("id, slug, name, sso_issuer, sso_client_id, "
-                    "step_up_policy, retention_days")
+                    "step_up_policy, retention_days, deleted_at")
 
     def org_by_slug(self, slug: str) -> Optional[Org]:
         with self._connection() as conn:
@@ -1773,6 +2047,111 @@ class PostgresStore:
         if row is None:
             raise NotFound("org not found")
         return self._org_row(row)
+
+    # -- C7: org deletion and version floor -----------------------------
+    def org_tombstone(self, org_id: str, *, now: Optional[float] = None) -> Org:
+        at = _epoch() if now is None else float(now)
+        with self._connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE orgs SET deleted_at = COALESCE(deleted_at, "
+                    "to_timestamp(%s)) WHERE id = %s",
+                    (at, org_id),
+                )
+                cur.execute(
+                    "SELECT " + self._ORG_COLUMNS + " FROM orgs WHERE id = %s",
+                    (org_id,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            raise NotFound("org not found")
+        return self._org_row(row)
+
+    def revoke_org_keys(self, org_id: str, *, now: Optional[float] = None) -> int:
+        at = _epoch() if now is None else float(now)
+        with self._transaction(org_id) as cur:
+            cur.execute(
+                "UPDATE agent_keys SET revoked_at = to_timestamp(%s) "
+                "WHERE org_id = %s AND revoked_at IS NULL",
+                (at, org_id),
+            )
+            return cur.rowcount
+
+    def delete_org_sessions(self, org_id: str) -> int:
+        with self._transaction(org_id) as cur:
+            cur.execute("DELETE FROM sessions WHERE org_id = %s", (org_id,))
+            return cur.rowcount
+
+    def delete_org_previews(self, org_id: str) -> int:
+        with self._transaction(org_id) as cur:
+            cur.execute(
+                "UPDATE reviews SET preview_enc = NULL "
+                "WHERE org_id = %s AND preview_enc IS NOT NULL",
+                (org_id,),
+            )
+            return cur.rowcount
+
+    def delete_org_webhook_secrets(self, org_id: str) -> int:
+        with self._transaction(org_id) as cur:
+            cur.execute(
+                "UPDATE webhook_endpoints SET secret_hash = NULL, "
+                "secret_enc = NULL, active = false, "
+                "disabled_at = COALESCE(disabled_at, now()) "
+                "WHERE org_id = %s",
+                (org_id,),
+            )
+            return cur.rowcount
+
+    def stop_org_enrollment(self, org_id: str, *,
+                            now: Optional[float] = None) -> int:
+        at = _epoch() if now is None else float(now)
+        with self._transaction(org_id) as cur:
+            cur.execute(
+                "UPDATE enrollment_tokens SET used_at = to_timestamp(%s) "
+                "WHERE org_id = %s AND used_at IS NULL",
+                (at, org_id),
+            )
+            return cur.rowcount
+
+    def version_floor_get(self, org_id: str) -> int:
+        with self._transaction(org_id) as cur:
+            cur.execute(
+                "SELECT highest_version FROM version_floor WHERE org_id = %s",
+                (org_id,),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def version_floor_bump(self, org_id: str, version: int, *,
+                           now: Optional[float] = None) -> int:
+        at = _epoch() if now is None else float(now)
+        with self._transaction(org_id) as cur:
+            cur.execute(
+                "INSERT INTO version_floor (org_id, highest_version, updated_at) "
+                "VALUES (%s, %s, to_timestamp(%s)) "
+                "ON CONFLICT (org_id) DO UPDATE SET "
+                "highest_version = GREATEST(version_floor.highest_version, "
+                "EXCLUDED.highest_version), "
+                "updated_at = EXCLUDED.updated_at "
+                "RETURNING highest_version",
+                (org_id, int(version), at),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else int(version)
+
+    def version_floor_reset(self, org_id: str, version: int = 0, *,
+                            now: Optional[float] = None) -> int:
+        at = _epoch() if now is None else float(now)
+        with self._transaction(org_id) as cur:
+            cur.execute(
+                "INSERT INTO version_floor (org_id, highest_version, updated_at) "
+                "VALUES (%s, %s, to_timestamp(%s)) "
+                "ON CONFLICT (org_id) DO UPDATE SET "
+                "highest_version = EXCLUDED.highest_version, "
+                "updated_at = EXCLUDED.updated_at",
+                (org_id, int(version), at),
+            )
+        return int(version)
 
     def add_org_domain(self, org_id: str, domain: str, *,
                        verified: bool = True) -> None:
@@ -2475,6 +2854,14 @@ class PostgresStore:
         page = [self._review_row(row) for row in rows[:int(limit)]]
         next_cursor = offset + len(page) if len(rows) > int(limit) else None
         return page, next_cursor
+
+    def pending_review_count(self, org_id: str) -> int:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT count(*) FROM reviews WHERE org_id = %s "
+                "AND status = 'pending'", (oid,))
+            return int(cur.fetchone()[0])
 
     def record_decision(self, org_id: str, review_id: str, *, reviewer: str,
                         step_up_method: str, step_up_at: float,
@@ -3240,6 +3627,251 @@ class PostgresStore:
             "rolled_back_at": _timestamp(row[6]), "percent": int(row[7] or 0),
             "reason": row[8], "updated_at": _timestamp(row[9]),
         } for row in rows]
+
+    # -- C7: webhook endpoints and the outbox ---------------------------
+    _WEBHOOK_COLUMNS = ("org_id, id, url, events, active, secret_hash, "
+                        "secret_enc, created, disabled_at")
+
+    def _webhook_row(self, row: Tuple[Any, ...]) -> Dict[str, Any]:
+        return {
+            "org_id": row[0], "id": row[1], "url": row[2],
+            "events": list(row[3] or []), "active": bool(row[4]),
+            "secret_hash": row[5],
+            # ``bytea`` comes back as ``memoryview`` (or ``bytes``); keep it raw.
+            "secret_enc": (bytes(row[6]) if row[6] is not None else None),
+            "created": _timestamp(row[7]), "disabled_at": _timestamp(row[8]),
+        }
+
+    @staticmethod
+    def _webhook_public(endpoint: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": endpoint["id"], "url": endpoint["url"],
+            "events": list(endpoint.get("events") or []),
+            "active": bool(endpoint.get("active")),
+            "created": _now_iso(endpoint.get("created")),
+            "disabled_at": _now_iso(endpoint.get("disabled_at")),
+        }
+
+    def webhook_create_endpoint(self, org_id: str, url: str,
+                                events: List[str], secret_hash: str,
+                                secret_enc: bytes, *,
+                                now: Optional[float] = None,
+                                id: Optional[str] = None) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        endpoint_id = id or "wh_" + uuid.uuid4().hex[:16]
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "INSERT INTO webhook_endpoints (org_id, id, url, events, "
+                "active, secret_hash, secret_enc, created) "
+                "VALUES (%s, %s, %s, %s::jsonb, true, %s, %s, to_timestamp(%s))",
+                # Bind raw bytes: a ``bytea`` column must not receive a str
+                # (NUL raises DataError and other bytes are UTF-8 re-encoded).
+                (oid, endpoint_id, url, json.dumps(list(events)), secret_hash,
+                 bytes(secret_enc), at),
+            )
+            cur.execute(
+                "SELECT " + self._WEBHOOK_COLUMNS +
+                " FROM webhook_endpoints WHERE org_id = %s AND id = %s",
+                (oid, endpoint_id),
+            )
+            row = cur.fetchone()
+        return self._webhook_public(self._webhook_row(row))
+
+    def webhook_endpoint_by_id(self, org_id: str,
+                               endpoint_id: str) -> Optional[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT " + self._WEBHOOK_COLUMNS +
+                " FROM webhook_endpoints WHERE org_id = %s AND id = %s",
+                (oid, endpoint_id),
+            )
+            row = cur.fetchone()
+        return self._webhook_row(row) if row else None
+
+    def webhook_list_endpoints(self, org_id: str) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT " + self._WEBHOOK_COLUMNS +
+                " FROM webhook_endpoints WHERE org_id = %s ORDER BY id", (oid,))
+            endpoints = [self._webhook_row(row) for row in cur.fetchall()]
+            cur.execute(
+                "SELECT endpoint_id, status, count(*), max(created) "
+                "FROM webhook_deliveries WHERE org_id = %s GROUP BY "
+                "endpoint_id, status", (oid,))
+            stats: Dict[str, Dict[str, Any]] = {}
+            pending_created: Dict[str, float] = {}
+            for endpoint_id, status, count, latest in cur.fetchall():
+                entry = stats.setdefault(endpoint_id, {
+                    "failures": 0, "pending": 0, "last_delivery": None})
+                if status == "failed":
+                    entry["failures"] = int(count)
+                if status == "pending":
+                    entry["pending"] = int(count)
+                    stamp = _timestamp(latest)
+                    if stamp is not None:
+                        pending_created[endpoint_id] = max(
+                            pending_created.get(endpoint_id, 0.0), stamp)
+                stamp = _timestamp(latest)
+                if stamp is not None:
+                    previous = entry.get("last_delivery")
+                    if previous is None or stamp > previous:
+                        entry["last_delivery"] = stamp
+        out = []
+        from .webhooks import RETRY_HORIZON
+
+        for endpoint in endpoints:
+            public = self._webhook_public(endpoint)
+            public.update(stats.get(endpoint["id"], {
+                "failures": 0, "pending": 0, "last_delivery": None}))
+            created = pending_created.get(endpoint["id"])
+            public["disable_after"] = _now_iso(
+                created + RETRY_HORIZON) if created else None
+            out.append(public)
+        return out
+
+    def webhook_disable_endpoint(self, org_id: str, endpoint_id: str, *,
+                                 now: Optional[float] = None
+                                 ) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "UPDATE webhook_endpoints SET active = false, "
+                "disabled_at = COALESCE(disabled_at, to_timestamp(%s)) "
+                "WHERE org_id = %s AND id = %s",
+                (at, oid, endpoint_id),
+            )
+            cur.execute(
+                "SELECT " + self._WEBHOOK_COLUMNS +
+                " FROM webhook_endpoints WHERE org_id = %s AND id = %s",
+                (oid, endpoint_id),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise NotFound("webhook endpoint not found")
+        return self._webhook_public(self._webhook_row(row))
+
+    def webhook_fanout(self, org_id: str, event: str,
+                       payload: Mapping[str, Any], *,
+                       now: Optional[float] = None) -> int:
+        oid = _org_id(org_id) or ""
+        at = _epoch() if now is None else float(now)
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT id, events FROM webhook_endpoints "
+                "WHERE org_id = %s AND active", (oid,))
+            endpoints = [(row[0], list(row[1] or [])) for row in cur.fetchall()]
+            created = 0
+            for endpoint_id, events in endpoints:
+                if event not in events:
+                    continue
+                cur.execute(
+                    "INSERT INTO webhook_deliveries (org_id, id, endpoint_id, "
+                    "event, payload, status, attempts, next_attempt, created) "
+                    "VALUES (%s, %s, %s, %s, %s::jsonb, 'pending', 0, "
+                    "to_timestamp(%s), to_timestamp(%s))",
+                    (oid, "whd_" + secrets.token_hex(10), endpoint_id, event,
+                     json.dumps(dict(payload)), at, at),
+                )
+                created += 1
+        return created
+
+    def webhook_due(self, org_id: str, now: float, *,
+                    limit: int = 50) -> List[Dict[str, Any]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT org_id, id, endpoint_id, event, payload, status, "
+                "attempts, last_error, next_attempt, delivered_at, created "
+                "FROM webhook_deliveries WHERE org_id = %s AND status = "
+                "'pending' AND next_attempt IS NOT NULL AND next_attempt <= "
+                "to_timestamp(%s) ORDER BY created, id LIMIT %s",
+                (oid, float(now), int(limit)),
+            )
+            rows = cur.fetchall()
+        return [{
+            "org_id": row[0], "id": row[1], "endpoint_id": row[2],
+            "event": row[3], "payload": dict(row[4] or {}), "status": row[5],
+            "attempts": int(row[6] or 0), "last_error": row[7],
+            "next_attempt": _timestamp(row[8]),
+            "delivered_at": _timestamp(row[9]),
+            "created": _timestamp(row[10]),
+        } for row in rows]
+
+    def webhook_update_delivery(self, org_id: str, delivery_id: str,
+                                **fields: Any) -> Dict[str, Any]:
+        oid = _org_id(org_id) or ""
+        allowed = {"status", "attempts", "last_error", "next_attempt",
+                   "delivered_at", "duration_ms", "response_status",
+                   "body_digest"}
+        assignments = []
+        values: List[Any] = []
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            column = key
+            if key in ("next_attempt", "delivered_at"):
+                assignments.append(
+                    "{} = CASE WHEN %s::double precision IS NULL THEN NULL "
+                    "ELSE to_timestamp(%s) END".format(column))
+                values.extend([value, value])
+            else:
+                assignments.append("{} = %s".format(column))
+                values.append(value)
+        with self._transaction(oid) as cur:
+            if assignments:
+                cur.execute(
+                    "UPDATE webhook_deliveries SET " + ", ".join(assignments) +
+                    " WHERE org_id = %s AND id = %s",
+                    tuple(values + [oid, delivery_id]),
+                )
+            cur.execute(
+                "SELECT org_id, id, endpoint_id, event, payload, status, "
+                "attempts, last_error, next_attempt, delivered_at, created "
+                "FROM webhook_deliveries WHERE org_id = %s AND id = %s",
+                (oid, delivery_id),
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise NotFound("webhook delivery not found")
+        return {
+            "org_id": row[0], "id": row[1], "endpoint_id": row[2],
+            "event": row[3], "payload": dict(row[4] or {}), "status": row[5],
+            "attempts": int(row[6] or 0), "last_error": row[7],
+            "next_attempt": _timestamp(row[8]),
+            "delivered_at": _timestamp(row[9]),
+            "created": _timestamp(row[10]),
+        }
+
+    def webhook_deliveries(self, org_id: str, endpoint_id: str, *,
+                           cursor: int = 0,
+                           limit: int = 50
+                           ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        oid = _org_id(org_id) or ""
+        with self._transaction(oid) as cur:
+            cur.execute(
+                "SELECT org_id, id, endpoint_id, event, payload, status, "
+                "attempts, last_error, next_attempt, delivered_at, created "
+                "FROM webhook_deliveries WHERE org_id = %s AND endpoint_id = "
+                "%s ORDER BY created DESC, id LIMIT %s OFFSET %s",
+                (oid, endpoint_id, int(limit) + 1, max(0, int(cursor))),
+            )
+            rows = cur.fetchall()
+        has_more = len(rows) > int(limit)
+        rows = rows[:int(limit)]
+        page = [{
+            "org_id": row[0], "id": row[1], "endpoint_id": row[2],
+            "event": row[3], "payload": dict(row[4] or {}), "status": row[5],
+            "attempts": int(row[6] or 0), "last_error": row[7],
+            "next_attempt": _timestamp(row[8]),
+            "delivered_at": _timestamp(row[9]),
+            "created": _timestamp(row[10]),
+        } for row in rows]
+        next_cursor = (max(0, int(cursor)) + len(page)) if has_more else None
+        return page, next_cursor
 
     def put_policy_source(self, org_id: str, documents: Any, scope: Any, *,
                           rules_module: Optional[str] = None,

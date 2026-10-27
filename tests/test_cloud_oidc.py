@@ -363,8 +363,17 @@ def test_the_cli_keeps_the_identity_settings_from_the_environment(monkeypatch):
     def fake_run(app, **kwargs):
         captured["config"] = app.config
 
-    monkeypatch.setitem(sys.modules, "uvicorn",
-                        types.SimpleNamespace(run=fake_run))
+    class _StubServer:
+        def __init__(self, config):
+            captured.setdefault("metrics", []).append(config)
+
+        def run(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(
+        run=fake_run, Server=_StubServer,
+        Config=lambda app, **kwargs: {"app": app, **kwargs},
+    ))
     assert cloud_main.main([]) == 0
 
     config = captured["config"]
@@ -372,3 +381,6 @@ def test_the_cli_keeps_the_identity_settings_from_the_environment(monkeypatch):
     assert config.oidc_client_id == CLIENT_ID
     assert config.oidc_org_slug == "acme"
     assert config.session_secret == "s" * 32
+    # The dedicated metrics listener is constructed on the main thread and
+    # binds loopback only; args reaching uvicorn.run stay the control plane's.
+    assert captured["metrics"][0]["host"] == config.metrics_host != "0.0.0.0"

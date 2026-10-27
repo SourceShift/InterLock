@@ -94,12 +94,16 @@ nav = [
     { "Mesh" = "guides/mesh.md" },
     { "Mesh root ceremony" = "guides/mesh-root-ceremony.md" },
     { "Production checklist" = "guides/production.md" },
+    { "Cloud plane" = "guides/cloud.md" },
+    { "Rolling out a policy" = "guides/cloud-rollout.md" },
   ] },
   { "Reference" = [
     { "Python API" = "reference/python-api.md" },
     { "Command line" = "reference/cli.md" },
     { "Detector catalog" = "reference/detectors.md" },
     { "Sidecar" = "reference/sidecar.md" },
+    { "Policy artifact" = "reference/cloud-artifact.md" },
+    { "Cloud runbook" = "reference/cloud-runbook.md" },
   ] },
   # These live outside docs/, so they go to the repository rather than being
   # built into the site.

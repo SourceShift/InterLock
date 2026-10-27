@@ -115,6 +115,92 @@ What the DAP path does and does not assume:
   structures, but a deployment against another implementation should run the
   guide's interop checklist first.
 
+## The cloud plane
+
+The [hosted control plane](guides/cloud.md) adds a server that several hosts
+report to. It is optional, and it is designed so that compromising it cannot
+change what a host enforces: the verdict path is local, and every grant,
+manifest, and artifact a host accepts is verified against a key or hash pinned
+at enrollment. The remaining risks are about content, tenancy, and the
+operational surface. Each is listed with the control that answers it and the
+test that proves the control is present.
+
+### Content reachable from the plane
+
+The plane stores review previews, so a plane compromise is a content event,
+not a verdict event. **Control:** the upload carries a masked preview and
+per-entity counts rather than raw arguments, tool output, or event bodies;
+previews and webhook secrets are sealed with the org's key; reading a
+decrypted preview is separately audited; and the admin audit surface renders
+hashes and metadata, never raw payloads. **Proving test:**
+`tests/test_cloud_admin_ui.py` asserts that no raw payload appears on the admin
+pages, and `tests/test_cloud_review_routes.py` covers the masked upload and the
+disclosure audit row.
+
+### Webhook delivery can be steered
+
+A webhook endpoint is an outbound request chosen by a tenant, which makes it an
+SSRF and privacy boundary. **Control:** registration accepts only `https` URLs
+(or plain `http` on loopback for tests), refuses redirects, stores a one-way
+hash plus an AES-GCM copy of the signing secret, signs every delivery
+(`t=<unix>,v1=<hmac-sha256(secret, "t.body")>`) so a receiver can reject
+replays outside its window, retries on the documented schedule only, and never
+retries a permanent 4xx except 408 and 429. **Proving test:**
+`tests/test_cloud_webhooks.py` covers the signing vector, the retry schedule,
+permanent-4xx no-retry, redirect refusal, payload privacy, and disabled
+endpoints.
+
+### Metrics and audit pages can leak tenants
+
+A metric label is an unauthenticated string stored forever, so a tenant id in a
+label is a privacy regression that survives far longer than a log line.
+**Control:** the metric set is closed and every label is a bounded enum or a
+registered route template, never a concrete path, org, host, review, or policy
+id, and no preview text is rendered. **Proving test:**
+`tests/test_cloud_metrics.py` seeds org, host, review, and policy ids and
+asserts that none appears, that route labels are templates, and that the
+exposition contains no `preview` text.
+
+### The admin pages are a rendering boundary
+
+**Control:** the admin audit and hosts pages are server-rendered inside the
+existing CSP and `authorize()` seam, with owner/admin/auditor roles, HTML
+escaping at every interpolation, paging and filters, and before/after hashes
+instead of payloads; export reuses the C4 JSONL path rather than a second
+implementation. **Proving test:** `tests/test_cloud_admin_ui.py` walks the role
+matrix, escapes a hostile value, checks the CSP headers, paging, filtering,
+the C4 export, and the absence of raw payloads.
+
+### Restoring a plane can roll policy backwards
+
+A restored database can hold an older signed manifest, and a host that has
+already installed a newer version must refuse it. **Control:** publishing
+advances a version floor stored outside the restored tables, `restore.sh`
+refuses to run without `--yes` and only into an empty database, refuses to
+overwrite a higher floor without `--reset-floor`, and prints the mandatory
+`interlock cloud admin version-floor --bump-to` step. **Proving test:**
+`tests/test_cloud_version_floor.py` asserts that a publish advances the floor,
+a restore cannot lower it without the escape, and `--bump-to` produces a
+version every host accepts.
+
+### Deleting an organisation must revoke before it forgets
+
+**Control:** `DELETE /v1/org` requires the owner, a fresh step-up, and a typed
+confirmation; it tombstones the org, revokes every agent key and session
+immediately (within the five-second budget), stops enrollment, deletes preview
+ciphertext and webhook secrets, retains receipts and audit rows for the
+configured period, writes one audit row, and answers `404` for both deleted-org
+and cross-org reads. **Proving test:** `tests/test_cloud_org_delete.py` covers
+the tombstone, revocation timing, secret deletion, retained receipts and audit,
+and the `404`s.
+
+### The plane inherits every local setting
+
+The controls above sit on top of the local ones. A host whose policy is in
+monitor mode, whose scope engine allows unscoped calls, or whose artifact has
+expired is weaker regardless of the plane; those settings and their reasons are
+listed earlier on this page, and the plane does not compensate for them.
+
 ## Known gaps
 
 - **Only MCP can be attached at import time.** `attach()` patches

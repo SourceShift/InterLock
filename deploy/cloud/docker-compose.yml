@@ -1,45 +1,197 @@
-# Development stack for the interlock cloud control plane.
+# The interlock cloud stack.
 #
-#   IL_CLOUD_DB_PASSWORD=... docker compose -f deploy/cloud/docker-compose.yml up -d --wait
-#   python3 -m interlock.cloud.migrate --dsn "$IL_CLOUD_DSN"
+# Development (Postgres only, bound loopback):
 #
-# The password default below is dev-only and deliberately obvious. Override it
-# with IL_CLOUD_DB_PASSWORD, and never commit a real secret to this file.
+#   mkdir -p deploy/cloud/secrets
+#   printf 'dev-only-password' > deploy/cloud/secrets/postgres-password
+#   docker compose -f deploy/cloud/docker-compose.yml up -d --wait
+#
+# Production (plane + Postgres, secrets mounted as files):
+#
+#   docker compose -f deploy/cloud/docker-compose.yml --profile prod up -d --wait
+#
+# TLS with a Caddy front end, sharing the plane's network namespace so the
+# loopback bind stays loopback:
+#
+#   docker compose -f deploy/cloud/docker-compose.yml --profile tls up -d --wait
+#
+# The retention job is one-shot and is *not* scheduled here:
+#
+#   docker compose -f deploy/cloud/docker-compose.yml --profile ops run --rm retention
+#
+# Nothing in this file is a secret. Every value is either a placeholder, a
+# path to a 0600 file, or a non-sensitive binding. The secret files themselves
+# are created on the host and never committed (see secrets/README.md).
+
+name: interlock-cloud
+
+x-plane-build: &plane-build
+  context: ../..
+  dockerfile: deploy/cloud/Dockerfile
+
+# Shared control-plane environment. Secrets are *paths*, never values: the
+# plane reads IL_CLOUD_*_FILE at startup (see interlock/cloud/config.py).
+x-plane-env: &plane-env
+  IL_CLOUD_DSN: postgresql://interlock@postgres:5432/interlock
+  IL_CLOUD_BIND: 127.0.0.1
+  IL_CLOUD_PORT: "8787"
+  IL_CLOUD_PUBLIC_URL: ${IL_CLOUD_PUBLIC_URL:-http://127.0.0.1:8787}
+  IL_CLOUD_LOG_LEVEL: ${IL_CLOUD_LOG_LEVEL:-info}
+  IL_CLOUD_METRICS_BIND: 127.0.0.1
+  IL_CLOUD_METRICS_PORT: "9101"
+  IL_CLOUD_SESSION_SECRET_FILE: /run/secrets/session_secret
+  IL_CLOUD_APPROVAL_KEY_FILE: /run/secrets/approval_key
+  IL_CLOUD_POLICY_KEY_FILE: /run/secrets/policy_key
+  IL_CLOUD_PREVIEW_KEK_FILE: /run/secrets/preview_kek
+  IL_CLOUD_OIDC_ISSUER: ${IL_CLOUD_OIDC_ISSUER:-}
+  IL_CLOUD_OIDC_CLIENT_ID: ${IL_CLOUD_OIDC_CLIENT_ID:-}
+  IL_CLOUD_OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+  IL_CLOUD_OIDC_REDIRECT_URI: ${IL_CLOUD_OIDC_REDIRECT_URI:-}
+  IL_CLOUD_OIDC_ORG_SLUG: ${IL_CLOUD_OIDC_ORG_SLUG:-}
+
+x-plane-secrets: &plane-secrets
+  # The database password is a mounted file read into PGPASSWORD by the
+  # entrypoint shells below; it is never an environment value in this file.
+  - postgres_password
+  - session_secret
+  - approval_key
+  - policy_key
+  - preview_kek
+  - oidc_client_secret
+
+x-plane-hardening: &plane-hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 services:
   postgres:
     image: postgres:16
     environment:
       POSTGRES_DB: interlock
       POSTGRES_USER: interlock
-      POSTGRES_PASSWORD: ${IL_CLOUD_DB_PASSWORD:-dev-only-password}
+      # Read from a file, never from the environment: `docker inspect` shows
+      # env values.
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - interlock-cloud-pgdata:/var/lib/postgresql/data
+    secrets:
+      - postgres_password
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U interlock -d interlock"]
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
-  # The plane itself. Uncomment after building an image (or mount the checkout)
-  # and supplying deploy/cloud/cloud.env with IL_CLOUD_DSN and
-  # IL_CLOUD_SESSION_SECRET (32+ characters).
-  #
-  # cloud:
-  #   image: python:3.12-slim
-  #   working_dir: /app
-  #   volumes:
-  #     - ../..:/app
-  #   env_file:
-  #     - cloud.env
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   command: >
-  #     sh -c "pip install -e '.[cloud]' &&
-  #            python3 -m interlock.cloud.migrate --dsn $$IL_CLOUD_DSN &&
-  #            python3 -m interlock.cloud"
+  # The production shape. It runs the migrations first and only then starts
+  # the server; /readyz stays the health signal after that.
+  plane:
+    profiles: ["prod", "tls"]
+    build: *plane-build
+    image: interlock-cloud:local
+    # `command:` would be appended to the image ENTRYPOINT (`python3 -m
+    # interlock.cloud`), so this must override `entrypoint:` instead. libpq
+    # reads PGPASSWORD, keeping the password in a file rather than a value.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        export PGPASSWORD="$(cat /run/secrets/postgres_password)" &&
+        python3 -m interlock.cloud.migrate &&
+        exec python3 -m interlock.cloud
+    environment: *plane-env
+    secrets: *plane-secrets
+    ports:
+      - "127.0.0.1:8787:8787"
+      - "127.0.0.1:9101:9101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen("http://127.0.0.1:8787/readyz", timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    <<: *plane-hardening
+    restart: unless-stopped
+
+  # One-shot retention. The operator (a timer, a cron container, or a
+  # deliberate `compose run`) decides when it runs; the job itself audits
+  # every deletion.
+  retention:
+    profiles: ["ops"]
+    build: *plane-build
+    image: interlock-cloud:local
+    # Override the image ENTRYPOINT, not its CMD: `command:` would produce
+    # `python3 -m interlock.cloud python3 -m interlock.cloud.retention`.
+    # "$@" forwards args such as `run --rm retention --days 90`.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        export PGPASSWORD="$(cat /run/secrets/postgres_password)";
+        exec python3 -m interlock.cloud.retention "$@"
+      - --
+    environment: *plane-env
+    secrets: *plane-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+    <<: *plane-hardening
+    restart: "no"
+
+  # Optional TLS termination. It shares the plane's network namespace, so
+  # the plane's loopback bind is reachable at 127.0.0.1:8787 from Caddy and
+  # from nowhere else.
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2-alpine
+    network_mode: "service:plane"
+    environment:
+      IL_CLOUD_HOSTNAME: ${IL_CLOUD_HOSTNAME:-cloud.example.com}
+      IL_CLOUD_ACME_EMAIL: ${IL_CLOUD_ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - interlock-cloud-caddy-data:/data
+      - interlock-cloud-caddy-config:/config
+    depends_on:
+      plane:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   interlock-cloud-pgdata:
+  interlock-cloud-caddy-data:
+  interlock-cloud-caddy-config:
+
+secrets:
+  postgres_password:
+    file: ${IL_CLOUD_DB_PASSWORD_FILE:-./secrets/postgres-password}
+  session_secret:
+    file: ${IL_CLOUD_SESSION_SECRET_FILE_PATH:-./secrets/session-secret}
+  approval_key:
+    file: ${IL_CLOUD_APPROVAL_KEY_FILE_PATH:-./secrets/approval-key}
+  policy_key:
+    file: ${IL_CLOUD_POLICY_KEY_FILE_PATH:-./secrets/policy-key}
+  preview_kek:
+    file: ${IL_CLOUD_PREVIEW_KEK_FILE_PATH:-./secrets/preview-kek}
+  oidc_client_secret:
+    file: ${IL_CLOUD_OIDC_CLIENT_SECRET_FILE_PATH:-./secrets/oidc-client-secret}

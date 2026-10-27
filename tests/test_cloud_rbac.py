@@ -82,7 +82,6 @@ def test_every_permission_row_allows_exactly_its_roles(method, route):
     ("DELETE", "/v1/hosts/host-1"),
     ("GET", "/v1/receipts"),
     ("GET", "/v1/nope"),
-    ("DELETE", "/v1/org"),
     ("POST", "/v1/org"),
     ("GET", "/v1/auth/whatever"),
 ])

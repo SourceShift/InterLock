@@ -19,6 +19,9 @@ import uuid
 from functools import partial
 from typing import Any, Dict, List
 
+from .. import metrics as _metrics
+from .. import webhooks as _webhooks
+from ..admin import version_floor
 from ..auth.stepup import StepUpError, StepUpService
 from ..http import ApiError, Request, Response, json_response, parse_json_body
 from ..policy.compile import CompileError, compile_from_source
@@ -230,7 +233,7 @@ async def publish_manifest(app: Any, request: Request) -> Response:
     try:
         artifact = _artifact_for_publish(app, oid, body, now)
         source = artifact["source"]
-        version = app.store.next_manifest_version(oid)
+        version = version_floor.next_publish_version(app.store, oid)
         public_hex = _public_hex(app)
         envelope = sign_manifest(app.policy_seed(), {
             "v": 1,
@@ -253,6 +256,9 @@ async def publish_manifest(app: Any, request: Request) -> Response:
         })
         app.store.put_manifest(
             oid, envelope, author=getattr(request.user, "id", None), now=now)
+        # Only after the manifest committed: a floor that ran ahead of a
+        # failed publish would skip a version for no reason.
+        version_floor.advance(app.store, oid, version, now=now)
     except ValueError as exc:
         raise ApiError(422, "invalid_request", str(exc)) from None
 
@@ -286,6 +292,16 @@ async def publish_manifest(app: Any, request: Request) -> Response:
                 "sha256": artifact["sha256"], "target": target,
                 "mode": mode, "source_version": source_version},
     )
+    try:
+        _metrics.set_gauge("il_policy_manifest_version", version)
+    except Exception:
+        pass
+    _webhooks.emit(app.store, oid, "manifest.published", {
+        "version": version,
+        "target_kind": target["kind"],
+        "target_id": target_id,
+        "mode": mode,
+    }, now=now)
     return json_response(201, {
         "manifest": envelope,
         "artifact": {"sha256": artifact["sha256"], "epoch": artifact["epoch"],
@@ -374,6 +390,16 @@ async def publish_kill(app: Any, request: Request) -> Response:
         actor=getattr(request.user, "id", None),
         detail={"id": kill_id, "target": target, "kill_epoch": record["kill_epoch"]},
     )
+    try:
+        _metrics.set_gauge("il_kill_active", 1)
+    except Exception:
+        pass
+    _webhooks.emit(app.store, oid, "policy.killed", {
+        "kill_id": kill_id,
+        "target_kind": target["kind"],
+        "target_id": target["id"],
+        "epoch": record["kill_epoch"],
+    }, now=now)
     return json_response(201, {"kill": envelope,
                                "kill_epoch": record["kill_epoch"]})
 
@@ -404,7 +430,7 @@ def _rollout(app: Any, org_id: str, rollout_id: str) -> Dict[str, Any]:
 def _republish_previous(app: Any, request: Request, org_id: str,
                         rollout: Dict[str, Any], now: float) -> Dict[str, Any]:
     """Re-publish the source before the rollout's manifest at version+1."""
-    version = app.store.next_manifest_version(org_id)
+    version = version_floor.next_publish_version(app.store, org_id)
     target = {"kind": "ring", "id": rollout["ring"]}
     source = app.store.policy_source(org_id)
     previous = (app.store.policy_source(
@@ -441,6 +467,17 @@ def _republish_previous(app: Any, request: Request, org_id: str,
     })
     app.store.put_manifest(
         org_id, envelope, author=getattr(request.user, "id", None), now=now)
+    version_floor.advance(app.store, org_id, version, now=now)
+    try:
+        _metrics.set_gauge("il_policy_manifest_version", version)
+    except Exception:
+        pass
+    _webhooks.emit(app.store, org_id, "manifest.published", {
+        "version": version,
+        "target_kind": target["kind"],
+        "target_id": target["id"],
+        "mode": "enforce",
+    }, now=now)
     return {"manifest": envelope, "source_version": previous["source_version"]}
 
 
@@ -466,6 +503,10 @@ async def promote_rollout(app: Any, request: Request) -> Response:
             detail={"id": rollout_id,
                     "manifest_version": republished["manifest"]["version"]},
         )
+        try:
+            _metrics.inc("il_policy_swaps_total", result="rolled_back")
+        except Exception:
+            pass
         return json_response(200, {"rollout": record, **republished})
     if action != "promote":
         raise ApiError(422, "invalid_request", "action must be promote or rollback")
@@ -482,6 +523,10 @@ async def promote_rollout(app: Any, request: Request) -> Response:
             actor=getattr(request.user, "id", None),
             detail={"id": rollout_id, "health": health},
         )
+        try:
+            _metrics.inc("il_policy_swaps_total", result="held")
+        except Exception:
+            pass
         return json_response(200, {"rollout": record, "held": True})
     percent = body.get("percent")
     if percent is None:
@@ -499,6 +544,10 @@ async def promote_rollout(app: Any, request: Request) -> Response:
         actor=getattr(request.user, "id", None),
         detail={"id": rollout_id, "percent": percent},
     )
+    try:
+        _metrics.inc("il_policy_swaps_total", result="promoted")
+    except Exception:
+        pass
     return json_response(200, {"rollout": record})
 
 

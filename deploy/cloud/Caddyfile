@@ -1,0 +1,30 @@
+# TLS termination for the cloud plane (compose profile "tls").
+#
+# Caddy shares the plane container's network namespace, so the upstream is the
+# plane's loopback bind - the same address the plane uses by default. The
+# hostname and ACME contact come from the compose environment, never from
+# this file, so no deployment detail is committed.
+{
+	email {$IL_CLOUD_ACME_EMAIL}
+}
+
+{$IL_CLOUD_HOSTNAME:cloud.example.com} {
+	encode zstd gzip
+
+	# Receipt batches are the largest accepted body (8 MiB); leave a little
+	# headroom and refuse anything larger at the edge.
+	request_body {
+		max_size 10MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# The plane sets its own CSP, cache and cookie headers; Caddy only
+	# terminates TLS, compresses and forwards.
+	reverse_proxy 127.0.0.1:8787
+}

@@ -24,6 +24,8 @@ import time
 from functools import partial
 from typing import Any, Dict, Iterable, Optional
 
+from .. import metrics as _metrics
+from .. import webhooks as _webhooks
 from ..auth.stepup import StepUpError, StepUpService
 from ..crypto import encrypt_preview
 from ..grants import GRANT_MAX_TTL, sign_grant
@@ -159,9 +161,43 @@ def _upload_record(app: Any, request: Request) -> ReviewRecord:
         raise ApiError(409, "review_conflict", str(exc)) from None
 
 
+def _uploaded_review_id(request: Request) -> Optional[str]:
+    """Peek at the body for the idempotency key, without trusting it.
+
+    The real validation is in :func:`_upload_record`; this only decides
+    whether a webhook is a *new* review or a retry of one already stored.
+    """
+    try:
+        import json
+
+        parsed = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return None
+    if isinstance(parsed, dict) and isinstance(parsed.get("review_id"), str):
+        return parsed["review_id"] or None
+    return None
+
+
 async def upload_reviews(app: Any, request: Request) -> Response:
     """Upsert one masked pending review; idempotent by ``(host, review_id)``."""
+    review_id = _uploaded_review_id(request)
+    existing = (app.store.review_by_id(request.org.id, review_id)
+                if review_id else None)
     record = _upload_record(app, request)
+    if existing is None:
+        # A retry of a stored upload must not fire a second "created" event.
+        _webhooks.emit(app.store, request.org.id, "review.created", {
+            "review_id": record.id,
+            "host_id": record.host_id,
+            "status": record.status,
+            "action": record.action,
+        }, now=_now(app))
+    try:
+        _metrics.set_gauge(
+            "il_reviews_pending",
+            app.store.pending_review_count(request.org.id))
+    except Exception:
+        pass
     return json_response(200, {"review": record.public()})
 
 
@@ -281,6 +317,12 @@ def decide_review(app: Any, request: Request, review_id: str, *,
                 step_up_at=session.step_up_at or now,
                 decision="approve", approve_anyway=approve_anyway,
                 reason=reason, now=now)
+            try:
+                _metrics.set_gauge(
+                    "il_reviews_pending",
+                    app.store.pending_review_count(request.org.id))
+            except Exception:
+                pass
             return {"status": "pending_approvals",
                     "approvals": len(approvers),
                     "required": record.min_approvals}
@@ -330,6 +372,25 @@ def decide_review(app: Any, request: Request, review_id: str, *,
             approve_anyway=bool(approve_anyway), reason=reason,
             status=status, decided_by=decided_by,
             approval_until=approval_until, now=now)
+    try:
+        _metrics.inc("il_grants_issued_total")
+        _metrics.set_gauge(
+            "il_reviews_pending",
+            app.store.pending_review_count(request.org.id))
+    except Exception:
+        pass
+    _webhooks.emit(app.store, request.org.id, "grant.issued", {
+        "grant_id": grant["grant_id"],
+        "review_id": record.id,
+        "host_id": host.id,
+        "status": status,
+    }, now=now)
+    _webhooks.emit(app.store, request.org.id, "review.decided", {
+        "review_id": record.id,
+        "host_id": host.id,
+        "status": status,
+        "result": decision,
+    }, now=now)
     return {"status": status, "grant_id": grant["grant_id"], "seq": seq}
 
 

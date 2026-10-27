@@ -249,10 +249,43 @@ interlock leans towards refusing. Here's what happens in each failure case:
 The second and third rows are why `deny_when` is a good wrapper for any test that
 might crash: the outcome is a clean `Blocked` you already handle.
 
+## The cloud control plane
+
+An install can stay single-machine forever, and that is the default. A **hosted
+control plane** is the optional arrangement for several machines: one place
+where a reviewer decides across all of them and one audit trail that spans
+them. It does not move the decision off the host.
+
+The plane is three things and the boundary between them is the point:
+
+| Plane | Runs | Decides |
+|---|---|---|
+| **Data plane** | Inside each agent's process, on each host | Every call. The local rules and the local artifact are the only thing that can block, rewrite, or escalate a call |
+| **Control plane** | Server-side | Compiles and signs policy, holds masked previews and decisions, ingests receipts, serves the review queue and audit search |
+| **Reviewers** | A browser | Approve or deny an escalated call; the grant is signed and delivered, and the host applies it locally |
+
+Because the verdict path never asks the network, a slow or unreachable plane
+cannot make a guarded call wait: a call the local policy already allows still
+goes through, and only an escalated call waits on a human. The host verifies
+every grant, manifest, and artifact against keys and hashes it pinned at
+enrollment, so the plane cannot silently change what a host enforces. Hosts
+publish signed manifests strictly upwards; a plane restored from an old backup
+is refused unless its version floor is raised above every host's installed
+version (the [runbook](reference/cloud-runbook.md#restoring-a-plane-and-the-version-floor)).
+
+What crosses the boundary is deliberately small: a masked preview with entity
+counts, receipt fields the host already signed, and a heartbeat. The
+[cloud guide](guides/cloud.md#what-leaves-the-host) states the full table, and
+the [security model](security-model.md#the-cloud-plane) names each threat with
+its control and the test that proves it. The console on a host still binds
+loopback only; the plane is a separate deployment and never widens that bind.
+
 ## Where to go next
 
 - [Writing rules](guides/writing-rules.md): from one-liners to tested,
   result-checking rules.
+- [The cloud plane](guides/cloud.md): the hosted arrangement, enrollment, and
+  the review flow.
 - [Security model](security-model.md): what interlock protects against, and
   what it doesn't.
 - [Python API reference](reference/python-api.md): every symbol and parameter.

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import sys
+import threading
 from typing import List, Optional
 
 from .config import CloudConfig, ConfigError
@@ -23,7 +24,7 @@ PUBLIC_HOST = "0.0.0.0"
 #: unit command and the documented command are the same one; ``main([])``
 #: still runs the control-plane server.
 CONNECTOR_ACTIONS = frozenset(
-    ("enroll", "run", "status", "leave", "policy", "keys")
+    ("enroll", "run", "status", "leave", "policy", "keys", "admin")
 )
 
 
@@ -91,6 +92,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     from .log import configure
 
     configure(config.log_level)
+    if not config.metrics_on_app:
+        # The dedicated listener is a second, loopback-only bind with no auth.
+        # It runs as a daemon thread so the control plane stays the foreground
+        # process (signals, logs and exit status all belong to it).
+        from .metrics import MetricsApp
+
+        metrics_server = uvicorn.Server(uvicorn.Config(
+            MetricsApp(), host=config.metrics_host, port=config.metrics_port,
+            log_level=config.log_level,
+        ))
+        thread = threading.Thread(
+            target=metrics_server.run, name="interlock-metrics", daemon=True)
+        thread.start()
     uvicorn.run(CloudApp(config), host=config.bind_host, port=config.bind_port,
                 log_level=config.log_level)
     return 0

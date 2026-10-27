@@ -335,6 +335,66 @@ jobs:
             tests/test_reviews_grants.py \
             tests/test_cloud_receipt_stamp.py
 
+  cloud-supply-chain:
+    name: cloud supply chain
+    runs-on: ubuntu-latest
+    # The control plane is the one deployment where a compromised dependency
+    # runs with tenant data. This job audits the cloud extra, records its
+    # resolved dependency graph, and asserts the extra stays range-pinned so
+    # an unreviewed major bump cannot arrive on its own.
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the cloud extra and the audit tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[cloud]'
+          # Bounded tool ranges: an unbounded tool can change its exit codes or
+          # output format between runs and turn a green build red on a release
+          # the repository did not make.
+          python -m pip install 'pip-audit>=2.7,<3' 'cyclonedx-bom>=4,<7'
+
+      - name: Every cloud extra is pinned to a compatible range
+        run: |
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          cloud = project["optional-dependencies"]["cloud"]
+          ccloud = [item for item in cloud if item]
+          assert ccloud, "the cloud extra is empty"
+          for requirement in ccloud:
+              # A lower bound or an exact pin is fine; a requirement with
+              # only a lower bound can resolve to an unreviewed major.
+              assert "<" in requirement or "==" in requirement, (
+                  f"cloud extra {requirement!r} has no upper bound")
+          print("cloud extra is range-pinned:", ", ".join(ccloud))
+          PY
+
+      - name: Audit the resolved environment
+        # --skip-editable keeps the local package (not on an index) out of the
+        # audit; it audits every dependency the cloud extra pulled in.
+        run: pip-audit --skip-editable
+
+      - name: Generate a CycloneDX SBOM
+        run: |
+          python -m pip freeze > requirements-cloud.txt
+          cyclonedx-py requirements -i requirements-cloud.txt -o sbom.cdx.json
+
+      - name: Upload the SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-sbom
+          path: sbom.cdx.json
+          retention-days: 30
+
   lint:
     name: lint
     runs-on: ubuntu-latest
@@ -366,7 +426,7 @@ jobs:
     # some branch-protection configurations, so the `if: always()` plus the
     # explicit result test is what makes this job meaningful.
     if: always()
-    needs: [python, rust, node, web, cloud, lint]
+    needs: [python, rust, node, web, cloud, cloud-supply-chain, lint]
     runs-on: ubuntu-latest
     steps:
       - name: Check every job succeeded
@@ -376,6 +436,7 @@ jobs:
           echo "node:   ${{ needs.node.result }}"
           echo "web:    ${{ needs.web.result }}"
           echo "cloud:  ${{ needs.cloud.result }}"
+          echo "supply: ${{ needs.cloud-supply-chain.result }}"
           echo "lint:   ${{ needs.lint.result }}"
           for result in \
             "${{ needs.python.result }}" \
@@ -383,6 +444,7 @@ jobs:
             "${{ needs.node.result }}" \
             "${{ needs.web.result }}" \
             "${{ needs.cloud.result }}" \
+            "${{ needs.cloud-supply-chain.result }}" \
             "${{ needs.lint.result }}"
           do
             if [ "$result" != "success" ]; then

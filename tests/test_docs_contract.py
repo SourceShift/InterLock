@@ -25,6 +25,11 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
+try:                                       # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:                # 3.9 and 3.10, via the dev extra
+    import tomli as tomllib
+
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
 DOCS = ROOT / "docs"
@@ -77,6 +82,23 @@ SIGNATURE_SKIPS = {"ScopeTree"}
 SKETCH_ALLOWLIST: set[str] = set()
 
 SIGNATURE_START = re.compile(r"^([A-Za-z_]\w*)\(")
+
+#: The C7 operations pages. They must render on GitHub (plain Markdown, links
+#: that resolve from their own directory) and under Zensical (present in the
+#: manual's nav), and they must not name a vendor: the plane is described by
+#: the protocol and the control, not by a particular provider.
+CLOUD_PAGES = (
+    DOCS / "guides" / "cloud.md",
+    DOCS / "guides" / "cloud-rollout.md",
+    DOCS / "reference" / "cloud-artifact.md",
+    DOCS / "reference" / "cloud-runbook.md",
+)
+
+FORBIDDEN_VENDORS = re.compile(
+    r"(?i)\b(AWS|Amazon Web Services|Google Cloud|Azure|OpenAI|Anthropic|Datadog)\b"
+)
+
+MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 
 
 def _count_files() -> Iterator[Path]:
@@ -327,3 +349,78 @@ def _source_default(node: Optional[ast.expr]) -> str:
         return ast.unparse(node)
     except AttributeError:  # pragma: no cover - Python < 3.9 has no unparse
         return "a default"
+
+
+def _nav_page_paths(nav: List[object]) -> Iterator[str]:
+    for item in nav:
+        for _label, value in item.items():  # type: ignore[union-attr]
+            if isinstance(value, str):
+                yield value
+            else:
+                yield from _nav_page_paths(value)  # type: ignore[arg-type]
+
+
+def test_cloud_pages_are_in_the_nav_and_link_to_real_files() -> None:
+    config = tomllib.loads((ROOT / "zensical.toml").read_text(encoding="utf-8"))
+    nav_paths = set(_nav_page_paths(config["project"]["nav"]))
+    missing = [
+        page.relative_to(DOCS).as_posix()
+        for page in CLOUD_PAGES
+        if page.relative_to(DOCS).as_posix() not in nav_paths
+    ]
+    assert not missing, (
+        "cloud pages absent from zensical.toml nav: {}".format(", ".join(missing))
+    )
+
+
+def test_cloud_pages_render_on_github_and_zensical() -> None:
+    """Each page is plain Markdown whose links resolve from its own directory.
+
+    GitHub renders a relative link against the file that contains it, and so
+    does Zensical; a link that leaves docs/ resolves in neither. A page is also
+    expected to have one H1 and balanced code fences, which both renderers
+    require to agree with the authored structure.
+    """
+    failures: List[str] = []
+    for page in CLOUD_PAGES:
+        text = page.read_text(encoding="utf-8")
+        rel = page.relative_to(ROOT)
+        # An H1 is a heading outside a fenced block; a `# comment` in a bash
+        # example is not a heading to either renderer.
+        h1s = 0
+        fenced = False
+        for line in text.splitlines():
+            if line.startswith("```"):
+                fenced = not fenced
+                continue
+            if not fenced and line.startswith("# "):
+                h1s += 1
+        if h1s != 1:
+            failures.append("{}: expected one H1, found {}".format(rel, h1s))
+        if text.count("```") % 2:
+            failures.append("{}: unbalanced code fences".format(rel))
+        if re.search(r"^(=== |\?\?\? )", text, re.MULTILINE):
+            failures.append("{}: Zensical-only directive near a plain-Markdown page".format(rel))
+        for target in MARKDOWN_LINK.findall(text):
+            if target.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            path_part = target.split("#", 1)[0].split("?", 1)[0]
+            if not path_part:
+                continue
+            resolved = (page.parent / path_part).resolve()
+            if not resolved.is_file():
+                failures.append("{}: link target does not exist: {}".format(rel, target))
+    assert not failures, "cloud pages do not render cleanly:\n" + "\n".join(failures)
+
+
+def test_cloud_pages_name_no_vendor() -> None:
+    failures: List[str] = []
+    for page in CLOUD_PAGES:
+        for lineno, line in enumerate(page.read_text(encoding="utf-8").splitlines(), 1):
+            if FORBIDDEN_VENDORS.search(line):
+                failures.append(
+                    "{}:{}: names a vendor; describe the control instead: {}".format(
+                        page.relative_to(ROOT), lineno, line.strip()
+                    )
+                )
+    assert not failures, "vendor-specific wording in public cloud docs:\n" + "\n".join(failures)

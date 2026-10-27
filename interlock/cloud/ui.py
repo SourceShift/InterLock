@@ -90,6 +90,12 @@ button.danger { background: transparent; color: #b00020; border-color: #b00020; 
           margin: 12px 0; background: #fff1f1; color: #4a000c; }
 .hint { color: #5c5c66; font-size: .85rem; }
 .actions { display: grid; gap: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+th, td { text-align: left; padding: 5px 4px; vertical-align: top;
+         border-bottom: 1px solid #767680; }
+th { color: #5c5c66; font-size: .72rem; text-transform: uppercase;
+     letter-spacing: .04em; }
+code { font-size: .72rem; overflow-wrap: anywhere; }
 [hidden] { display: none !important; }
 """
 
@@ -106,9 +112,11 @@ def _url(base: str, **query: Any) -> str:
 
 
 def _page(title: str, body: str, *, status: int = 200,
-          script: bool = False) -> Response:
+          script: bool = False, nav: Optional[str] = None) -> Response:
     script_tag = ('<script src="/static/stepup.js" defer></script>'
                   if script else "")
+    if nav is None:
+        nav = "<a href=\"/reviews\">Reviews</a>"
     document = (
         "<!doctype html><html lang=\"en\"><head>"
         "<meta charset=\"utf-8\">"
@@ -116,8 +124,8 @@ def _page(title: str, body: str, *, status: int = 200,
         "<title>{} · interlock</title>"
         "<style>{}</style>{}"
         "</head><body><header><h1>interlock</h1>"
-        "<a href=\"/reviews\">Reviews</a></header>{}</body></html>"
-    ).format(VIEWPORT, escape(title), _UI_STYLE, script_tag, body)
+        "{}</header>{}</body></html>"
+    ).format(VIEWPORT, escape(title), _UI_STYLE, script_tag, nav, body)
     # One policy, not C1's plus the UI's: two CSP headers are both enforced,
     # and C1's ``default-src 'none'`` would block the same-origin script.
     return Response(

@@ -40,6 +40,10 @@ PUBLIC_ROUTES = frozenset({
     # The mobile review UI's one asset. It contains no tenant data and is
     # safe to serve before login; the pages that load it are not public.
     ("GET", "/static/stepup.js"),
+    # C7: metrics have no auth by design. The route is only reachable when
+    # IL_CLOUD_METRICS_ON_APP=1 (otherwise it is not registered and 404s), and
+    # the default dedicated listener binds loopback only.
+    ("GET", "/metrics"),
 })
 
 #: (method, route) -> roles allowed. A route absent here is denied.
@@ -87,6 +91,20 @@ PERMISSIONS: Dict[Tuple[str, str], Set[str]] = {
     ("POST", "/v1/policy/kill"): {"owner"},
     ("POST", "/v1/policy/rollouts/{id}/promote"): {"owner", "admin"},
     ("GET", "/v1/policy/rollouts"): {"owner", "admin", "auditor"},
+    # C7: webhooks are an administrative surface. Registration and disabling
+    # also need a fresh step-up, enforced by the handler.
+    ("POST", "/v1/webhooks"): {"owner", "admin"},
+    ("GET", "/v1/webhooks"): {"owner", "admin"},
+    ("GET", "/v1/webhooks/{id}/deliveries"): {"owner", "admin"},
+    ("DELETE", "/v1/webhooks/{id}"): {"owner", "admin"},
+    # C7: the server-rendered admin pages. Auditors may read the audit trail
+    # and the fleet view, never a preview (C3 keeps that 404).
+    ("GET", "/admin/audit"): {"owner", "admin", "auditor"},
+    ("GET", "/admin/audit/export"): {"owner", "admin", "auditor"},
+    ("GET", "/admin/hosts"): {"owner", "admin", "auditor"},
+    # C7: org deletion is the owner's irreversible action, with a fresh
+    # step-up and a typed confirmation in the body.
+    ("DELETE", "/v1/org"): {"owner"},
 }
 
 #: (method, literal route) -> required agent scope, or ``None`` when any

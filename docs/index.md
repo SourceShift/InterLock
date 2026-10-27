@@ -5,7 +5,9 @@ process, and allows, blocks, or rewrites it before it runs. These docs take you
 from a first guarded function to a production deployment.
 
 **New here?** Do the [getting started](getting-started.md) tutorial (about fifteen
-minutes), then read [how interlock works](concepts.md).
+minutes), then read [how interlock works](concepts.md). Running several machines
+and want one review queue and audit trail across them? Read
+[the cloud plane](guides/cloud.md); a single-machine install needs none of it.
 
 ## How these docs are organised
 
@@ -37,6 +39,8 @@ minutes), then read [how interlock works](concepts.md).
 | [Sandbox](guides/sandbox.md) | Run subprocesses under OS-level confinement built from your policy |
 | [Mesh](guides/mesh.md) | Subscribe to community policy packs, verified from a pinned root and applied in monitor mode first; publish a commons; or report counts with Prio3 validity proofs over DAP |
 | [Production checklist](guides/production.md) | Roll out safely: prove protection is on, monitor mode, refusals, logging, deployment |
+| [Cloud plane](guides/cloud.md) | Run a hosted control plane for shared review, cross-host audit, and centrally compiled policy, without moving enforcement off the host |
+| [Rolling out a policy](guides/cloud-rollout.md) | Compile, publish to a canary, watch `il_policy_swaps_total`, promote to 10% and 100%, and roll back without a redeploy |
 | [Releasing](guides/releasing.md) | Cut a signed PyPI/npm release from a tag with trusted publishing and provenance attestations |
 
 ### What the mesh adds
@@ -62,6 +66,8 @@ minutes), then read [how interlock works](concepts.md).
 | [Detector catalog](reference/detectors.md) | All 122 detectors: what they catch, which calls they see, how to build them |
 | [Command line](reference/cli.md) | `interlock doctor`, `report`, `hook`, `install-hook`, `policy`, `learn`, `trust`, `mcp`, `reviews`, `drift`, `mesh` (including `mesh dap task\|submit\|collect` and `serve --role dap-leader\|dap-helper`) |
 | [Sidecar](reference/sidecar.md) | The `interlock-sidecar` daemon for Node.js agents, and its wire protocol |
+| [Policy artifact](reference/cloud-artifact.md) | Every field of the signed artifact a host enforces, canonical JSON, the epoch, the C ABI, and the parity and budget contract |
+| [Cloud runbook](reference/cloud-runbook.md) | Key rotation, host freeze, chain fork, org deletion, restore and the version floor, manifest expiry, kill switch, evaluator rollback, and webhook triage |
 | [Node.js client](https://github.com/SourceShift/InterLock/blob/main/js/README.md) | The `interlock-guard` npm package |
 | [Native scope store](https://github.com/SourceShift/InterLock/blob/main/rust/README.md) | The optional Rust backend for very large scope trees |
 

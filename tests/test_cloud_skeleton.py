@@ -353,6 +353,7 @@ def test_available_lists_the_migrations_in_order():
         (2, "002_c3_reviews_grants.sql"),
         (3, "003_c4_receipts_audit.sql"),
         (4, "004_c5_policy_distribution.sql"),
+        (5, "005_c7_operations.sql"),
     ]
 
 
@@ -462,7 +463,8 @@ def test_schema_documents_the_rls_role_property():
 def test_pyproject_declares_the_cloud_extra_and_sql_package_data():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert (
-        'cloud = ["uvicorn>=0.30", "psycopg[binary]>=3.1", "cryptography>=42", "webauthn>=2.0"]'
+        'cloud = ["uvicorn>=0.30,<1", "psycopg[binary]>=3.1,<4", '
+        '"cryptography>=42,<47", "webauthn>=2.0,<3"]'
         in text
     )
     assert '"interlock.cloud"' in text

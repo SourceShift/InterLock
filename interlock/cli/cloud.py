@@ -71,11 +71,12 @@ it back once.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any, Dict, Optional
 
 #: The connector actions; each parses and dispatches below.
-ACTIONS = ("enroll", "run", "status", "leave", "policy", "keys")
+ACTIONS = ("enroll", "run", "status", "leave", "policy", "keys", "admin")
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -134,13 +135,38 @@ def add_arguments(parser) -> None:
     keys.add_argument("--home", metavar="DIR",
                       help="connector home (default: $IL_CLOUD_HOME)")
 
+    # C7 operator maintenance. This talks to the database directly, like the
+    # migration and retention jobs, so it works before (or without) a plane.
+    admin = sub.add_parser("admin", help="operator maintenance commands")
+    admin_sub = admin.add_subparsers(dest="admin_command", metavar="COMMAND")
+    floor = admin_sub.add_parser(
+        "version-floor",
+        help="show or change the manifest version floor")
+    floor.add_argument("--org", metavar="ORG",
+                       help="org id or slug (default: $IL_CLOUD_ORG)")
+    floor.add_argument("--dsn", metavar="DSN",
+                       help="Postgres DSN (default: $IL_CLOUD_DSN)")
+    floor.add_argument("--show", action="store_true",
+                       help="print the floor and the next publish version")
+    change = floor.add_mutually_exclusive_group()
+    change.add_argument("--bump-to", type=int, metavar="N",
+                        help="set the floor to N (never lowers it)")
+    change.add_argument("--reset-floor", nargs="?", const=0, type=int,
+                        metavar="N",
+                        help="deliberately lower the floor to N (default 0)")
+    floor.add_argument("--json", action="store_true", help="print JSON")
+
     # An unknown action is a command-line error (64), not argparse's default 2.
+    # The subparsers get the same handler so an argument error inside
+    # ``cloud admin version-floor`` also exits 64.
     def _usage_error(message: str) -> None:
         parser.print_usage(sys.stderr)
         sys.stderr.write("interlock cloud: {}\n".format(message))
         raise SystemExit(EXIT_USAGE)
 
     parser.error = _usage_error
+    admin.error = _usage_error
+    floor.error = _usage_error
 
 
 # -- helpers ------------------------------------------------------------
@@ -415,6 +441,42 @@ def _keys(args) -> int:
     return EXIT_OK
 
 
+def _admin(args) -> int:
+    """``interlock cloud admin version-floor``: read or move the floor."""
+    from ..cloud.admin import version_floor
+    from ..cloud.store import PostgresStore
+
+    command = getattr(args, "admin_command", None)
+    if command != "version-floor":
+        sys.stderr.write(
+            "interlock cloud admin: choose a command: version-floor\n")
+        return EXIT_USAGE
+    dsn = getattr(args, "dsn", None) or os.environ.get("IL_CLOUD_DSN", "")
+    if not dsn:
+        sys.stderr.write("interlock cloud: set IL_CLOUD_DSN or pass --dsn\n")
+        return EXIT_NOT_CONFIGURED
+    org_ref = getattr(args, "org", None) or os.environ.get("IL_CLOUD_ORG", "")
+    if not org_ref:
+        sys.stderr.write("interlock cloud: set IL_CLOUD_ORG or pass --org\n")
+        return EXIT_NOT_CONFIGURED
+    try:
+        store = PostgresStore(dsn)
+        org = store.org_by_id(org_ref) or store.org_by_slug(org_ref)
+    except Exception as exc:  # a missing driver or an unreachable database
+        return _fail("cannot open the store: {}".format(type(exc).__name__))
+    if org is None:
+        return _fail("no such org: {}".format(org_ref))
+    try:
+        if getattr(args, "reset_floor", None) is not None:
+            version_floor.reset(store, org.id, args.reset_floor)
+        elif getattr(args, "bump_to", None) is not None:
+            version_floor.bump_to(store, org.id, args.bump_to)
+    except version_floor.VersionFloorError as exc:
+        return _fail(str(exc))
+    _print(version_floor.restore_check(store, org.id))
+    return EXIT_OK
+
+
 def run(args) -> int:
     action = getattr(args, "cloud_command", None)
     if action not in ACTIONS:
@@ -431,6 +493,7 @@ def run(args) -> int:
         "status": _status,
         "leave": _leave,
         "keys": _keys,
+        "admin": _admin,
     }[action]
     return int(handler(args))
 

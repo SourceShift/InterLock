@@ -25,6 +25,7 @@ import time
 from functools import partial
 from typing import Any, Dict, Iterable, Optional
 
+from .. import webhooks as _webhooks
 from ..auth.stepup import StepUpError, StepUpService
 from ..enrollment import AGENT_SCOPES, generate_agent_key
 from ..http import ApiError, Request, Response, json_response, parse_json_body
@@ -324,6 +325,17 @@ async def revoke_key(app: Any, request: Request) -> Response:
     updated = app.store.revoke_agent_key(request.org.id, key.id, now=_now(app))
     _audit(app, request, "agent_key.revoked", target=key.id,
            detail={"host_id": key.host_id, "agent_key_id": key.id})
+    remaining = [item for item in app.store.list_agent_keys(
+        request.org.id, key.host_id) if item.revoked_at is None]
+    if not remaining:
+        # The host has no usable key left. That is the observable "revoked"
+        # event a subscriber can act on; the key-level row is already in the
+        # audit trail.
+        _webhooks.emit(app.store, request.org.id, "host.revoked", {
+            "host_id": key.host_id,
+            "agent_key_id": key.id,
+            "status": "revoked",
+        }, now=_now(app))
     return json_response(200, {
         "id": updated.id,
         "host_id": updated.host_id,

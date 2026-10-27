@@ -27,6 +27,8 @@ from functools import partial
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..auth.stepup import StepUpError, StepUpService
+from .. import metrics as _metrics
+from .. import webhooks as _webhooks
 from ..http import ApiError, Request, Response, json_response, parse_json_body
 from ...receipt import Receipt
 from ..receipts import (
@@ -205,6 +207,10 @@ def _fork(app: Any, request: Request, host: Any, result: Any = None) -> None:
            detail=detail)
     _audit(app, request, "alert.opened", actor="system:receipts",
            detail=dict(detail, kind="receipt_chain_fork"))
+    _webhooks.emit(app.store, host.org_id, "host.frozen", {
+        "host_id": host.id,
+        "status": "ingest_frozen",
+    }, now=_now(app))
     raise ApiError(409, "chain_fork",
                    "receipt batch does not continue the stored chain")
 
@@ -253,6 +259,15 @@ async def upload_receipts(app: Any, request: Request) -> Response:
                "verification": stored.get("verification"),
                "head": stored.get("head"),
            })
+    try:
+        accepted = int(stored.get("accepted") or 0)
+        if accepted:
+            _metrics.inc("il_receipts_ingested_total", accepted)
+        level = stored.get("verification")
+        if level in ("verified", "linkage_only", "receipts_unverified"):
+            _metrics.inc("il_receipt_verify_total", level=level)
+    except Exception:
+        pass
     return json_response(200, {
         "status": result.status,
         "accepted": int(stored.get("accepted") or 0),
@@ -513,6 +528,12 @@ async def run_retention(app: Any, request: Request) -> Response:
         "receipts": result.get("receipts"),
         "checkpoints": result.get("checkpoints"),
     })
+    if not dry_run:
+        _webhooks.emit(app.store, request.org.id, "retention.ran", {
+            "days": days,
+            "receipts_count": result.get("receipts"),
+            "checkpoints_count": result.get("checkpoints"),
+        }, now=_now(app))
     return json_response(200, {"retention": result})
 
 

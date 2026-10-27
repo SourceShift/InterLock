@@ -15,12 +15,17 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from . import db
+from . import metrics as _metrics
+from . import webhooks as _webhooks
+from .api.admin_routes import register as register_admin_routes
 from .api.auth_routes import register as register_auth_routes
 from .api.grant_routes import register as register_grant_routes
 from .api.host_routes import register as register_host_routes
+from .api.org_routes import register as register_org_routes
 from .api.policy_routes import register as register_policy_routes
 from .api.receipt_routes import register as register_receipt_routes
 from .api.review_routes import register as register_review_routes
+from .api.webhook_routes import register as register_webhook_routes
 from ..mesh.ed25519 import public_key
 from .ui import register as register_ui_routes
 from .crypto import parse_kek
@@ -149,7 +154,15 @@ class CloudApp:
         register_grant_routes(self)
         register_receipt_routes(self)
         register_policy_routes(self)
+        register_webhook_routes(self)
+        register_admin_routes(self)
+        register_org_routes(self)
         register_ui_routes(self)
+        # The metrics route exists only when the operator asked for it on the
+        # main app. Otherwise it is not registered and answers 404 even
+        # though rbac lists it as public (nothing to reach).
+        if self.config.metrics_on_app:
+            self.add_route("/metrics", "GET", self._metrics_route)
 
     # -- C3 signing and encryption material -----------------------------
     def approval_seed(self) -> bytes:
@@ -266,82 +279,118 @@ class CloudApp:
 
         path = scope.get("path") or "/"
         method = str(scope.get("method") or "GET").upper()
-        body_limit = (RECEIPT_BODY_BYTES
-                      if (method, path) in _RECEIPT_ROUTES else MAX_BODY_BYTES)
+        started = time.monotonic()
+        route, params, template = self._match(path)
+        metric_route = template or "unmatched"
+        outcome = 500
+        try:
+            body_limit = (RECEIPT_BODY_BYTES
+                          if (method, path) in _RECEIPT_ROUTES
+                          else MAX_BODY_BYTES)
 
-        declared = header_map_local.get("content-length")
-        if declared is not None:
-            try:
-                size: Optional[int] = int(declared)
-            except ValueError:
-                size = None
-            if size is not None and size > body_limit:
+            declared = header_map_local.get("content-length")
+            if declared is not None:
+                try:
+                    size: Optional[int] = int(declared)
+                except ValueError:
+                    size = None
+                if size is not None and size > body_limit:
+                    outcome = 413
+                    await self._send(send, error_response(
+                        413, "payload_too_large",
+                        "request body exceeds {} bytes".format(body_limit),
+                    ), request_id)
+                    return
+
+            if route is None:
+                outcome = 404
                 await self._send(send, error_response(
-                    413, "payload_too_large",
-                    "request body exceeds {} bytes".format(body_limit),
-                ), request_id)
+                    404, "not_found", "no such route"), request_id)
+                return
+            handler = route.get(method)
+            if handler is None:
+                outcome = 405
+                await self._send(send, error_response(
+                    405, "method_not_allowed", "method not allowed",
+                    [("allow", ", ".join(sorted(route)))]), request_id)
                 return
 
-        route, params, _template = self._match(path)
-        if route is None:
-            await self._send(send, error_response(
-                404, "not_found", "no such route"), request_id)
-            return
-        handler = route.get(method)
-        if handler is None:
-            await self._send(send, error_response(
-                405, "method_not_allowed", "method not allowed",
-                [("allow", ", ".join(sorted(route)))]), request_id)
-            return
+            try:
+                body = await read_body(receive, body_limit)
+            except PayloadTooLarge as exc:
+                outcome = 413
+                await self._send(send, error_response(
+                    413, "payload_too_large", str(exc)), request_id)
+                return
 
+            client = scope.get("client") or ("", 0)
+            try:
+                query = parse_query(scope.get("query_string") or b"")
+            except ApiError as exc:
+                outcome = exc.status
+                await self._send(send, error_response(
+                    exc.status, exc.code, exc.message), request_id)
+                return
+            request = Request(
+                method=method,
+                path=path,
+                params=params,
+                headers=header_map_local,
+                query=query,
+                body=body,
+                request_id=request_id,
+                cookies=parse_cookies(header_map_local.get("cookie")),
+                client_ip=str(client[0]) if client and client[0] else "",
+            )
+
+            try:
+                await self._authenticate(request)
+                result = await handler(request)
+            except ApiError as exc:
+                result = error_response(exc.status, exc.code, exc.message)
+            except (AgentAuthError, AgentRevoked) as exc:
+                result = error_response(exc.status, exc.code, str(exc))
+            except Unauthenticated as exc:
+                result = error_response(401, exc.code, str(exc))
+            except rbac.Forbidden as exc:
+                result = error_response(403, exc.code, str(exc))
+            except StepUpError as exc:
+                result = error_response(403, exc.code, exc.message)
+            except CrossOrgAccess:
+                result = error_response(404, "not_found", "no such resource")
+            except Exception as exc:  # pragma: no cover - defensive
+                # Log the class only: an exception message can carry tenant data.
+                log_event("error", "unhandled_exception", request_id=request_id,
+                          error=type(exc).__name__)
+                result = error_response(500, "internal_error", "internal error")
+
+            outcome = (result.status if isinstance(result, Response)
+                       else int(result[0]))
+            await self._send(send, result, request_id)
+        finally:
+            self._record_request(metric_route, method, outcome,
+                                 time.monotonic() - started)
+
+    def _record_request(self, route: str, method: str, status: int,
+                        elapsed: float) -> None:
+        """Expose one request in the closed metric set; never raise.
+
+        Metrics are best-effort by design: an exposition error must not turn
+        a successful request into a 500, so this is swallowed whole.
+        """
         try:
-            body = await read_body(receive, body_limit)
-        except PayloadTooLarge as exc:
-            await self._send(send, error_response(
-                413, "payload_too_large", str(exc)), request_id)
-            return
+            _metrics.inc("il_http_requests_total", route=route, method=method,
+                         status=str(int(status)))
+            _metrics.observe("il_http_duration_seconds", max(0.0, elapsed),
+                             route=route, method=method)
+        except Exception:
+            pass
 
-        client = scope.get("client") or ("", 0)
-        try:
-            query = parse_query(scope.get("query_string") or b"")
-        except ApiError as exc:
-            await self._send(send, error_response(
-                exc.status, exc.code, exc.message), request_id)
-            return
-        request = Request(
-            method=method,
-            path=path,
-            params=params,
-            headers=header_map_local,
-            query=query,
-            body=body,
-            request_id=request_id,
-            cookies=parse_cookies(header_map_local.get("cookie")),
-            client_ip=str(client[0]) if client and client[0] else "",
-        )
-
-        try:
-            await self._authenticate(request)
-            result = await handler(request)
-        except ApiError as exc:
-            result = error_response(exc.status, exc.code, exc.message)
-        except (AgentAuthError, AgentRevoked) as exc:
-            result = error_response(exc.status, exc.code, str(exc))
-        except Unauthenticated as exc:
-            result = error_response(401, exc.code, str(exc))
-        except rbac.Forbidden as exc:
-            result = error_response(403, exc.code, str(exc))
-        except StepUpError as exc:
-            result = error_response(403, exc.code, exc.message)
-        except CrossOrgAccess:
-            result = error_response(404, "not_found", "no such resource")
-        except Exception as exc:  # pragma: no cover - defensive
-            # Log the class only: an exception message can carry tenant data.
-            log_event("error", "unhandled_exception", request_id=request_id,
-                      error=type(exc).__name__)
-            result = error_response(500, "internal_error", "internal error")
-
-        await self._send(send, result, request_id)
+    async def _metrics_route(self, request: Request) -> Response:
+        """Serve the exposition on the main app (IL_CLOUD_METRICS_ON_APP=1)."""
+        return Response(
+            status=200, body=_metrics.render_metrics().encode("utf-8"),
+            content_type="text/plain; version=0.0.4; charset=utf-8")
 
     async def _authenticate(self, request: Request) -> None:
         """Authenticate, authorize the route, then enforce CSRF (FR-050).
@@ -367,6 +416,10 @@ class CloudApp:
             org = self.store.org_by_id(context.org_id)
             if org is None:
                 raise Unauthenticated("authentication required")
+            if getattr(org, "deleted_at", None) is not None:
+                # A tombstoned org no longer exists for reads; its keys are
+                # revoked above, so this is the belt to that braces.
+                raise ApiError(404, "not_found", "no such organization")
             request.key = context
             request.org = org
             return
@@ -380,6 +433,8 @@ class CloudApp:
         org = self.store.org_by_id(session.org_id)
         if org is None:
             raise Unauthenticated("authentication required")
+        if getattr(org, "deleted_at", None) is not None:
+            raise ApiError(404, "not_found", "no such organization")
         request.session = session
         request.user = user
         request.org = org
@@ -421,12 +476,25 @@ class CloudApp:
 
     async def _lifespan_session(self, receive: Callable[[], Any],
                                 send: Callable[[Dict[str, Any]], Any]) -> None:
+        worker: Optional[asyncio.Task] = None
         while True:
             message = await receive()
             kind = message.get("type")
             if kind == "lifespan.startup":
+                # The outbox is drained after the mutation commits, never on
+                # the request path. One task per process is enough for v1;
+                # the store's due query lets several planes share a database.
+                if worker is None or worker.done():
+                    worker = asyncio.create_task(_webhooks.worker(self))
                 await send({"type": "lifespan.startup.complete"})
             elif kind == "lifespan.shutdown":
+                if worker is not None:
+                    worker.cancel()
+                    try:
+                        await worker
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                    worker = None
                 await send({"type": "lifespan.shutdown.complete"})
                 return
 

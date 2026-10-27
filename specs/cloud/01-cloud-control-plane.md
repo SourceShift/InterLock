@@ -1009,82 +1009,82 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
 
 ### M0 — Skeleton
 
-- [ ] Add `interlock/cloud/__init__.py`, `app.py`, `config.py`, `db.py`,
+- [x] Add `interlock/cloud/__init__.py`, `app.py`, `config.py`, `db.py`,
       `migrate.py`; keep the package importable without optional deps.
-- [ ] Add `interlock/cloud/sql/001_init.sql` with every tenant table, indexes
+- [x] Add `interlock/cloud/sql/001_init.sql` with every tenant table, indexes
       and `ENABLE ROW LEVEL SECURITY` plus `CREATE POLICY` for each.
-- [ ] Add `[project.optional-dependencies] cloud = [...]` (ASGI server,
+- [x] Add `[project.optional-dependencies] cloud = [...]` (ASGI server,
       Postgres driver, OIDC client, WebAuthn, TOTP, crypto) and a `cloud`
       console script entry point.
-- [ ] Add `interlock cloud` subcommands to `interlock/cli/` with
+- [x] Add `interlock cloud` subcommands to `interlock/cli/` with
       `enroll|run|status|leave|policy|keys` stubs and argument tests.
-- [ ] Add `/healthz`, `/readyz`, structured logging and request ids.
-- [ ] Add `deploy/cloud/docker-compose.yml` with Postgres and a dev secret.
+- [x] Add `/healthz`, `/readyz`, structured logging and request ids.
+- [x] Add `deploy/cloud/docker-compose.yml` with Postgres and a dev secret.
 
 ### M1 — Identity and tenancy
 
-- [ ] Implement OIDC login/callback/logout with PKCE, state, nonce and claim
+- [x] Implement OIDC login/callback/logout with PKCE, state, nonce and claim
       validation in `interlock/cloud/auth/oidc.py`.
-- [ ] Implement server-side sessions, CSRF, idle/absolute expiry and
+- [x] Implement server-side sessions, CSRF, idle/absolute expiry and
       `__Host-` cookie in `interlock/cloud/auth/sessions.py`.
-- [ ] Implement WebAuthn registration/assertion and TOTP fallback with
+- [x] Implement WebAuthn registration/assertion and TOTP fallback with
       step-up freshness in `interlock/cloud/auth/stepup.py`.
-- [ ] Implement the role permission table and a single `authorize()` seam used
+- [x] Implement the role permission table and a single `authorize()` seam used
       by every route.
-- [ ] Implement org/user admin routes and screens; revocation of sessions on
+- [x] Implement org/user admin routes and screens; revocation of sessions on
       disable.
-- [ ] Add the cross-org matrix test that walks every route as a foreign user
+- [x] Add the cross-org matrix test that walks every route as a foreign user
       and asserts `404`.
-- [ ] Enable and test RLS with a non-owner app role.
+- [x] Enable and test RLS with a non-owner app role.
 
 ### M2 — Enrollment and connector
 
-- [ ] Implement enrollment tokens, host registration and pinned public keys.
-- [ ] Implement agent-key issuance, rotation (24 h overlap), revocation and
+- [x] Implement enrollment tokens, host registration and pinned public keys.
+- [x] Implement agent-key issuance, rotation (24 h overlap), revocation and
       hashed storage.
-- [ ] Implement the connector: config file, TLS, auth header, backoff, spool,
+- [x] Implement the connector: config file, TLS, auth header, backoff, spool,
       `--once`, signal handling and `status`.
-- [ ] Implement the long-poll transport with cursor persistence and revocation
+- [x] Implement the long-poll transport with cursor persistence and revocation
       checks on every wake-up.
 - [ ] Add launchd/systemd unit examples and a container image for the
       connector.
-- [ ] Tests: token reuse, revoked key, connector restart, spool cap.
+- [x] Tests: token reuse, revoked key, connector restart, spool cap.
 
 ### M3 — Reviews and grants
 
-- [ ] Add the queue migration for `cloud_grants` and
+- [x] Add the queue migration for `cloud_grants` and
       `ReviewQueue.apply_grant(grant, verifier=...)` that re-checks binding,
       four-eyes and expiry, then settles the row in one transaction.
-- [ ] Wire the connector to `ReviewQueue(on_file=...)` plus a reconciliation
+- [x] Wire the connector to `ReviewQueue(on_file=...)` plus a reconciliation
       scan; implement masking with org deny patterns before upload.
-- [ ] Implement review upload/list/detail with field-level encryption and
+- [x] Implement review upload/list/detail with field-level encryption and
       disclosure audit.
-- [ ] Implement decision routes with step-up, four-eyes, expiry and
+- [x] Implement decision routes with step-up, four-eyes, expiry and
       "approve anyway".
-- [ ] Implement the grant signer, per-host sequence and `prev` chain; store
+- [x] Implement the grant signer, per-host sequence and `prev` chain; store
       the signed grant and delivery state.
-- [ ] Implement connector grant verification (signature, seq, prev, binding,
+- [x] Implement connector grant verification (signature, seq, prev, binding,
       expiry, nonce) and redelivery acknowledgement.
-- [ ] Stamp `approval="cloud:<grant_id>"` on the receipt of the call released
+- [x] Stamp `approval="cloud:<grant_id>"` on the receipt of the call released
       by a grant; add a test that it survives chain verification.
 - [ ] Build the review queue and detail screens (mobile-first) and the
       desktop-alert parity hook.
-- [ ] Tests: replay, wrong key, offline host, local/remote race, TTL release.
+- [x] Tests: replay, wrong key, offline host, local/remote race, TTL release.
 
 ### M4 — Receipts and audit
 
-- [ ] Implement the receipt tailer with a durable byte offset and batch
+- [x] Implement the receipt tailer with a durable byte offset and batch
       framing for complete lines.
-- [ ] Implement receipt and checkpoint ingest, gzip support, idempotency by
+- [x] Implement receipt and checkpoint ingest, gzip support, idempotency by
       mac, chain-head tracking and fork detection.
-- [ ] Reuse `interlock.receipt.verify_chain` with
+- [x] Reuse `interlock.receipt.verify_chain` with
       `ed25519_verifier(public)` for verified hosts; add the linkage-only
       path and verification-level display.
-- [ ] Implement audit search, filters, JSONL export and pre-export
+- [x] Implement audit search, filters, JSONL export and pre-export
       verification.
-- [ ] Implement the retention job, its audit record and an operator override
+- [x] Implement the retention job, its audit record and an operator override
       with a reason.
-- [ ] Tests: edited receipt, reordered receipt, duplicate batch, fork,
+- [x] Tests: edited receipt, reordered receipt, duplicate batch, fork,
       checkpoint staleness.
 
 ### M5 — Policy compilation and distribution
@@ -1117,7 +1117,7 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
       or invalid; keep the legacy source-policy loader for non-cloud installs.
 - [ ] Extend `interlock cloud status` with version, epoch, sha256, last swap
       and alarm state.
-- [ ] Tests: determinism, rollback, restored-plane refusal, hash mismatch,
+- [x] Tests: determinism, rollback, restored-plane refusal, hash mismatch,
       expiry grace, in-flight swap, forged hint, kill switch, bad signature,
       truncated write.
 
@@ -1149,16 +1149,36 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
 
 ### M7 — Operations and docs
 
-- [ ] Implement webhook endpoints, HMAC signing, retry/backoff, no-redirect
+- [x] Implement webhook endpoints, HMAC signing, retry/backoff, no-redirect
       policy and delivery log.
-- [ ] Implement admin audit log and its UI.
-- [ ] Add Prometheus metrics without tenant labels or preview text.
-- [ ] Write `docs/guides/cloud.md` (operator + reviewer), add a cloud section
+- [x] Implement admin audit log and its UI.
+- [x] Add Prometheus metrics without tenant labels or preview text.
+- [x] Write `docs/guides/cloud.md` (operator + reviewer), add a cloud section
       to `docs/security-model.md` and a threat-model page.
-- [ ] Add the runbook: key rotation, host freeze, chain fork, org deletion,
+- [x] Add the runbook: key rotation, host freeze, chain fork, org deletion,
       plane restore (publish above every host version), manifest expiry during
       an incident, kill switch, native backend rollback to Python.
-- [ ] Document the artifact format, the evaluator budget and the per-class
+- [x] Document the artifact format, the evaluator budget and the per-class
       failure policy in `docs/` (public) with a worked rollout example.
-- [ ] Add SBOM/pinned-dependency checks to CI for the cloud extra.
-- [ ] Add the end-to-end test `tests/test_cloud_e2e.py` used by `Verify`.
+- [x] Add SBOM/pinned-dependency checks to CI for the cloud extra.
+- [x] Add the end-to-end test `tests/test_cloud_e2e.py` used by `Verify`.
+
+#### Known deviations at M7
+
+Recorded rather than ticked away — each is a deliberate, bounded gap:
+
+- **Webhook outbox atomicity.** The row is written immediately after the
+  mutating call commits, not inside that call's transaction, because every
+  store mutation opens its own transaction and joining them would mean
+  threading a cursor through nine call sites. A crash in the window between
+  commit and fanout loses the notification; the decision itself is durable and
+  the request never fails on a subscriber. Delivery retrying is bounded at 24
+  hours (FR-060).
+- **Bounded sensor ring and disk spool (M6, still `[ ]`).** No implementation:
+  telemetry upload off the verdict path with security-before-observability drop
+  order is the one M6 item C6 left open on purpose.
+- **End-to-end coverage.** `tests/test_cloud_e2e.py` skips without
+  `IL_CLOUD_E2E=1` and a real `IL_CLOUD_DSN`, so a green CI run proves the unit
+  contracts, not the flow. Run it against the compose `ops` profile:
+  `IL_CLOUD_E2E=1 IL_CLOUD_DSN=postgresql://... python3 -m pytest -q
+  tests/test_cloud_e2e.py`.
