@@ -29,10 +29,14 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Pin the runner image: `ubuntu-latest` moved to 26.04 on 2026-10-28, where
+# bubblewrap reports SIGXCPU as exit 152 instead of -24, the egress-grant
+# controls exit 1, and setup-python has no 3.9 build. Move deliberately once
+# the brace tests handle that image; do not float the image under the suite.
 jobs:
   python:
     name: python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       # One failing interpreter must not cancel the others: a 3.9-only
       # regression is a different bug from a 3.13-only one.
@@ -84,7 +88,7 @@ jobs:
 
   rust:
     name: rust accelerator
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -164,7 +168,7 @@ jobs:
 
   node:
     name: node ${{ matrix.node-version }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -207,7 +211,7 @@ jobs:
 
   web:
     name: web console
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The console ships as a prebuilt bundle inside the Python package
     # (`web/dist/` is built at release time), so a type error or a failing
     # component test reaches users exactly like a Python bug does. Typecheck,
@@ -238,7 +242,7 @@ jobs:
 
   cloud:
     name: cloud control plane
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The cloud extras (psycopg, cryptography, webauthn) are optional by
     # contract, so they get their own job: the `python` job above proves the
     # dependency-free import path still works, and this one proves the Postgres
@@ -337,7 +341,7 @@ jobs:
 
   cloud-supply-chain:
     name: cloud supply chain
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The control plane is the one deployment where a compromised dependency
     # runs with tenant data. This job audits the cloud extra, records its
     # resolved dependency graph, and asserts the extra stays range-pinned so
@@ -399,7 +403,7 @@ jobs:
 
   lint:
     name: lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -429,7 +433,7 @@ jobs:
     # explicit result test is what makes this job meaningful.
     if: always()
     needs: [python, rust, node, web, cloud, cloud-supply-chain, lint]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check every job succeeded
         run: |
