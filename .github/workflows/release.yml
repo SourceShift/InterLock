@@ -29,7 +29,11 @@ defaults:
 jobs:
   verify:
     name: verify the tag against the tree
-    runs-on: ubuntu-latest
+    # Pinned for the same reason CI is: `ubuntu-latest` moved to 26.04 on
+    # 2026-10-28, where the brace bubblewrap tests report SIGXCPU as exit 152
+    # and the egress-grant controls exit 1. This job runs the full suite, so a
+    # floating image would turn every tag into a failed release.
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
