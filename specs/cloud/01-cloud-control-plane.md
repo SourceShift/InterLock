@@ -1142,7 +1142,7 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
       `coverage_gap` receipt.
 - [x] Stamp `epoch` and `artifact_sha256` on every receipt; keep
       `verify_chain` compatibility.
-- [ ] Implement the bounded sensor ring and disk spool with
+- [x] Implement the bounded sensor ring and disk spool with
       `(host, sensor, sequence)` keys, batch upload off the verdict path, and
       security-before-observability drop order; test that a full spool leaves
       verdict latency unchanged.
@@ -1174,9 +1174,6 @@ Recorded rather than ticked away — each is a deliberate, bounded gap:
   commit and fanout loses the notification; the decision itself is durable and
   the request never fails on a subscriber. Delivery retrying is bounded at 24
   hours (FR-060).
-- **Bounded sensor ring and disk spool (M6, still `[ ]`).** No implementation:
-  telemetry upload off the verdict path with security-before-observability drop
-  order is the one M6 item C6 left open on purpose.
 - **End-to-end coverage.** `tests/test_cloud_e2e.py` skips without
   `IL_CLOUD_E2E=1` and a real `IL_CLOUD_DSN`, so a green CI run proves the unit
   contracts, not the flow. Run it against the compose `ops` profile:

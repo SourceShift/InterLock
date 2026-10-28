@@ -14,6 +14,7 @@ import threading
 import pytest
 
 from interlock.cloud.connector.config import CloudHome, HomeError
+from interlock.sensor import DEFAULT_RING_BYTES
 from interlock.cloud.connector.runner import (
     MAX_BACKOFF,
     MIN_BACKOFF,
@@ -434,7 +435,7 @@ def test_status_has_exactly_the_documented_keys_and_no_agent_key(tmp_path):
 
     assert set(status) == {
         "connected", "last_sync", "url", "org_id", "host_id",
-        "spool_batches", "spool_bytes", "dropped_batches", "queue_lag",
+        "spool_batches", "spool_bytes", "dropped_batches", "ring", "queue_lag",
         "cursor", "grant_seq", "last_ack_seq", "grants_applied",
         "grants_refused", "grants_acked", "last_grant_applied",
         "last_grant_refusal", "revoked", "last_error",
@@ -445,6 +446,20 @@ def test_status_has_exactly_the_documented_keys_and_no_agent_key(tmp_path):
     assert status["url"] == "https://cloud.example"
     assert status["connected"] is False
     assert status["revoked"] is False
+
+
+def test_status_reports_ring_counters_and_gaps_only(tmp_path):
+    connector, _home, _transport, _raw, _public = _connector(tmp_path)
+
+    ring = connector.status()["ring"]
+
+    assert ring == {
+        "capacity_bytes": DEFAULT_RING_BYTES,
+        "bytes": 0,
+        "dropped_entries": 0,
+        "dropped_by_kind": {"security": 0, "observability": 0},
+        "gaps": [],
+    }
 
 
 def test_status_is_connected_after_a_successful_cycle(tmp_path):

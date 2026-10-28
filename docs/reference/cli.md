@@ -525,9 +525,9 @@ never the agent key. `run` reconciles reviews from the local queue, uploads
 the masked review batch, long-polls for grants, verifies and applies them,
 acknowledges, heartbeats and ships receipts; `--once` does one cycle and
 exits non-zero when the sync failed. `status` reports connectivity, spool
-depth, queue lag, revocation and the grant counters (`grants_applied`,
-`grants_refused`, `grants_acked`, `last_grant_refusal`) without printing
-credentials. `leave` removes `cloud.json` and the seed and prints what it
+depth, sensor-ring counters and gap markers, queue lag, revocation and the
+grant counters (`grants_applied`, `grants_refused`, `grants_acked`,
+`last_grant_refusal`) without printing credentials. `leave` removes `cloud.json` and the seed and prints what it
 left on disk.
 
 The uploaded review body is allow-listed on both sides: the masked preview,

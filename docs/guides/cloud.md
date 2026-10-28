@@ -83,9 +83,11 @@ a different key is refused.
 A call that the local policy escalates is held on the host, spooled, and
 uploaded. From there:
 
-1. **The host spools, then uploads.** The record is written to the spool
-   first, so a plane outage loses nothing and the verdict path is not
-   delayed by a network round trip.
+1. **The host spools, then uploads.** The record passes through a bounded
+   in-memory ring into the disk spool first, so a plane outage loses nothing,
+   memory stays bounded, and the verdict path is not delayed by a network
+   round trip. When either buffer is full, observability data is dropped
+   before security events and the drop is counted.
 2. **The plane stores it encrypted.** The review lands in the queue with its
    preview encrypted at rest. The queue is visible to the reviewers the role
    table allows.
@@ -111,7 +113,7 @@ Four surfaces, for four different questions.
 
 | Question | Where to look |
 |---|---|
-| What is this host doing? | `interlock cloud status` on the host - connector state, spool depth, installed manifest version and epoch |
+| What is this host doing? | `interlock cloud status` on the host - connector state, spool depth, ring drops and gap markers, installed manifest version and epoch |
 | What is the fleet doing? | `/admin/hosts` in the plane's console - every host's state, last sync and active key count |
 | What has been decided? | `/admin/audit` in the plane's console - actor, action, target, time, and before/after digests |
 | Is the plane healthy? | `/healthz` and `/readyz` on the plane, and the metrics endpoint |

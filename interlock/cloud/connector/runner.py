@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 from ... import __version__ as CONNECTOR_VERSION
+from ...sensor import DEFAULT_RING_BYTES, Ring
 from ..identity import generate_host_seed, key_id, public_key_hex
 from .config import CloudHome, redact
 from .grants import (
@@ -42,7 +43,7 @@ from .grants import (
 )
 from .receipts import ReceiptBatch, ReceiptTailer, TailerError
 from .reviews import build_record
-from .spool import Spool
+from .spool import KIND_PRIORITY, Spool
 from .transport import Transport, TransportError
 
 DEFAULT_POLL_AFTER = 300
@@ -126,6 +127,7 @@ class Connector:
         self._config: Optional[Dict[str, Any]] = None
         self._state: Optional[Dict[str, Any]] = None
         self._spool: Optional[Spool] = None
+        self._ring: Optional[Ring] = None
 
     @property
     def policy_distributor(self) -> Any:
@@ -159,6 +161,24 @@ class Connector:
             directory = self._resolve(str(config.get("spool_dir") or "spool"))
             self._spool = Spool(directory, clock=self.clock)
         return self._spool
+
+    @property
+    def ring(self) -> Ring:
+        """The bounded sensor hand-off buffer feeding :attr:`spool`.
+
+        The ring borrows the spool's durable sequence counter, so a sequence
+        reserved here is the same one the framed batch carries and a restart
+        cannot regress or reuse it.
+        """
+        if self._ring is None:
+            self._ring = Ring(
+                self._resolve("sensor-ring"),
+                capacity_bytes=DEFAULT_RING_BYTES,
+                clock=self.clock,
+                sequence_source=self.spool.next_sequence,
+                sequence_release=self.spool.release_sequence,
+            )
+        return self._ring
 
     @property
     def state_path(self) -> Path:
@@ -403,11 +423,16 @@ class Connector:
                 agent_key=config.get("agent_key"),
                 share_usernames=bool(config.get("share_usernames")),
             )
-            self.spool.add(
+            self.ring.put(
                 "security", self._json_body(record),
                 host=str(config.get("host_id") or "unassigned"),
                 sensor="reviews",
             )
+            # Hand off to the disk spool on the same call, so the existing
+            # queue contract (a batch is visible once on_file returns) is
+            # unchanged. A failed drain leaves the bounded ring entry for the
+            # connector loop; it never reaches the queue's writer.
+            self.ring.drain_into(self.spool)
             return True
         except Exception:
             # A full disk or a bad review must not break the queue's write.
@@ -465,11 +490,24 @@ class Connector:
         state["receipts_line"] = int(tailer.line)
         if not batch:
             return 0
-        spooled = self.spool.add(
+        entry = self.ring.put(
             "observability", batch.body(tailer.host_id),
             host=str(config.get("host_id") or "unassigned"),
             sensor="receipts",
         )
+        drained = self.ring.drain_into(self.spool)
+        spooled = None
+        if entry is not None:
+            spooled = next(
+                (candidate for candidate in drained
+                 if candidate.sensor == "receipts"
+                 and candidate.seq == entry.sequence),
+                None,
+            )
+        if spooled is None or not spooled.path.is_file():
+            state["last_receipt_error"] = (
+                "receipt batch dropped: sensor ring or spool is full")
+            return 0
         pending = dict(state.get("pending_receipt_batches") or {})
         pending[spooled.name] = {
             "end_offset": int(batch.end_offset),
@@ -545,6 +583,13 @@ class Connector:
         for review in self._pending_reviews():
             if self.on_file(review):
                 reviews += 1
+
+        # 1a. Retry ring entries a previous drain could not spool. Entries
+        #     stay bounded and in sequence order while the disk recovers.
+        try:
+            self.ring.drain_into(self.spool)
+        except Exception as exc:
+            errors.append(redact(str(exc)))
 
         # 1b. Tail the host's receipt log into the spool from the durable
         #     offset. The offset moves only after step 2 acknowledges it.
@@ -758,12 +803,20 @@ class Connector:
         """The keys FR-014 names; never the agent key."""
         config = self.config or {}
         state = self._load_state()
+        ring = {
+            "capacity_bytes": DEFAULT_RING_BYTES,
+            "bytes": 0,
+            "dropped_entries": 0,
+            "dropped_by_kind": {kind: 0 for kind in KIND_PRIORITY},
+            "gaps": [],
+        }
         if config:
             try:
                 spool = self.spool
                 spool_batches = spool.count
                 spool_bytes = spool.bytes
                 dropped_batches = spool.dropped_batches
+                ring = self.ring.status()
             except Exception:
                 spool_batches = 0
                 spool_bytes = 0
@@ -807,6 +860,7 @@ class Connector:
             "spool_batches": spool_batches,
             "spool_bytes": spool_bytes,
             "dropped_batches": dropped_batches,
+            "ring": ring,
             "queue_lag": self.queue_lag(),
             "cursor": state.get("cursor", 0),
             "grant_seq": state.get("grant_last_seq", 0),
@@ -858,6 +912,7 @@ class Connector:
             self._config = None
             self._state = None
             self._spool = None
+            self._ring = None
         return {
             "removed": removed,
             "config": str(self.home.config_path),

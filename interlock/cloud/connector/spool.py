@@ -110,6 +110,10 @@ class Spool:
         self.state_path = self.directory / _STATE_NAME
         self._lock = threading.RLock()
         self._seqs: Dict[str, Dict[str, int]] = {}
+        #: Sequences handed out by :meth:`next_sequence` but not yet framed as
+        #: a batch. The sensor ring reserves a sequence before it holds the
+        #: entry, so the drain must accept that exact value once.
+        self._reserved: set = set()
         self._batches: Dict[str, Dict[str, Any]] = {}
         self.dropped_batches = 0
         self.dropped_by_kind: Dict[str, int] = {kind: 0 for kind in KIND_PRIORITY}
@@ -172,6 +176,33 @@ class Spool:
         value = int(sensors.get(sensor, 0)) + 1
         sensors[sensor] = value
         return value
+
+    def next_sequence(self, host: str, sensor: str) -> int:
+        """Reserve the next durable sequence for ``(host, sensor)``.
+
+        The counter is persisted (and fsynced) **before** the caller shows the
+        entry anywhere, so a restart cannot regress or reuse it. The reserved
+        value must be handed to :meth:`add` with ``seq=``; until then the spool
+        accepts it even though the counter has already advanced.
+        """
+        safe_host = _sanitize(host)
+        safe_sensor = _sanitize(sensor)
+        with self._lock:
+            seq = self._next_seq(safe_host, safe_sensor)
+            self._reserved.add((safe_host, safe_sensor, seq))
+            try:
+                self._save_state()
+            except Exception:
+                self._seqs[safe_host][safe_sensor] = seq - 1
+                self._reserved.discard((safe_host, safe_sensor, seq))
+                raise
+            return seq
+
+    def release_sequence(self, host: str, sensor: str, seq: int) -> None:
+        """Forget a reservation whose entry will never become a batch."""
+        key = (_sanitize(host), _sanitize(sensor), int(seq))
+        with self._lock:
+            self._reserved.discard(key)
 
     def _parse_name(self, name: str) -> Optional[Dict[str, Any]]:
         match = _FILENAME.match(name)
@@ -266,8 +297,14 @@ class Spool:
 
     # -- mutation -------------------------------------------------------
     def add(self, kind: str, data: bytes, *, host: str,
-            sensor: str) -> Batch:
-        """Queue one batch, then enforce the cap (FR-011)."""
+            sensor: str, seq: Optional[int] = None) -> Batch:
+        """Queue one batch, then enforce the cap (FR-011).
+
+        ``seq`` is normally allocated here. A producer that must know the
+        sequence before the payload is complete (the sensor ring) calls
+        :meth:`next_sequence` first and passes that exact value; an already
+        used sequence is refused rather than reused.
+        """
         if kind not in KINDS:
             raise SpoolError("unknown batch kind: {!r}".format(kind))
         if not isinstance(data, (bytes, bytearray)):
@@ -276,10 +313,25 @@ class Spool:
         safe_host = _sanitize(host)
         safe_sensor = _sanitize(sensor)
         with self._lock:
-            seq = self._next_seq(safe_host, safe_sensor)
+            reserved = None
+            if seq is None:
+                seq = self._next_seq(safe_host, safe_sensor)
+            else:
+                if isinstance(seq, bool) or not isinstance(seq, int) or seq <= 0:
+                    raise SpoolError("seq must be a positive integer")
+                reserved = (safe_host, safe_sensor, seq)
+                current = int(self._seqs.get(safe_host, {}).get(safe_sensor, 0))
+                if seq <= current and reserved not in self._reserved:
+                    raise SpoolError(
+                        "sequence {} was already used for {}/{}".format(
+                            seq, safe_host, safe_sensor))
             name = "{}-{:020d}-{}{}{}.json.gz".format(
                 kind, seq, safe_host, _FIELD_SEP, safe_sensor)
             path = self.directory / name
+            if path.exists():
+                raise SpoolError("batch already exists: {}".format(name))
+            if seq > int(self._seqs.setdefault(safe_host, {}).get(safe_sensor, 0)):
+                self._seqs[safe_host][safe_sensor] = seq
             body = gzip.compress(payload, compresslevel=6)
             _atomic_bytes(path, body)
             created = float(self.clock())
@@ -287,6 +339,8 @@ class Spool:
                 "kind": kind, "seq": seq, "host": host, "sensor": sensor,
                 "size": len(payload), "created": created,
             }
+            if reserved is not None:
+                self._reserved.discard(reserved)
             self._save_state()
             # Capture the record before eviction: an over-cap batch is still
             # returned to its caller so the loss can be observed and counted.
