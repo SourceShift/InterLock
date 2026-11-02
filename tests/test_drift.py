@@ -1,11 +1,13 @@
 """`interlock drift` and interlock.drift (R30)."""
 import hashlib
 import json
+import re
 import sys
+from pathlib import Path
 
 import pytest
 
-from interlock.cli import main
+from interlock.cli import COMMANDS, main
 from interlock.drift import (ADDITION, CHANGE, REMOVAL, build_corpus, diff,
                              dumps, load_corpus, parse_live, write_corpus)
 
@@ -245,3 +247,25 @@ def test_cli_leaves_the_corpus_byte_identical(tmp_path):
           "--live", _live("print('read\\nwrite\\nexec')")])
     main(["drift", "--corpus", str(corpus), "--live", _live("print('read\\nwrite')")])
     assert _digest(corpus) == before
+
+
+# --- the recorded corpus -------------------------------------------------
+
+def test_the_drift_workflow_corpus_matches_the_cli_command_table():
+    """The workflow's corpus is a record, and nothing else re-checks it.
+
+    Every new subcommand is a silent red on the weekly Drift job unless the
+    recorded listing is updated in the same change - which is how `anchor`,
+    `attach`, `cloud`, `learn` and `mesh` each turned it red. Comparing the
+    two here makes the omission fail locally, where re-recording is free,
+    instead of on a scheduled run against origin.
+    """
+    root = Path(__file__).resolve().parent.parent
+    workflow = (root / ".github" / "workflows" / "drift.yml").read_text(
+        encoding="utf-8")
+    block = re.search(r"<<'JSON'\n(.*?)\n\s*JSON\n", workflow, re.DOTALL)
+    assert block is not None, "drift.yml no longer carries an inline corpus"
+    surfaces = json.loads(block.group(1))["surfaces"]
+    recorded = next(surface for surface in surfaces
+                    if surface["name"] == "interlock-cli")
+    assert recorded["tools"] == [name for name, _help, _module in COMMANDS]

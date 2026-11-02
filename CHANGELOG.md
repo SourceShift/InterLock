@@ -11,6 +11,12 @@ breaking changes land.
 
 ### Fixed
 
+- The weekly Drift job is green again: its recorded `interlock-cli` surface
+  named nine commands, while the CLI had grown `anchor`, `attach`, `cloud`,
+  `learn` and `mesh`. The corpus is a record of a deliberate review, so it is
+  updated here rather than loosened, and a unit test now compares it to the
+  live command table so the next added subcommand fails locally instead of on
+  a scheduled run.
 - `interlock cloud status` now reports what the guide promised: the policy
   artifact the host installed (version, epoch, sha256, last swap, alarm,
   `kill_active`) and the sensor ring counters and gap markers beside the spool
