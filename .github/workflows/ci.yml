@@ -44,9 +44,9 @@ jobs:
       matrix:
         python-version: ["3.9", "3.11", "3.13"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -90,9 +90,9 @@ jobs:
     name: rust accelerator
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -181,9 +181,9 @@ jobs:
       run:
         working-directory: js
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -221,9 +221,9 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -268,9 +268,9 @@ jobs:
       IL_CLOUD_TEST_DSN: postgresql://interlock_app:interlock_app@127.0.0.1:5432/interlock_cloud
       IL_CLOUD_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/interlock_cloud
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -347,9 +347,9 @@ jobs:
     # resolved dependency graph, and asserts the extra stays range-pinned so
     # an unreviewed major bump cannot arrive on its own.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -395,7 +395,7 @@ jobs:
           cyclonedx-py requirements requirements-cloud.txt --of JSON -o sbom.cdx.json
 
       - name: Upload the SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cloud-sbom
           path: sbom.cdx.json
@@ -405,9 +405,9 @@ jobs:
     name: lint
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
