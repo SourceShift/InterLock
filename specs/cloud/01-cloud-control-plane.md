@@ -1046,8 +1046,9 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
       `--once`, signal handling and `status`.
 - [x] Implement the long-poll transport with cursor persistence and revocation
       checks on every wake-up.
-- [ ] Add launchd/systemd unit examples and a container image for the
-      connector.
+- [x] Add launchd/systemd unit examples and a container image for the
+      connector (`deploy/cloud/Dockerfile.connector` and
+      `docker-compose.connector.yml`).
 - [x] Tests: token reuse, revoked key, connector restart, spool cap.
 
 ### M3 — Reviews and grants
@@ -1067,8 +1068,9 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
       expiry, nonce) and redelivery acknowledgement.
 - [x] Stamp `approval="cloud:<grant_id>"` on the receipt of the call released
       by a grant; add a test that it survives chain verification.
-- [ ] Build the review queue and detail screens (mobile-first) and the
-      desktop-alert parity hook.
+- [x] Build the review queue and detail screens (mobile-first) and the
+      desktop-alert parity hook (`interlock/cloud/ui.py`; the console's
+      Reviews header toggle in `web/src/store.ts`).
 - [x] Tests: replay, wrong key, offline host, local/remote race, TTL release.
 
 ### M4 — Receipts and audit
@@ -1115,8 +1117,9 @@ python3 -m pytest -q tests/test_policy_evaluator.py -k "parity or budget"
       connector honouring within one cycle, and its receipt stamp.
 - [x] Load the active artifact once per hook process; fail closed when missing
       or invalid; keep the legacy source-policy loader for non-cloud installs.
-- [ ] Extend `interlock cloud status` with version, epoch, sha256, last swap
-      and alarm state.
+- [x] Extend `interlock cloud status` with version, epoch, sha256, last swap
+      and alarm state (also the `ring` counters and the standalone
+      `interlock cloud policy` view).
 - [x] Tests: determinism, rollback, restored-plane refusal, hash mismatch,
       expiry grace, in-flight swap, forged hint, kill switch, bad signature,
       truncated write.

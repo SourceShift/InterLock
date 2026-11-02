@@ -78,6 +78,30 @@ timeout could consume a second token or enroll the host twice.
 The plane pins the host's public key at enrollment. A later call that presents
 a different key is refused.
 
+### Running the connector as a container
+
+The host side ships an image and a compose file of its own; the plane stack is
+a separate file and never reaches the guarded host.
+
+```bash
+docker build -f deploy/cloud/Dockerfile.connector -t interlock-connector .
+export IL_CLOUD_HOME_DIR=~/.interlock
+docker compose -f deploy/cloud/docker-compose.connector.yml run --rm \
+  connector enroll --url https://plane.example.com --token "$TOKEN" --name box
+docker compose -f deploy/cloud/docker-compose.connector.yml up -d --wait
+docker compose -f deploy/cloud/docker-compose.connector.yml exec \
+  connector status
+```
+
+Two details matter. The connector home is **bind-mounted from the host**, not
+a named volume, so the seed, `cloud.json`, spool and receipt offset survive a
+restart and stay the same files the hook and a later `interlock cloud status`
+already use. And the container runs as the host uid/gid
+(`INTERLOCK_UID`/`INTERLOCK_GID`, default `1000`) for that reason: files it
+writes have to stay readable and writable by the hook process. The image runs
+read-only, drops every capability, and publishes no port - the connector is
+outbound-only.
+
 ## The review flow
 
 A call that the local policy escalates is held on the host, spooled, and
@@ -113,7 +137,7 @@ Four surfaces, for four different questions.
 
 | Question | Where to look |
 |---|---|
-| What is this host doing? | `interlock cloud status` on the host - connector state, spool depth, ring drops and gap markers, installed manifest version and epoch |
+| What is this host doing? | `interlock cloud status` on the host - connector state, spool depth, ring drops and gap markers, installed manifest version, epoch, sha256, last swap and alarm; `interlock cloud policy` shows the artifact alone |
 | What is the fleet doing? | `/admin/hosts` in the plane's console - every host's state, last sync and active key count |
 | What has been decided? | `/admin/audit` in the plane's console - actor, action, target, time, and before/after digests |
 | Is the plane healthy? | `/healthz` and `/readyz` on the plane, and the metrics endpoint |

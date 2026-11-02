@@ -496,11 +496,22 @@ def test_unknown_cloud_action_is_a_usage_error():
     assert main(["cloud", "bogus"]) == 64
 
 
-def test_cloud_policy_is_the_one_remaining_stub(capsys):
+def test_cloud_policy_needs_a_connector_home(tmp_path, monkeypatch, capsys):
     from interlock.cli import main
 
-    assert main(["cloud", "policy"]) == 3
-    assert "interlock cloud policy: not implemented yet" in capsys.readouterr().err
+    monkeypatch.setenv("IL_CLOUD_HOME", str(tmp_path / "home"))
+    assert main(["cloud", "policy"]) == 2
+    assert "no connector config" in capsys.readouterr().err
+
+
+def test_cloud_policy_refuses_a_file_because_the_plane_distributes_it(
+        tmp_path, monkeypatch, capsys):
+    from interlock.cli import main
+
+    monkeypatch.setenv("IL_CLOUD_HOME", str(tmp_path / "home"))
+    assert main(["cloud", "policy", "--policy", "policy.yaml"]) == 64
+    assert "the plane distributes the active artifact" in (
+        capsys.readouterr().err)
 
 
 def test_cloud_enroll_help_exits_zero():

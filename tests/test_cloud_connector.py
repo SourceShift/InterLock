@@ -435,7 +435,8 @@ def test_status_has_exactly_the_documented_keys_and_no_agent_key(tmp_path):
 
     assert set(status) == {
         "connected", "last_sync", "url", "org_id", "host_id",
-        "spool_batches", "spool_bytes", "dropped_batches", "ring", "queue_lag",
+        "spool_batches", "spool_bytes", "dropped_batches", "ring", "policy",
+        "queue_lag",
         "cursor", "grant_seq", "last_ack_seq", "grants_applied",
         "grants_refused", "grants_acked", "last_grant_applied",
         "last_grant_refusal", "revoked", "last_error",
@@ -460,6 +461,33 @@ def test_status_reports_ring_counters_and_gaps_only(tmp_path):
         "dropped_by_kind": {"security": 0, "observability": 0},
         "gaps": [],
     }
+
+
+def test_status_reports_the_installed_policy_without_the_agent_key(tmp_path):
+    connector, _home, _transport, raw, _public = _connector(tmp_path)
+    state_dir = connector.home.root / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "state.json").write_text(json.dumps({
+        "manifest_version": 4,
+        "epoch": "epoch-4",
+        "artifact_sha256": "ab" * 32,
+        "last_swap": 4000.0,
+        "kill_active": False,
+    }), encoding="utf-8")
+
+    policy = connector.status()["policy"]
+
+    assert policy == {
+        "version": 4,
+        "epoch": "epoch-4",
+        "artifact_sha256": "ab" * 32,
+        "last_swap": 4000.0,
+        "alarm": False,
+        "expired": False,
+        "kill_active": False,
+        "rollout_ring": "stable",
+    }
+    assert raw not in json.dumps(connector.status())
 
 
 def test_status_is_connected_after_a_successful_cycle(tmp_path):

@@ -224,6 +224,34 @@ def test_the_dockerfile_installs_only_the_cloud_extra_and_runs_unprivileged():
     assert "interlock.cloud" in text
 
 
+def test_the_connector_image_installs_only_the_cloud_extra_and_runs_unprivileged():
+    text = (DEPLOY / "Dockerfile.connector").read_text(encoding="utf-8")
+    assert "'.[cloud]'" in text
+    assert "USER interlock" in text
+    assert "--uid 10001" in text
+    assert "interlock.cloud" in text
+    # The connector is outbound-only: nothing in the image listens.
+    assert "EXPOSE" not in text
+
+
+def test_the_connector_compose_runs_one_hardened_outbound_service():
+    document = yaml.safe_load(
+        (DEPLOY / "docker-compose.connector.yml").read_text(encoding="utf-8"))
+    assert document["name"] == "interlock-connector"
+    assert set(document["services"]) == {"connector"}
+    service = document["services"]["connector"]
+    assert "ports" not in service
+    assert service["read_only"] is True
+    assert "ALL" in service["cap_drop"]
+    assert "no-new-privileges:true" in service["security_opt"]
+    assert "/tmp" in service["tmpfs"]
+    assert service["environment"]["IL_CLOUD_HOME"] == "/var/lib/interlock"
+    # The host connector home is a mount, so the seed and receipt offset
+    # survive a restart and stay the files the hook already writes.
+    assert any("/var/lib/interlock" in str(mount)
+               for mount in service["volumes"])
+
+
 def test_the_caddyfile_terminates_tls_and_forwards_to_loopback():
     text = (DEPLOY / "Caddyfile").read_text(encoding="utf-8")
     assert "reverse_proxy 127.0.0.1:8787" in text

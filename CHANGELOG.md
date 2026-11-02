@@ -11,6 +11,12 @@ breaking changes land.
 
 ### Fixed
 
+- `interlock cloud status` now reports what the guide promised: the policy
+  artifact the host installed (version, epoch, sha256, last swap, alarm,
+  `kill_active`) and the sensor ring counters and gap markers beside the spool
+  counters. Before, the connector's status document already carried the ring,
+  but the text output stopped at the spool, and the installed manifest was on
+  no status surface at all.
 - `tool_result_injection` no longer fires on a signature that starts inside a
   word. `themeOverride: 'light'` and `noSystemPrompt: true` are field names,
   not instructions, but the substring scan blocked them and withheld ordinary
@@ -35,6 +41,17 @@ breaking changes land.
 
 ### Added
 
+- `interlock cloud policy` now shows the artifact this host installed and
+  verified instead of exiting `3` with "not implemented yet": version, epoch,
+  sha256, last swap, alarm, expiry grace and the last refusal, plus `--json`.
+  The plane distributes the artifact, so `--policy FILE` is refused with the
+  local `interlock policy FILE` command named as the way to check a file.
+- The connector ships as a container: `deploy/cloud/Dockerfile.connector` and
+  `deploy/cloud/docker-compose.connector.yml` run the same enrollment and loop
+  as the systemd unit and launchd plist. The compose file bind-mounts the host
+  connector home (so the seed, spool and receipt offset survive a restart), runs
+  as the host uid/gid, publishes no port, and drops every capability. Both are
+  documented in [docs/guides/cloud.md](docs/guides/cloud.md).
 - The console can raise a desktop notification when a call is held for
   approval: the **Desktop alerts** toggle on the Reviews screen asks the
   browser for permission, then announces each newly filed review once, with

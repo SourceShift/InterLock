@@ -8,8 +8,10 @@
       interlock cloud keys rotate --host host_...
 
 The connector is outbound-only: it polls the plane for reviews, grants and
-policy manifests, and the plane cannot dial this host. `policy` remains a
-stub until C5; it prints a notice and exits 3.
+policy manifests, and the plane cannot dial this host. `policy` shows the
+artifact the host has installed and verified; the plane distributes it, so
+`--policy FILE` is refused with the local `interlock policy` command named as
+the way to check a file.
 
 `enroll` consumes a single-use enrollment token, writes an Ed25519 host seed
 and `cloud.json` under the connector home (`$IL_CLOUD_HOME`, default
@@ -63,16 +65,16 @@ the plane's head is a fork: the plane freezes receipt ingest for that host and
 audits the break, while grants, reviews and heartbeats keep working until an
 admin unfreezes it with a step-up and a reason.
 
-Exit codes: 0 done, 1 failure, 2 missing or unsafe configuration, 3 not
-implemented yet, 64 the command line was wrong. The agent key is never asked
-for on the command line and is printed only by an explicit rotate that hands
-it back once.
+Exit codes: 0 done, 1 failure, 2 missing or unsafe configuration, 64 the
+command line was wrong. The agent key is never asked for on the command line
+and is printed only by an explicit rotate that hands it back once.
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
+import time
 from typing import Any, Dict, Optional
 
 #: The connector actions; each parses and dispatches below.
@@ -81,8 +83,6 @@ ACTIONS = ("enroll", "run", "status", "leave", "policy", "keys", "admin")
 EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_NOT_CONFIGURED = 2
-#: Printed by the one remaining stub; tests assert this exact shape.
-STUB_EXIT = 3
 EXIT_USAGE = 64
 
 
@@ -120,8 +120,14 @@ def add_arguments(parser) -> None:
     leave.add_argument("--home", metavar="DIR",
                        help="connector home (default: $IL_CLOUD_HOME)")
 
-    policy = sub.add_parser("policy", help="show or refresh the applied policy")
-    policy.add_argument("--policy", metavar="FILE", help="policy file to apply")
+    policy = sub.add_parser(
+        "policy", help="show the policy artifact this host installed")
+    policy.add_argument(
+        "--policy", metavar="FILE",
+        help="refused in cloud mode: the plane distributes the artifact")
+    policy.add_argument("--json", action="store_true", help="print JSON")
+    policy.add_argument("--home", metavar="DIR",
+                        help="connector home (default: $IL_CLOUD_HOME)")
 
     keys = sub.add_parser("keys", help="rotate or revoke this host's agent keys")
     keys.add_argument("keys_command", nargs="?", choices=("rotate", "revoke"),
@@ -213,6 +219,17 @@ def _print(value: Any) -> None:
     from ..cloud.connector.config import redact
 
     sys.stdout.write(json.dumps(redact(value), indent=2, sort_keys=True) + "\n")
+
+
+def _timestamp(value: Any) -> str:
+    """Render a connector timestamp (epoch seconds) in UTC, or ``never``."""
+    if value is None:
+        return "never"
+    try:
+        moment = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(moment))
 
 
 # -- actions ------------------------------------------------------------
@@ -307,6 +324,23 @@ def _status(args) -> int:
     sys.stdout.write("spool:     {} batch(es), {} bytes, {} dropped\n".format(
         status["spool_batches"], status["spool_bytes"],
         status["dropped_batches"]))
+    ring = status.get("ring") or {}
+    if ring:
+        sys.stdout.write(
+            "ring:      {} of {} bytes, {} dropped, {} gap(s)\n".format(
+                ring.get("bytes", 0), ring.get("capacity_bytes", 0),
+                ring.get("dropped_entries", 0), len(ring.get("gaps") or [])))
+    policy = status.get("policy")
+    if policy:
+        sha = policy.get("artifact_sha256") or "-"
+        sys.stdout.write("policy:    v{} epoch {}, sha256 {}\n".format(
+            policy.get("version", 0), policy.get("epoch") or "-", sha[:12]))
+        sys.stdout.write("swapped:   {}\n".format(
+            _timestamp(policy.get("last_swap"))))
+        sys.stdout.write("alarm:     {}\n".format(
+            "yes" if policy.get("alarm") else "no"))
+        if policy.get("kill_active"):
+            sys.stdout.write("kill:      active\n")
     sys.stdout.write("cursor:    {}\n".format(status["cursor"]))
     sys.stdout.write("receipts:  line {}, byte {}, {} pending\n".format(
         status.get("receipts_line", 1), status.get("receipts_offset", 0),
@@ -320,6 +354,51 @@ def _status(args) -> int:
         sys.stdout.write("revoked:   yes\n")
     if status.get("last_error"):
         sys.stdout.write("last error: {}\n".format(status["last_error"]))
+    return EXIT_OK
+
+
+def _policy(args) -> int:
+    if getattr(args, "policy", None):
+        sys.stderr.write(
+            "interlock cloud policy: the plane distributes the active "
+            "artifact, so a file is not applied here; run this command with "
+            "no file to see what the host installed, or `interlock policy "
+            "FILE` to check a file\n")
+        return EXIT_USAGE
+    home = _home(args)
+    if not home.exists():
+        sys.stderr.write(
+            "interlock cloud: no connector config at {}; run "
+            "`interlock cloud enroll` first\n".format(home.config_path))
+        return EXIT_NOT_CONFIGURED
+    try:
+        home.load()
+        status = _connector(home).policy_distributor.status()
+    except PermissionError as exc:
+        return _fail(str(exc))
+    except (ValueError, OSError) as exc:
+        return _fail(str(exc))
+    if getattr(args, "json", False):
+        _print(status)
+        return EXIT_OK
+    sys.stdout.write("version: {}\n".format(
+        status.get("manifest_version") or 0))
+    sys.stdout.write("epoch:   {}\n".format(status.get("epoch") or "-"))
+    sys.stdout.write("sha256:  {}\n".format(
+        status.get("artifact_sha256") or "-"))
+    sys.stdout.write("swapped: {}\n".format(
+        _timestamp(status.get("last_swap"))))
+    sys.stdout.write("alarm:   {}\n".format(
+        "yes" if status.get("alarm") else "no"))
+    if status.get("expired"):
+        sys.stdout.write("expired: yes (grace until {})\n".format(
+            _timestamp(status.get("grace_until"))))
+    if status.get("kill_active"):
+        sys.stdout.write("kill:    active\n")
+    refusal = status.get("refusal") or {}
+    if refusal:
+        sys.stdout.write("refusal: {} at {}\n".format(
+            refusal.get("code") or "-", _timestamp(refusal.get("at"))))
     return EXIT_OK
 
 
@@ -484,19 +563,17 @@ def run(args) -> int:
             "interlock cloud: choose an action: {}\n".format(", ".join(ACTIONS))
         )
         return EXIT_USAGE
-    if action == "policy":
-        sys.stderr.write("interlock cloud policy: not implemented yet\n")
-        return STUB_EXIT
     handler = {
         "enroll": _enroll,
         "run": _run,
         "status": _status,
         "leave": _leave,
+        "policy": _policy,
         "keys": _keys,
         "admin": _admin,
     }[action]
     return int(handler(args))
 
 
-__all__ = ["ACTIONS", "EXIT_NOT_CONFIGURED", "EXIT_USAGE", "STUB_EXIT",
+__all__ = ["ACTIONS", "EXIT_NOT_CONFIGURED", "EXIT_USAGE",
            "add_arguments", "run"]

@@ -1,0 +1,44 @@
+# The connector on a guarded host, as a container.
+#
+# This is deliberately not part of docker-compose.yml: that file is the plane
+# stack, this one runs beside the agent on the host it guards. An operator
+# needs this file and a single-use enrollment token, nothing else.
+#
+#   export IL_CLOUD_HOME_DIR=~/.interlock
+#   docker compose -f deploy/cloud/docker-compose.connector.yml run --rm \
+#     connector enroll --url https://cloud.example --token TOKEN --name box
+#   docker compose -f deploy/cloud/docker-compose.connector.yml up -d --wait
+#   docker compose -f deploy/cloud/docker-compose.connector.yml exec \
+#     connector status
+#
+# The connector home is bind-mounted from the host, so the seed, cloud.json,
+# the spool and the receipt offset survive a container restart and stay the
+# same files the host's hook and `interlock cloud status` already use. The
+# container runs as the host uid/gid (default 1000) for that reason: files
+# written here must stay readable and writable by the hook process.
+#
+#   INTERLOCK_HOME_DIR   host connector home (default: ~/.interlock)
+#   INTERLOCK_UID/GID    host uid/gid to run as (default: 1000)
+
+name: interlock-connector
+
+services:
+  connector:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud/Dockerfile.connector
+    image: interlock-connector
+    user: "${INTERLOCK_UID:-1000}:${INTERLOCK_GID:-1000}"
+    environment:
+      IL_CLOUD_HOME: /var/lib/interlock
+      IL_CLOUD_LOG_LEVEL: ${IL_CLOUD_LOG_LEVEL:-info}
+    volumes:
+      - ${INTERLOCK_HOME_DIR:-~/.interlock}:/var/lib/interlock
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped

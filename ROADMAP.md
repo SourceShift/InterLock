@@ -81,7 +81,7 @@ worse at both jobs.
 | R26 | Console approval workflow | `shipped` | M | operational review |
 | R27 | Framework sensor adapters | `shipped` | M | operational review |
 | R28 | A2A policy dimension | `shipped` | M | operational review |
-| R29 | MCP transport controls and scoped engine over the sidecar | `partial` | M | operational review · no client sends a scope |
+| R29 | MCP transport controls and scoped engine over the sidecar | `shipped` | M | operational review · Python and Node clients pin a signed scope document |
 | R30 | Upstream-drift detector | `shipped` | M | operational review |
 | R31 | Native policy engine (Rust fast path over a compiled plan) | `shipped` | L | opt-in planner, parity + FP-corpus suite, native-vs-Python bench, C ABI with an in-tree C caller, four ported detectors |
 
@@ -357,10 +357,10 @@ key with no access to the running system.
 byte-flipped record fails verification; removing a record from the middle of the
 chain is detected.
 
-**Not delivered:** a benchmark reports the added per-decision cost, and the
-README's claim about overhead (see R12) is updated to match the measured number.
-`benchmarks/` holds only `scope_memory.py`, so that half is still open under
-R12; the `shipped` status above covers the receipts and the append-only sink.
+**Now delivered:** the per-decision cost is measured - `scripts/bench_overhead.py`
+with its methodology in `benchmarks/overhead/` reports floor-vs-guarded
+p50/p95/p99, and the README quotes that measured number instead of an estimate
+(see R12). Nothing remains open on this item.
 
 ### Risks & dependencies
 
@@ -803,7 +803,8 @@ the agentjail-review guardrails: typo'd fields and tool arguments fail at load,
 invalid rules are quarantined, `locked` rules can't be disabled, and project
 overlays are additive-only and trust-gated by content hash
 (`interlock/policy/trust.py`). Differential test against the equivalent Python
-rule in `tests/test_declarative_policy.py`. R9's flow typing remains open.
+rule in `tests/test_declarative_policy.py`, including the flow condition over
+`interlock/flow.py`, so R9's flow typing is available to declarative rules too.
 Previously: `not started` — M0 rules are Python (carried from M0 → M2 in the
 engine docstring).
 **Size:** L
@@ -1188,7 +1189,7 @@ wire. Each one is what makes the detectors usable in a deployment.
 | R26 | Console approval workflow | `shipped` | M | operational review |
 | R27 | Framework sensor adapters (SDK loops, LiteLLM, CrewAI, ADK) | `shipped` | M | operational review |
 | R28 | A2A policy dimension | `shipped` | M | operational review |
-| R29 | MCP transport controls + scoped engine over the sidecar | `partial` | M | operational review · no client sends a scope |
+| R29 | MCP transport controls + scoped engine over the sidecar | `shipped` | M | operational review · Python and Node clients pin a signed scope document |
 | R30 | Upstream-drift detector | `shipped` | M | operational review |
 
 ---

@@ -1,0 +1,34 @@
+# The guarded-host connector image.
+#
+# Build from the repository root so the package and its metadata are in
+# context:
+#
+#   docker build -f deploy/cloud/Dockerfile.connector -t interlock-connector .
+#
+# The same image enrolls and runs: the entrypoint is the `python3 -m
+# interlock.cloud` the systemd unit runs, and a leading connector verb
+# (`enroll`, `run`, `status`, `leave`, `policy`, `keys`, `admin`) is delegated
+# to the CLI. Only the core package and the ``cloud`` extra are installed -
+# the plane's extras and the console front end have no part on a guarded host.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    IL_CLOUD_HOME=/var/lib/interlock
+
+WORKDIR /app
+
+COPY pyproject.toml README.md /app/
+COPY interlock /app/interlock
+
+RUN pip install --no-cache-dir '.[cloud]' \
+    && useradd --system --uid 10001 --no-create-home interlock \
+    && install -d -o interlock -g interlock -m 0700 /var/lib/interlock
+
+# The connector home holds the host seed and cloud.json (both 0600) and is a
+# mount, never image content. Nothing listens: the connector is outbound-only.
+USER interlock
+
+ENTRYPOINT ["python3", "-m", "interlock.cloud"]
+CMD ["run"]

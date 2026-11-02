@@ -515,8 +515,10 @@ IL_CLOUD_ADMIN_COOKIE=... IL_CLOUD_ADMIN_CSRF=...       interlock cloud keys rot
 ```
 
 The connector is outbound-only: it polls the plane for reviews, grants and
-policy manifests, and the plane cannot dial this host. `policy` remains a
-stub until C5; it prints a notice and exits 3.
+policy manifests, and the plane cannot dial this host. `policy` shows the
+artifact the host has installed and verified; the plane distributes it, so
+`--policy FILE` is refused with the local `interlock policy` command named as
+the way to check a file.
 
 `enroll` consumes a single-use enrollment token, writes an Ed25519 host seed
 and `cloud.json` under the connector home (`$IL_CLOUD_HOME`, default
@@ -525,9 +527,9 @@ never the agent key. `run` reconciles reviews from the local queue, uploads
 the masked review batch, long-polls for grants, verifies and applies them,
 acknowledges, heartbeats and ships receipts; `--once` does one cycle and
 exits non-zero when the sync failed. `status` reports connectivity, spool
-depth, sensor-ring counters and gap markers, queue lag, revocation and the
-grant counters (`grants_applied`, `grants_refused`, `grants_acked`,
-`last_grant_refusal`) without printing credentials. `leave` removes `cloud.json` and the seed and prints what it
+depth, queue lag, revocation and the grant counters (`grants_applied`,
+`grants_refused`, `grants_acked`, `last_grant_refusal`) without printing
+credentials. `leave` removes `cloud.json` and the seed and prints what it
 left on disk.
 
 The uploaded review body is allow-listed on both sides: the masked preview,
@@ -570,10 +572,9 @@ the plane's head is a fork: the plane freezes receipt ingest for that host and
 audits the break, while grants, reviews and heartbeats keep working until an
 admin unfreezes it with a step-up and a reason.
 
-Exit codes: 0 done, 1 failure, 2 missing or unsafe configuration, 3 not
-implemented yet, 64 the command line was wrong. The agent key is never asked
-for on the command line and is printed only by an explicit rotate that hands
-it back once.
+Exit codes: 0 done, 1 failure, 2 missing or unsafe configuration, 64 the
+command line was wrong. The agent key is never asked for on the command line
+and is printed only by an explicit rotate that hands it back once.
 
 ```text
 usage: interlock cloud [-h] ACTION ...
@@ -581,7 +582,8 @@ usage: interlock cloud enroll [-h] [--url URL] [--token TOKEN] [--name NAME] [--
 usage: interlock cloud run [-h] [--once] [--url URL] [--home DIR] [--verbose]
 usage: interlock cloud status [-h] [--json] [--reset-offset LINE] [--yes] [--home DIR]
 usage: interlock cloud leave [-h] [--yes] [--home DIR]
-usage: interlock cloud policy [-h] [--policy FILE]
+usage: interlock cloud policy [-h] [--policy FILE] [--json] [--home DIR]
 usage: interlock cloud keys [-h] [--host HOST] [--key KEY] [--url URL] [--json] [--home DIR]
                             [rotate|revoke]
+usage: interlock cloud admin [-h] COMMAND ...
 ```

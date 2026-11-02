@@ -851,6 +851,25 @@ class Connector:
                 live.get("last_receipt_error")
                 or state.get("last_receipt_error"))
             receipts.update(live)
+        policy: Optional[Dict[str, Any]] = None
+        try:
+            # The distributor reads its durable state; it never dials the plane
+            # from a status call. A host that has not polled policy yet reports
+            # version 0 rather than failing the whole document.
+            distribution = self.policy_distributor.status()
+        except Exception:
+            distribution = None
+        if distribution is not None:
+            policy = {
+                "version": int(distribution.get("manifest_version") or 0),
+                "epoch": distribution.get("epoch"),
+                "artifact_sha256": distribution.get("artifact_sha256"),
+                "last_swap": distribution.get("last_swap"),
+                "alarm": bool(distribution.get("alarm")),
+                "expired": bool(distribution.get("expired")),
+                "kill_active": bool(distribution.get("kill_active")),
+                "rollout_ring": distribution.get("ring"),
+            }
         return redact({
             "connected": connected,
             "last_sync": last_sync,
@@ -861,6 +880,7 @@ class Connector:
             "spool_bytes": spool_bytes,
             "dropped_batches": dropped_batches,
             "ring": ring,
+            "policy": policy,
             "queue_lag": self.queue_lag(),
             "cursor": state.get("cursor", 0),
             "grant_seq": state.get("grant_last_seq", 0),

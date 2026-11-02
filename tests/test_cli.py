@@ -2,9 +2,9 @@
 
 ``interlock/cli/__init__.py`` is the single table of commands; every module it
 names must expose ``add_arguments`` and ``run``, and ``main`` must map usage
-mistakes to 64 while letting a command choose its own non-zero code. C2 makes
-the connector actions real: only ``policy`` still prints a notice and returns
-3, while an unconfigured connector returns 2 and a missing flag returns 64.
+mistakes to 64 while letting a command choose its own non-zero code. Every
+connector action is real: ``policy`` now shows the installed artifact, an
+unconfigured connector returns 2 and a missing flag returns 64.
 """
 from __future__ import annotations
 
@@ -48,12 +48,25 @@ def _enrolled_home(tmp_path):
     return home
 
 
+class _StubDistributor:
+    def __init__(self, status):
+        self._status = status
+
+    def status(self):
+        return self._status
+
+
 class _StubConnector:
-    def __init__(self, result):
-        self.result = result
+    def __init__(self, result=None, *, status=None, policy=None):
+        self.result = result or {}
+        self._status = status or {}
+        self.policy_distributor = _StubDistributor(policy or {})
 
     def run_once(self):
         return self.result
+
+    def status(self):
+        return self._status
 
 
 def test_every_registered_command_module_exposes_the_contract():
@@ -82,9 +95,11 @@ def test_cloud_actions_parse(action):
     assert args.cloud_command == action
 
 
-def test_cloud_policy_is_the_one_remaining_stub(capsys):
-    assert main(["cloud", "policy"]) == 3
-    assert "interlock cloud policy: not implemented yet" in (
+def test_cloud_policy_refuses_a_file_because_the_plane_distributes_it(
+        tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("IL_CLOUD_HOME", str(tmp_path / "home"))
+    assert main(["cloud", "policy", "--policy", "policy.yaml"]) == 64
+    assert "the plane distributes the active artifact" in (
         capsys.readouterr().err
     )
 
@@ -93,7 +108,7 @@ def test_unconfigured_connector_actions_exit_not_configured(tmp_path,
                                                              monkeypatch,
                                                              capsys):
     monkeypatch.setenv("IL_CLOUD_HOME", str(tmp_path / "home"))
-    for action in ("status", "run", "leave"):
+    for action in ("status", "run", "leave", "policy"):
         assert main(["cloud", action]) == 2, action
         assert "no connector config" in capsys.readouterr().err
     assert not (tmp_path / "home").exists()
@@ -144,6 +159,51 @@ def test_keys_reads_the_admin_session_from_the_environment(
                     "cookie": "__Host-il_session=abc",
                     "csrf": "csrf-value", "body": {"host_id": "host_1"}}
     assert "key_2" in capsys.readouterr().out
+
+
+def test_cloud_status_prints_ring_counters_and_the_installed_policy(
+        tmp_path, monkeypatch, capsys):
+    home = _enrolled_home(tmp_path)
+    monkeypatch.setenv("IL_CLOUD_HOME", str(home.root))
+    monkeypatch.setattr(cloud_cli, "_connector", lambda *a, **k: _StubConnector(
+        status={
+            "connected": True, "host_id": "host-1", "org_id": "org-1",
+            "url": "https://cloud.example", "last_sync": 1700000000.0,
+            "spool_batches": 2, "spool_bytes": 64, "dropped_batches": 0,
+            "ring": {"capacity_bytes": 1024, "bytes": 128,
+                     "dropped_entries": 3, "dropped_by_kind": {},
+                     "gaps": [{"host": "host-1"}]},
+            "policy": {"version": 7, "epoch": "e-7",
+                       "artifact_sha256": "cd" * 32, "last_swap": 1700000001.0,
+                       "alarm": True, "expired": False, "kill_active": False},
+            "cursor": 0, "receipts_line": 1, "receipts_offset": 0,
+            "receipts_pending_bytes": 0,
+        }))
+
+    assert main(["cloud", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "ring:      128 of 1024 bytes, 3 dropped, 1 gap(s)" in out
+    assert "policy:    v7 epoch e-7, sha256 cdcdcdcdcdcd" in out
+    assert "swapped:   2023-11-14T22:13:21Z" in out
+    assert "alarm:     yes" in out
+
+
+def test_cloud_policy_prints_the_installed_artifact(tmp_path, monkeypatch,
+                                                     capsys):
+    home = _enrolled_home(tmp_path)
+    monkeypatch.setenv("IL_CLOUD_HOME", str(home.root))
+    monkeypatch.setattr(cloud_cli, "_connector", lambda *a, **k: _StubConnector(
+        policy={"manifest_version": 7, "epoch": "e-7",
+                "artifact_sha256": "cd" * 32, "last_swap": 1700000001.0,
+                "alarm": False, "expired": False, "kill_active": False,
+                "refusal": None, "grace_until": None}))
+
+    assert main(["cloud", "policy"]) == 0
+    out = capsys.readouterr().out
+    assert "version: 7" in out
+    assert "epoch:   e-7" in out
+    assert "swapped: 2023-11-14T22:13:21Z" in out
+    assert "alarm:   no" in out
 
 
 def test_keys_refuses_a_plaintext_admin_url(monkeypatch, capsys):
