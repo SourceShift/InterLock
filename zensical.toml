@@ -82,6 +82,7 @@ nav = [
     { "Using detectors" = "guides/detectors.md" },
     { "Integrations" = "guides/integrations.md" },
     { "Coding agents" = "guides/coding-agents.md" },
+    { "Patch gate" = "guides/patch-gate.md" },
     { "MCP" = "guides/mcp.md" },
     { "Databases and APIs" = "guides/databases.md" },
     { "Approvals" = "guides/approvals.md" },

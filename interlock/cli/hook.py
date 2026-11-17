@@ -44,6 +44,17 @@ def add_arguments(parser) -> None:
                              "can't ask (default), always, or never")
     parser.add_argument("--review-db", metavar="FILE",
                         help="review queue (default ~/.interlock/reviews.db)")
+    parser.add_argument("--patch-gate", choices=("off", "block", "monitor"),
+                        default=None,
+                        help="also refuse a git commit/push/merge whose diff has not "
+                             "passed `interlock patch gate` (default $INTERLOCK_PATCH_GATE, "
+                             "else off)")
+    parser.add_argument("--patch-gates-dir", metavar="DIR",
+                        help="where patch-gate records live (default "
+                             "~/.interlock/patch-gates, or $INTERLOCK_PATCH_GATES_DIR)")
+    parser.add_argument("--patch-key", metavar="FILE",
+                        help="patch-gate record key (default ~/.interlock/patch-gates.key, "
+                             "or $INTERLOCK_PATCH_KEY)")
 
 
 def run(args) -> int:
@@ -93,7 +104,7 @@ def run(args) -> int:
             raise ValueError("hook input is not a JSON object")
         call = adapter.parse(payload)
         cwd = call.cwd if isinstance(call.cwd, str) else None
-        engine = _engine(args, cwd, artifact_engine)
+        engine = _patch_gate(_engine(args, cwd, artifact_engine), args)
         _install_sink(args)
         queue = None
         if args.reviews != "off":
@@ -145,6 +156,36 @@ def _engine(args, cwd, artifact_engine=None):
     from ..adapters.config import load_engine
     return load_engine(policy=args.policy, rules=args.rules, sidecar=args.sidecar,
                        cwd=cwd, overlay=not args.no_overlay)
+
+
+def _patch_gate(engine, args):
+    """Wrap the engine when the patch gate is on; otherwise hand it back.
+
+    Wrapping here rather than inside a policy rule keeps the gate where it
+    belongs: the adapter layer, judging a *diff*, not a call. The verdict still
+    flows through the normal path, so receipts, monitor mode, the review queue
+    and the sidecar tier all see it unchanged.
+    """
+    mode = getattr(args, "patch_gate", None) or os.environ.get(
+        "INTERLOCK_PATCH_GATE", "off").strip().lower()
+    if mode in ("", "off", "0", "false", "no"):
+        return engine
+    if mode not in ("block", "monitor"):
+        raise ValueError(
+            "INTERLOCK_PATCH_GATE must be off, block or monitor (got {!r})".format(mode))
+    from ..patch_gate import PatchGateEvaluator
+    # The simple tier takes the defaults (a key and a directory under $HOME);
+    # the shared tier points both at storage the agent cannot write. Same
+    # evaluator either way, and a path that is missing is a missing record -
+    # which blocks, it never falls through to the cheap default.
+    return PatchGateEvaluator(
+        engine,
+        gates_dir=getattr(args, "patch_gates_dir", None)
+        or os.environ.get("INTERLOCK_PATCH_GATES_DIR") or None,
+        key_path=getattr(args, "patch_key", None)
+        or os.environ.get("INTERLOCK_PATCH_KEY") or None,
+        mode=mode,
+    )
 
 
 def _install_sink(args) -> None:

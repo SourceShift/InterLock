@@ -13,6 +13,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`report`](#interlock-report) | summarize a receipt log: blocks, monitor findings, latency |
 | [`hook`](#interlock-hook) | decide one coding-agent tool call (run by the agent) |
 | [`install-hook`](#interlock-install-hook) | put interlock in front of Claude Code, Codex or Cursor |
+| [`patch`](#interlock-patch) | gate an agent-authored patch on its own tests |
 | [`attach`](#interlock-attach) | check the import seams attach() patches (compatibility contract) |
 | [`policy`](#interlock-policy) | check a declarative policy file, or show a built-in pack |
 | [`learn`](#interlock-learn) | draft a reviewable policy from observed receipts |
@@ -104,6 +105,8 @@ usage: interlock hook [-h] --agent {claude-code,codex,cursor} [--policy FILE] [-
                       [--rules MODULE:ATTR] [--sidecar PATH] [--receipts FILE] [--key-file FILE]
                       [--no-receipts] [--no-overlay] [--monitor] [--on-error {deny,allow}]
                       [--reviews {fallback,always,off}] [--review-db FILE]
+                      [--patch-gate {off,block,monitor}] [--patch-gates-dir DIR]
+                      [--patch-key FILE]
   --agent                    
   --policy                   policy file (default ~/.interlock/policy.json, else the built-in coding-agent pack)
   --artifact                 a manifest-delivered policy artifact, or a directory containing active.json; mutually exclusive with --policy
@@ -117,6 +120,9 @@ usage: interlock hook [-h] --agent {claude-code,codex,cursor} [--policy FILE] [-
   --on-error                 what an internal error does (default deny)
   --reviews                  settle escalations through the review queue: when the agent can't ask (default), always, or never
   --review-db                review queue (default ~/.interlock/reviews.db)
+  --patch-gate               also refuse a git commit/push/merge whose diff has not passed `interlock patch gate` (default $INTERLOCK_PATCH_GATE, else off)
+  --patch-gates-dir          where patch-gate records live (default ~/.interlock/patch-gates, or $INTERLOCK_PATCH_GATES_DIR)
+  --patch-key                patch-gate record key (default ~/.interlock/patch-gates.key, or $INTERLOCK_PATCH_KEY)
 ```
 
 ## `interlock install-hook`
@@ -147,7 +153,8 @@ Exit codes: 0 done, 1 an agent could not be configured, 64 bad arguments.
 usage: interlock install-hook [-h] --for {claude-code,codex,cursor,all} [--settings FILE]
                               [--policy FILE] [--artifact PATH] [--sidecar PATH] [--receipts FILE]
                               [--key-file FILE] [--reviews {fallback,always,off}]
-                              [--review-db FILE] [--monitor] [--dry-run] [--uninstall]
+                              [--review-db FILE] [--monitor] [--patch-gate {off,block,monitor}]
+                              [--dry-run] [--uninstall]
   --for                      
   --settings                 the agent's settings file (default: its usual path)
   --policy                   pin this policy file in the hook
@@ -158,8 +165,45 @@ usage: interlock install-hook [-h] --for {claude-code,codex,cursor,all} [--setti
   --reviews                  settle escalations through the review queue: when the agent can't ask (default), always - Claude Code too - or never
   --review-db                review queue path
   --monitor                  install in monitor mode
+  --patch-gate               also refuse a git commit/push/merge whose diff has not passed `interlock patch gate` (see docs/guides/patch-gate.md)
   --dry-run                  print the change only
   --uninstall                remove interlock's hooks
+```
+
+## `interlock patch`
+
+Judge an agent-authored patch on evidence it cannot author.
+
+```bash
+interlock patch gate                  # judge the working tree vs origin/main
+interlock patch gate --base HEAD~1    # judge against an explicit base
+interlock patch gate --head HEAD      # judge a commit, e.g. in CI
+interlock patch status                # is the current diff covered by a pass?
+```
+
+The gate asks three questions and refuses to guess:
+
+1. does every test file the patch touches contain an assertion at all;
+2. does the suite fail with the patch's own tests at the pre-patch revision
+   (a test that passes before the change does not test the change);
+3. does the same suite pass with the patch applied.
+
+A pass is signed and stored under ``~/.interlock/patch-gates/``. With the hook
+adapter's ``--patch-gate block`` (or ``INTERLOCK_PATCH_GATE=block``) a
+``git commit``, ``git push`` or ``git merge`` is refused until a passing record
+covers the exact diff being landed. Run the gate outside the agent: the agent
+can edit a test, but it cannot edit the pre-patch revision it is replayed
+against.
+
+Exit codes: 0 the gate passed, 1 it failed, 64 bad arguments.
+
+```text
+usage: interlock patch [-h] ACTION ...
+usage: interlock patch gate [-h] [--repo DIR] [--base REF] [--head REF] [--test-cmd CMD]
+                            [--timeout SEC] [--rescan CMD] [--allow-untested] [--keep DIR]
+                            [--gates-dir DIR] [--key FILE] [--json] [--no-record]
+usage: interlock patch status [-h] [--repo DIR] [--base REF] [--head REF] [--gates-dir DIR]
+                              [--key FILE] [--json]
 ```
 
 ## `interlock attach`

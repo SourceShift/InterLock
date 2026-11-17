@@ -80,6 +80,7 @@ jobs:
                   "report",
                   "hook",
                   "install-hook",
+                  "patch",
                   "attach",
                   "policy",
                   "learn",

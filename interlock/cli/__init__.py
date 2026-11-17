@@ -2,11 +2,12 @@
 
 Each subcommand lives in its own module and registers itself through
 :data:`COMMANDS`: ``doctor`` (is protection on?), ``report`` (what did the
-guard do?), ``hook`` and ``install-hook`` (coding-agent adapters), ``mcp``
-(MCP inventory), ``policy`` (declarative policy files), ``trust``
-(project-overlay trust), ``drift`` (diff a live surface against a corpus),
-``learn`` (draft a policy from observed receipts) and ``anchor`` (record a
-receipt log's head outside it, to catch a cut tail).
+guard do?), ``hook`` and ``install-hook`` (coding-agent adapters), ``patch``
+(gate an agent-written patch on tests that can fail), ``mcp`` (MCP
+inventory), ``policy`` (declarative policy files), ``trust`` (project-overlay
+trust), ``drift`` (diff a live surface against a corpus), ``learn`` (draft a
+policy from observed receipts) and ``anchor`` (record a receipt log's head
+outside it, to catch a cut tail).
 
 Exit codes are per command and documented in each one's ``--help``; 64 means
 the command line itself was wrong.
@@ -26,6 +27,7 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("report", "summarize a receipt log: blocks, monitor findings, latency", "report"),
     ("hook", "decide one coding-agent tool call (run by the agent)", "hook"),
     ("install-hook", "put interlock in front of Claude Code, Codex or Cursor", "install_hook"),
+    ("patch", "gate an agent-authored patch on its own tests", "patch"),
     ("attach", "check the import seams attach() patches (compatibility contract)", "attach"),
     ("policy", "check a declarative policy file, or show a built-in pack", "policy"),
     ("learn", "draft a reviewable policy from observed receipts", "learn"),

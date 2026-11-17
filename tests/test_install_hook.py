@@ -48,6 +48,15 @@ def test_a_local_install_is_unchanged_without_the_artifact_flag(tmp_path):
     assert "--policy" in command
 
 
+def test_the_patch_gate_is_written_onto_the_hook_line_and_off_is_not(tmp_path):
+    on = hook_command("claude-code", flags(patch_gate="block"))
+    argv = shlex.split(on)
+    assert argv[argv.index("--patch-gate"):] == ["--patch-gate", "block"]
+    assert is_ours(on)
+    assert "--patch-gate" not in hook_command("claude-code", flags(patch_gate="off"))
+    assert "--patch-gate" not in hook_command("claude-code", flags())
+
+
 def test_hook_command_orders_the_artifact_after_policy(tmp_path):
     command = hook_command("claude-code", flags(
         policy=str(tmp_path / "p.json"), artifact=str(tmp_path / "a.json")))

@@ -46,6 +46,9 @@ def add_arguments(parser) -> None:
                              "can't ask (default), always - Claude Code too - or never")
     parser.add_argument("--review-db", metavar="FILE", help="review queue path")
     parser.add_argument("--monitor", action="store_true", help="install in monitor mode")
+    parser.add_argument("--patch-gate", choices=("off", "block", "monitor"),
+                        help="also refuse a git commit/push/merge whose diff has not "
+                             "passed `interlock patch gate` (see docs/guides/patch-gate.md)")
     parser.add_argument("--dry-run", action="store_true", help="print the change only")
     parser.add_argument("--uninstall", action="store_true", help="remove interlock's hooks")
 
@@ -152,6 +155,9 @@ def hook_command(agent: str, args) -> str:
         parts += ["--reviews", shlex.quote(reviews)]
     if args.monitor:
         parts.append("--monitor")
+    patch_gate = getattr(args, "patch_gate", None)
+    if patch_gate and patch_gate != "off":
+        parts += ["--patch-gate", shlex.quote(patch_gate)]
     return " ".join(parts)
 
 

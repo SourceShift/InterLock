@@ -9,6 +9,26 @@ breaking changes land.
 
 ## [Unreleased]
 
+### Added
+
+- **The patch gate** (`interlock patch gate`, `interlock patch status`,
+  `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
+  patch is judged by evidence it did not produce: every test file it touches
+  must contain an assertion, the suite must *fail* at the pre-patch revision
+  with the patch's own tests in place, and pass with the patch applied. A pass
+  is a signed record bound to a digest of the diff's content, and the hook
+  refuses a `git commit`, `git push` or `git merge` that would land a diff no
+  passing record covers. The failure it closes is measured - over 40% of
+  agent-validated patches fail developer-written regression tests
+  (arxiv:2603.06858), 24.8% of 319 agent patches were fully correct
+  (arxiv:2603.10072) - and it is a repository control, so it lives in the
+  adapters as an optional gate, not in the engine. Off by default; see
+  `docs/guides/patch-gate.md`. Untracked files are judged too (`git diff` alone
+  would miss every new test an agent writes), cache directories produced by the
+  replay are excluded from the digest on both sides, and the base revision is
+  extracted with `git archive` so nothing in the operator's tree or index is
+  touched.
+
 ### Fixed
 
 - The weekly Drift job is green again: its recorded `interlock-cli` surface
