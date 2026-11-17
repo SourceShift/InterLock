@@ -203,6 +203,23 @@ happened. After a day, `interlock report ... --monitor` lists what would have
 been stopped. Re-run `install-hook` without `--monitor` to enforce.
 `interlock doctor` warns while a hook is in monitor mode.
 
+## Gate the patch, not just the call
+
+The policy above judges one tool call. It does not judge whether the change the
+agent just made is tested, and an agent's own tests are weaker evidence than
+they look: over 40% of agent-validated patches fail developer-written regression
+tests (arxiv:2603.06858).
+
+```bash
+interlock patch gate                       # run the checks yourself, outside the agent
+interlock install-hook --for claude-code --patch-gate block   # keep the agent honest
+```
+
+With `--patch-gate block` the hook also refuses `git commit`, `git push` and
+`git merge` until a signed record covers the exact diff being landed. The record
+comes from a three-state replay: the patch's tests must fail at the pre-patch
+revision and pass with the patch. See [Patch gate](patch-gate.md).
+
 ## When something goes wrong
 
 Any error in the hook, whether unreadable input, a policy that won't load, or a
