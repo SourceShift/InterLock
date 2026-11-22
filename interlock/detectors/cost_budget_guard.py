@@ -7,24 +7,24 @@ notices. Cost is itself the signal: many small charges that sum past a budget
 are a runaway loop or an economic denial-of-wallet attack, and only the total
 reveals it.
 
-This Rule accumulates the numeric ``cost`` carried on each event in this
-process and blocks the event that pushes the running total strictly above
-``budget``. The boundary is inclusive at the budget, matching how operators
+This Rule accumulates the numeric ``cost`` carried on each event and blocks the
+event that pushes the running total strictly above ``budget``. The boundary is inclusive at the budget, matching how operators
 read "spend up to N": with ``budget=1.0`` a charge landing exactly on 1.0 still
 passes and the next charge over it is refused.
 
-The total lives in the closure, so each factory call owns fresh state - two
-rules built from separate ``cost_budget_guard()`` calls never share a tally and
-cannot trip each other. A missing, non-numeric, or boolean cost counts as 0 and
+The total lives in the closure by default, so each factory call owns fresh
+state - two rules built from separate ``cost_budget_guard()`` calls never share
+a total and cannot trip each other; a hook host starts a new process per call,
+which is why ``state=`` exists. A missing, non-numeric, or boolean cost counts as 0 and
 does not advance the total. The rule returns None (no opinion) while the total
 is within budget and never raises on odd input.
 """
 from __future__ import annotations
 
 import math
-import threading
 from typing import Optional, Union
 
+from ..counter_ledger import Counters
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -35,6 +35,10 @@ DEFAULT_BUDGET = 10.0
 
 # Argument key carrying the numeric cost of this event.
 COST_KEY = "cost"
+
+# The one key a durable budget sums under: this rule keeps a single total, not
+# a tally per principal.
+SPEND_KEY = "<total>"
 
 
 class _MalformedCost:
@@ -81,7 +85,8 @@ def _event_cost(args: object) -> Union[float, _MalformedCost]:
     return cost
 
 
-def cost_budget_guard(budget: float = DEFAULT_BUDGET) -> Rule:
+def cost_budget_guard(budget: float = DEFAULT_BUDGET, *,
+                      state: Optional[str] = None) -> Rule:
     """Build a Rule that blocks once accumulated cost exceeds *budget*.
 
     Each event's numeric ``args["cost"]`` is added to a running total kept in
@@ -106,11 +111,9 @@ def cost_budget_guard(budget: float = DEFAULT_BUDGET) -> Rule:
     if not budget_is_finite or budget < 0:
         raise ValueError("budget must be a finite non-negative number")
 
-    total = 0.0
-    lock = threading.Lock()
+    counters = Counters("cost budget", state)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
-        nonlocal total
         cost = _event_cost(getattr(event, "args", None))
         if isinstance(cost, _MalformedCost):
             return Decision.block(
@@ -119,10 +122,7 @@ def cost_budget_guard(budget: float = DEFAULT_BUDGET) -> Rule:
                 ),
                 policy_id=POLICY_ID,
             )
-        with lock:
-            total += cost
-            over_budget = total > budget
-        if over_budget:
+        if counters.charge(SPEND_KEY, cost) > budget:
             return Decision.block(
                 reason="cost_budget_guard: budget {} exceeded".format(budget),
                 policy_id=POLICY_ID,

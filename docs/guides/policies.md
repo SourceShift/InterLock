@@ -355,11 +355,17 @@ a caller with no identity, so an unnamed run is budgeted rather than exempt
 (`egress_rate_limiter` instead skips an event whose principal is not a string,
 because it has no stable key to count under).
 
-These three take the same `state` argument as the sequence and obligation
+Two more budgets count the same way, on a different axis:
+`tool_budget_limiter` counts per tool name, so one loud tool cannot spend
+another's budget, and `cost_budget_guard` sums the numeric `args["cost"]` of
+every call into a single total rather than keeping a tally per key.
+
+These five take the same `state` argument as the sequence and obligation
 ledgers, with the same guarantees: an absolute path to a small SQLite file,
 created on the first call, one transaction per call, and a storage fault that
-warns once and falls back to memory. What it stores is one key and one integer
-per principal.
+warns once and falls back to memory. What it stores is one key and one number
+per principal or tool name (`cost_budget_guard` keeps the same file with a
+single total under one key, charged in fractional amounts).
 
 Two things read differently once the count is durable:
 
@@ -367,9 +373,9 @@ Two things read differently once the count is durable:
   ages out, so `limit` reads as "N calls since the state file was created" —
   which is what a hook host needs, since a fresh process per call would
   otherwise hand every call a fresh budget. Deleting the file resets the budget.
-- **The file is bounded.** At most 4096 principals are tracked, the oldest
-  dropped first, so an agent that mints a new identity per call cannot grow the
-  file without limit — and an evicted principal starts again at zero.
+- **The file is bounded.** At most 4096 keys are tracked, the oldest dropped
+  first, so an agent that mints a new identity per call cannot grow the file
+  without limit — and an evicted key starts again at zero.
 
 ## Mistakes fail at load, not in production
 

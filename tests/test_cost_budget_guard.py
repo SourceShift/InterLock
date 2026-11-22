@@ -1,8 +1,9 @@
 """cost_budget_guard: allow path (total within budget), block path (the charge
 that overshoots), zero-cost handling, odd-input safety, and engine integration."""
+import pytest
 from typing import Any, cast
 
-from interlock import PolicyEngine, SensorEvent, Verdict
+from interlock import Decision, PolicyEngine, SensorEvent, Verdict
 from interlock.detectors.cost_budget_guard import (
     POLICY_ID,
     cost_budget_guard,
@@ -117,3 +118,48 @@ def test_engine_blocks_over_budget_event():
     blocked = engine.evaluate(_event(cost=0.1))
     assert blocked.verdict is Verdict.BLOCK
     assert blocked.policy_id == POLICY_ID
+
+
+# --- the durable total ------------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "counters" / "cost.db")
+
+
+def test_a_state_file_carries_the_spend_to_the_next_process(tmp_path):
+    # 0.6 + 0.6 = 1.2 against budget 1.0: no single process sees both charges.
+    cost_budget_guard(budget=1.0, state=_state(tmp_path))(_event(cost=0.6))
+    second = cost_budget_guard(budget=1.0, state=_state(tmp_path))
+    assert cast(Decision, second(_event(cost=0.6))).verdict is Verdict.BLOCK
+
+
+def test_a_durable_sum_survives_with_fractional_amounts(tmp_path):
+    path = _state(tmp_path)
+    cost_budget_guard(budget=0.3, state=path)(_event(cost=0.1))
+    cost_budget_guard(budget=0.3, state=path)(_event(cost=0.1))
+    third = cost_budget_guard(budget=0.3, state=path)
+    assert cast(Decision, third(_event(cost=0.1))).verdict is Verdict.BLOCK
+
+
+def test_a_malformed_cost_does_not_touch_the_durable_total(tmp_path):
+    path = _state(tmp_path)
+    cost_budget_guard(budget=1.0, state=path)(_event(cost=0.5))
+    cost_budget_guard(budget=1.0, state=path)(_event(cost=-1.0))   # refused
+    after = cost_budget_guard(budget=1.0, state=path)
+    assert after(_event(cost=0.4)) is None                          # 0.9 spent
+
+
+def test_no_state_file_is_written_until_a_charge_arrives(tmp_path):
+    path = tmp_path / "counters" / "cost.db"
+    cost_budget_guard(budget=1.0, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        cost_budget_guard(budget=1.0, state=state)

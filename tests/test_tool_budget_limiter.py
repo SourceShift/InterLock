@@ -1,6 +1,7 @@
 """tool_budget_limiter: allow path (within budget), block path (over budget),
 per-tool-name keying, per-rule state isolation, odd-input safety, and engine
 integration."""
+import pytest
 from typing import Any, cast
 
 from interlock import Decision, PolicyEngine, SensorEvent, Verdict
@@ -126,3 +127,38 @@ def test_engine_allows_first_then_blocks_second():
     second = engine.evaluate(_event())
     assert second.verdict is Verdict.BLOCK
     assert second.policy_id == POLICY_ID
+
+
+# --- the durable counter ----------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "counters" / "tool_budget.db")
+
+
+def test_a_state_file_carries_the_budget_to_the_next_process(tmp_path):
+    tool_budget_limiter(limit=2, state=_state(tmp_path))(_event("read_file"))
+    tool_budget_limiter(limit=2, state=_state(tmp_path))(_event("read_file"))
+    third = tool_budget_limiter(limit=2, state=_state(tmp_path))
+    assert cast(Decision, third(_event("read_file"))).verdict is Verdict.BLOCK
+
+
+def test_a_state_file_keeps_tools_apart(tmp_path):
+    tool_budget_limiter(limit=1, state=_state(tmp_path))(_event("read_file"))
+    other = tool_budget_limiter(limit=1, state=_state(tmp_path))
+    assert other(_event("write_file")) is None
+
+
+def test_no_state_file_is_written_until_a_call_arrives(tmp_path):
+    path = tmp_path / "counters" / "tool_budget.db"
+    tool_budget_limiter(limit=2, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        tool_budget_limiter(limit=2, state=state)

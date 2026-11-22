@@ -93,3 +93,43 @@ def test_a_corrupt_state_file_falls_back_instead_of_raising(tmp_path):
     counters = Counters("test counter", str(path))
     assert counters.bump("agent-1") == 1   # warned, then counted in memory
     assert counters.bump("agent-1") == 2
+
+
+# --- the spend table --------------------------------------------------------
+#
+# The cost guard sums a number rather than counting one, so its totals live in
+# a second table in the same file: a REAL column, because 0.1 + 0.2 must stay
+# fractional.
+
+
+def test_a_charge_accumulates_fractionally(tmp_path):
+    ledger = CounterLedger(_path(tmp_path))
+    assert ledger.charge("total", 0.1, max_keys=DEFAULT_MAX_KEYS) == pytest.approx(0.1)
+    assert ledger.charge("total", 0.2, max_keys=DEFAULT_MAX_KEYS) == pytest.approx(0.3)
+    assert ledger.spent("total") == pytest.approx(0.3)
+
+
+def test_an_uncharged_key_has_spent_nothing(tmp_path):
+    assert CounterLedger(_path(tmp_path)).spent("total") == 0.0
+
+
+def test_the_spend_and_the_counts_do_not_collide(tmp_path):
+    # One file serves one rule, but the tables still key independently.
+    ledger = CounterLedger(_path(tmp_path))
+    ledger.bump("agent-1", max_keys=DEFAULT_MAX_KEYS)
+    ledger.charge("agent-1", 2.5, max_keys=DEFAULT_MAX_KEYS)
+    assert ledger.count("agent-1") == 1
+    assert ledger.spent("agent-1") == pytest.approx(2.5)
+
+
+def test_counters_charge_carries_the_total_to_the_next_rule(tmp_path):
+    path = _path(tmp_path)
+    assert Counters("cost budget", path).charge("total", 0.75) == pytest.approx(0.75)
+    assert Counters("cost budget", path).charge("total", 0.75) == pytest.approx(1.5)
+
+
+def test_without_a_state_path_a_charge_stays_in_memory(tmp_path):
+    counters = Counters("cost budget")
+    assert counters.charge("total", 0.5) == pytest.approx(0.5)
+    assert counters.charge("total", 0.5) == pytest.approx(1.0)
+    assert not list(tmp_path.iterdir())

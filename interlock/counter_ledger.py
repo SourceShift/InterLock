@@ -1,15 +1,18 @@
-"""A durable per-key counter for the rate limiters.
+"""A durable per-key counter for the rate limiters and the budget guards.
 
-The rate limiters - ``call_rate_limiter``, ``egress_rate_limiter`` and
+The limiters - ``call_rate_limiter``, ``egress_rate_limiter`` and
 ``failed_auth_lockout`` - judge a principal in aggregate, so their whole
-opinion lives in a running count. Kept in the rule's closure that count dies
-with the process: fine for a daemon, useless for a hook host, which starts a
-new process per tool call and so gives every call a fresh budget. Point the
-rule's ``state=`` at a file and the counts live here instead.
+opinion lives in a running count; ``tool_budget_limiter`` counts per tool name
+the same way. ``cost_budget_guard`` keeps a running *sum* instead, because a
+budget in money is a number, not a tally. Kept in the rule's closure that
+state dies with the process: fine for a daemon, useless for a hook host, which
+starts a new process per tool call and so gives every call a fresh budget.
+Point the rule's ``state=`` at a file and the counts live here instead.
 
-What it stores is deliberately little: the key (a principal name - the same
-value a receipt already carries) and one integer. No argument, no path, no
-result text.
+What it stores is deliberately little: the key (a principal or tool name - the
+same value a receipt already carries) and one number. No argument, no path, no
+result text. A file serves one rule, so its two tables - ``counters`` for the
+tallies and ``spend`` for the sums - never mix in practice.
 
 One ``BEGIN IMMEDIATE`` transaction per event, so two hooks racing on the same
 principal cannot lose a count. A counter never decays: like the in-process
@@ -42,6 +45,11 @@ CREATE TABLE IF NOT EXISTS counters (
     key TEXT NOT NULL UNIQUE,
     count INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS spend (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    amount REAL NOT NULL
+);
 """
 
 
@@ -61,7 +69,7 @@ class CounterLedger:
                      max_keys: int) -> int:
         row = db.execute("SELECT count FROM counters WHERE key = ?", (key,)).fetchone()
         if row is None:
-            self._claim_key(db, max_keys)
+            self._claim_key(db, "counters", max_keys)
             db.execute("INSERT INTO counters (key, count) VALUES (?, 1)", (key,))
             return 1
         count = int(row[0]) + 1
@@ -69,15 +77,38 @@ class CounterLedger:
         return count
 
     @staticmethod
-    def _claim_key(db: sqlite3.Connection, max_keys: int) -> None:
-        """Make room for a new key by evicting the oldest one."""
-        total = int(db.execute("SELECT COUNT(*) FROM counters").fetchone()[0])
+    def _claim_key(db: sqlite3.Connection, table: str, max_keys: int) -> None:
+        """Make room for a new key by evicting the oldest one in *table*."""
+        total = int(db.execute(
+            "SELECT COUNT(*) FROM {}".format(table)).fetchone()[0])
         if total < max_keys:
             return
         oldest = db.execute(
-            "SELECT key FROM counters ORDER BY seq LIMIT 1").fetchone()
+            "SELECT key FROM {} ORDER BY seq LIMIT 1".format(table)).fetchone()
         if oldest is not None:
-            db.execute("DELETE FROM counters WHERE key = ?", (oldest[0],))
+            db.execute("DELETE FROM {} WHERE key = ?".format(table), (oldest[0],))
+
+    def charge(self, key: str, amount: float, *, max_keys: int) -> float:
+        """Add *amount* to *key*'s running total and return the new total.
+
+        A cost budget adds a number rather than one, so it sums into the same
+        file's ``spend`` table. The amount is added before it is returned, so
+        the caller judges the total the charge produced - the same order the
+        in-process guard applies.
+        """
+        with immediate(self.path) as db:
+            return self._charge_locked(db, key, amount, max_keys=max_keys)
+
+    def _charge_locked(self, db: sqlite3.Connection, key: str, amount: float, *,
+                       max_keys: int) -> float:
+        row = db.execute("SELECT amount FROM spend WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            self._claim_key(db, "spend", max_keys)
+            db.execute("INSERT INTO spend (key, amount) VALUES (?, ?)", (key, amount))
+            return float(amount)
+        total = float(row[0]) + float(amount)
+        db.execute("UPDATE spend SET amount = ? WHERE key = ?", (total, key))
+        return total
 
     def count(self, key: str) -> int:
         """*key*'s count, or 0 if it was never bumped (or was evicted)."""
@@ -88,6 +119,16 @@ class CounterLedger:
         finally:
             db.close()
         return 0 if row is None else int(row[0])
+
+    def spent(self, key: str) -> float:
+        """*key*'s running total, or 0 if it was never charged."""
+        db = connect(self.path)
+        try:
+            row = db.execute("SELECT amount FROM spend WHERE key = ?",
+                             (key,)).fetchone()
+        finally:
+            db.close()
+        return 0.0 if row is None else float(row[0])
 
 
 class Counters:
@@ -107,6 +148,7 @@ class Counters:
         checked = check_state_path(state)
         self._max_keys = max_keys
         self._counts: Dict[str, int] = {}
+        self._spend: Dict[str, float] = {}
         self._lock = threading.Lock()
         self._durable = (LazyFile(checked, CounterLedger, what, _log)
                          if checked is not None else None)
@@ -123,6 +165,20 @@ class Counters:
         with self._lock:
             self._counts[key] = self._counts.get(key, 0) + 1
             return self._counts[key]
+
+    def charge(self, key: str, amount: float) -> float:
+        """Add *amount* to *key*'s running total and return the new total."""
+        if self._durable is not None:
+            ledger = self._durable.get()
+            if ledger is not None:
+                try:
+                    return ledger.charge(key, amount, max_keys=self._max_keys)
+                except Exception as exc:  # locked, full disk, a corrupted file
+                    self._durable.fail(exc)
+        with self._lock:
+            total = self._spend.get(key, 0.0) + float(amount)
+            self._spend[key] = total
+            return total
 
 
 __all__ = ["DEFAULT_MAX_KEYS", "CounterLedger", "Counters"]

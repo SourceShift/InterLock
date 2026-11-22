@@ -24,6 +24,13 @@ breaking changes land.
   cumulative: a durable limiter reads "N calls since the state file was
   created".
 
+- **The two budget rules survive the process too.** `tool_budget_limiter`
+  now takes the same `state=` and counts per tool name through the same
+  ledger, and `cost_budget_guard` keeps its running total in the file's
+  `spend` table - a REAL column, so fractional charges still add up across
+  processes - instead of a closure variable. Both read cumulatively: "calls to
+  this tool" and "spend since the state file was created".
+
 - **A sequence journal can be seeded from the receipt log.** A durable
   `state=` file survives the process but not a restart or a fresh install: the
   first `http_post` of the day is judged against an empty journal. The new

@@ -8,24 +8,25 @@ retrying a flaky call, or an attacker given a narrow primitive and riding it to
 turn a small foothold into a large effect, looks perfectly ordinary one call at
 a time and abuses only in aggregate.
 
-This Rule keeps one running count per action name in this process and blocks
+This Rule keeps one running count per action name and blocks
 every further call to a tool once that tool has been seen more than ``limit``
 times. The boundary is inclusive at the limit, matching how operators read "N
 calls allowed": with ``limit=2`` the second call still passes and the third is
 refused.
 
-The counter lives in the closure, so every factory call owns fresh state - two
-rules built from separate ``tool_budget_limiter()`` calls never share a tally
-and cannot trip each other. Keying is by ``event.action``: each tool gets its
+The counter lives in the closure by default, so every factory call owns fresh
+state - two rules built from separate ``tool_budget_limiter()`` calls never
+share a tally and cannot trip each other; a hook host starts a new process per
+call, which is why ``state=`` exists. Keying is by ``event.action``: each tool gets its
 own budget, so one loud tool does not spend another's. The rule returns None
 (no opinion) while a tool is within budget, and never raises on odd input - an
 event whose action is not a string has no name to key on and is skipped.
 """
 from __future__ import annotations
 
-import threading
-from typing import Dict, Optional
+from typing import Optional
 
+from ..counter_ledger import Counters
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -35,7 +36,8 @@ POLICY_ID = "tool_budget"
 DEFAULT_LIMIT = 50
 
 
-def tool_budget_limiter(limit: int = DEFAULT_LIMIT) -> Rule:
+def tool_budget_limiter(limit: int = DEFAULT_LIMIT, *,
+                        state: Optional[str] = None) -> Rule:
     """Rule: block once one tool name has been called more than *limit* times.
 
     The count is keyed by ``event.action`` and incremented on every event whose
@@ -45,21 +47,23 @@ def tool_budget_limiter(limit: int = DEFAULT_LIMIT) -> Rule:
     must be a positive non-bool integer; anything else raises ``ValueError`` at
     construction. The counter is incremented under a per-rule lock, so
     concurrent calls cannot lose a count.
+
+    *state* is an absolute path to a SQLite file that makes the per-tool counts
+    survive the process, so a hook host - one process per call - still spends
+    one budget per tool. A relative path is refused. The tally is cumulative:
+    a durable limiter reads "N calls to this tool since the state file was
+    created".
     """
     if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
         raise ValueError("limit must be a positive integer")
-    counts: Dict[str, int] = {}
-    lock = threading.Lock()
+    counters = Counters("tool-budget counter", state)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         action = getattr(event, "action", None)
         if not isinstance(action, str):
             return None
 
-        with lock:
-            counts[action] = counts.get(action, 0) + 1
-            over_limit = counts[action] > limit
-        if over_limit:
+        if counters.bump(action) > limit:
             return Decision.block(
                 reason="tool_budget: limit {} exceeded".format(limit),
                 policy_id=POLICY_ID,
