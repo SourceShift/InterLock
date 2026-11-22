@@ -11,6 +11,16 @@ breaking changes land.
 
 ### Added
 
+- **The cloud plane's review carries the remediation hint.** The masked
+  upload had a `reason` but not the line the policy offered as allowed instead,
+  so a remote reviewer saw what was refused and not the alternative a local one
+  sees. `remediation` is now a nullable column on `reviews` (migration
+  `006_review_remediation.sql`, additive), an allow-listed upload field and a
+  connector output clipped to one printable line of at most `MAX_REMEDIATION`
+  characters; `ReviewRecord.public()` returns it and the console's review
+  detail shows it. An upload from an older host stores `NULL`, which every
+  reader treats as "the rule gave no hint".
+
 - **A sequence survives the process.** `sequence_guard` kept its journal in
   the rule's closure, which a hook host cannot use: it starts a new process per
   tool call, so the `env_secret_read` in one invocation was forgotten before

@@ -52,6 +52,12 @@ invert one.
 An argument *digest* also travels - a hash, not the arguments - so the plane
 can prove the reviewed call is the call that was released.
 
+The rule's `remediation` hint travels with the review, next to the `reason`:
+the one line the policy offered as allowed instead. It is policy text the
+plane already holds (it compiled the policy), it is cut to a single printable
+line of at most 200 characters, and it is guidance only - it cannot change a
+verdict. A remote reviewer therefore sees the alternative a local one sees.
+
 Everything the plane stores about a review is encrypted at rest with the
 org's key, and reading a decrypted preview is a separately audited event.
 

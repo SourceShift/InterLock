@@ -354,6 +354,7 @@ def test_available_lists_the_migrations_in_order():
         (3, "003_c4_receipts_audit.sql"),
         (4, "004_c5_policy_distribution.sql"),
         (5, "005_c7_operations.sql"),
+        (6, "006_review_remediation.sql"),
     ]
 
 

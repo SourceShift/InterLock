@@ -303,6 +303,10 @@ class ReviewRecord:
     min_approvals: int = 1
     allow_self_approval: bool = True
     approval_ttl: float = 900.0
+    # The rule's one-line hint at what would be allowed instead, as the host
+    # stored it (already clipped to one printable line there). None when the
+    # rule gave none or the host predates the field.
+    remediation: Optional[str] = None
 
     def public(self) -> Dict[str, Any]:
         """The list view: no preview and no ciphertext ever leaves here."""
@@ -316,6 +320,7 @@ class ReviewRecord:
             "requester": self.requester,
             "policy_id": self.policy_id,
             "reason": self.reason,
+            "remediation": self.remediation,
             "args_digest": self.args_digest,
             "mask_counts": dict(self.mask_counts),
             "created": _now_iso(self.created),
@@ -1007,6 +1012,7 @@ class MemoryStore:
                       requester: Optional[str] = None,
                       policy_id: Optional[str] = None,
                       reason: Optional[str] = None,
+                      remediation: Optional[str] = None,
                       args_digest: Optional[str] = None,
                       preview_enc: Optional[bytes] = None,
                       mask_counts: Optional[Dict[str, int]] = None,
@@ -1034,7 +1040,8 @@ class MemoryStore:
                 org_id=oid, host_id=host_id, id=review_id,
                 binding=binding, status="pending", action=action, phase=phase,
                 principal=principal, requester=requester,
-                policy_id=policy_id, reason=reason, args_digest=args_digest,
+                policy_id=policy_id, reason=reason, remediation=remediation,
+                args_digest=args_digest,
                 preview_enc=preview_enc, mask_counts=dict(mask_counts or {}),
                 metadata=dict(metadata or {}),
                 created=_epoch() if created is None else float(created),
@@ -2744,7 +2751,7 @@ class PostgresStore:
         "org_id, host_id, id, status, binding, action, phase, principal, "
         "requester, policy_id, reason, args_digest, preview_enc, mask_counts, "
         "metadata, created, pending_until, decided, decided_by, approval_until, "
-        "approvers, min_approvals, allow_self_approval, approval_ttl"
+        "approvers, min_approvals, allow_self_approval, approval_ttl, remediation"
     )
 
     def _review_row(self, row: Tuple[Any, ...]) -> ReviewRecord:
@@ -2763,6 +2770,7 @@ class PostgresStore:
             min_approvals=int(row[21] if row[21] is not None else 1),
             allow_self_approval=bool(row[22]),
             approval_ttl=float(row[23] if row[23] is not None else 900.0),
+            remediation=row[24],
         )
 
     def upsert_review(self, org_id: Union[str, Org], host_id: str,
@@ -2771,6 +2779,7 @@ class PostgresStore:
                       requester: Optional[str] = None,
                       policy_id: Optional[str] = None,
                       reason: Optional[str] = None,
+                      remediation: Optional[str] = None,
                       args_digest: Optional[str] = None,
                       preview_enc: Optional[bytes] = None,
                       mask_counts: Optional[Dict[str, int]] = None,
@@ -2798,14 +2807,14 @@ class PostgresStore:
                     "action, phase, principal, requester, policy_id, reason, "
                     "args_digest, preview_enc, mask_counts, metadata, created, "
                     "pending_until, approvers, min_approvals, allow_self_approval, "
-                    "approval_ttl) VALUES (%s, %s, %s, 'pending', %s, %s, %s, %s, "
-                    "%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, to_timestamp(%s), "
-                    "to_timestamp(%s), '[]'::jsonb, %s, %s, %s)",
+                    "approval_ttl, remediation) VALUES (%s, %s, %s, 'pending', %s, "
+                    "%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, "
+                    "to_timestamp(%s), to_timestamp(%s), '[]'::jsonb, %s, %s, %s, %s)",
                     (oid, host_id, review_id, binding, action, phase, principal,
                      requester, policy_id, reason, args_digest, preview_enc,
                      json.dumps(mask_counts or {}), json.dumps(metadata or {}),
                      at, pending_until, int(min_approvals),
-                     bool(allow_self_approval), float(approval_ttl)))
+                     bool(allow_self_approval), float(approval_ttl), remediation))
             cur.execute(
                 "SELECT " + self._REVIEW_COLUMNS + " FROM reviews "
                 "WHERE org_id = %s AND host_id = %s AND id = %s",

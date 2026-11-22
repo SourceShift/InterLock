@@ -1,7 +1,8 @@
 """The masked review upload record (C3, FR-015, FR-016, FR-018).
 
-The connector uploads exactly sixteen keys: the metadata a reviewer decides
-with, an argument digest, and the masking engine's preview output. The raw
+The connector uploads exactly seventeen keys: the metadata a reviewer decides
+with, the policy's one-line remediation hint, an argument digest, and the
+masking engine's preview output. The raw
 call - event or arguments under any spelling - never enters the record, and
 the requester's name is either an opaque per-host HMAC label or, for an org
 that opted in, the plain name.
@@ -32,6 +33,7 @@ def _full(**overrides):
         "requester": "hmac:" + "0" * 32,
         "policy_id": "p-1",
         "reason": "publishing",
+        "remediation": None,
         "args_digest": "d" * 64,
         "preview": "npm publish",
         "mask_counts": {},
@@ -63,12 +65,12 @@ def _review(**overrides):
     return review
 
 
-def test_the_allow_list_is_exactly_the_sixteen_wire_keys():
+def test_the_allow_list_is_exactly_the_seventeen_wire_keys():
     assert ALLOWED_FIELDS == (
         "review_id", "binding", "action", "phase", "principal", "requester",
-        "policy_id", "reason", "args_digest", "preview", "mask_counts",
-        "created", "pending_until", "min_approvals", "allow_self_approval",
-        "approval_ttl",
+        "policy_id", "reason", "remediation", "args_digest", "preview",
+        "mask_counts", "created", "pending_until", "min_approvals",
+        "allow_self_approval", "approval_ttl",
     )
     assert FORBIDDEN_FIELDS == ("event", "args", "raw", "arguments")
 
@@ -106,6 +108,22 @@ def test_the_builder_masks_the_preview_and_counts_every_entity():
     assert "[REDACTED:API_KEY]" in record["preview"]
     # The digest is uploaded; the arguments themselves are not in the record.
     assert record["args_digest"] == "abc123"
+
+
+def test_the_builder_carries_the_remediation_hint_clipped_to_one_line():
+    record = build_record(
+        _review(remediation="  use  `npm  publish --dry-run`\nfirst\t"),
+        binding="b" * 64, agent_key="k")
+    assert record["remediation"] == "use `npm publish --dry-run` first"
+
+    long = build_record(_review(remediation="x" * 500), binding="b" * 64,
+                        agent_key="k")
+    assert len(long["remediation"]) == 200
+
+    for absent in (None, "", 42):
+        record = build_record(_review(remediation=absent), binding="b" * 64,
+                              agent_key="k")
+        assert record["remediation"] is None
 
 
 def test_the_builder_never_echoes_an_event_or_arguments_key():

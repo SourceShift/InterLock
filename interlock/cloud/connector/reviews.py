@@ -20,13 +20,15 @@ import hashlib
 import hmac
 from typing import Any, Dict, Optional
 
+from ...enforce import MAX_REMEDIATION
 from ...masking import Masker
 
 #: The exact keys the plane accepts (see ``UPLOAD_FIELDS`` server-side).
 ALLOWED_FIELDS = (
     "review_id", "binding", "action", "phase", "principal", "requester",
-    "policy_id", "reason", "args_digest", "preview", "mask_counts", "created",
-    "pending_until", "min_approvals", "allow_self_approval", "approval_ttl",
+    "policy_id", "reason", "remediation", "args_digest", "preview",
+    "mask_counts", "created", "pending_until", "min_approvals",
+    "allow_self_approval", "approval_ttl",
 )
 
 #: A payload carrying one of these names would leak the raw call.
@@ -52,6 +54,19 @@ def requester_label(requester: Optional[str], agent_key: Optional[str], *,
     digest = hmac.new(key, str(requester).encode("utf-8"),
                       hashlib.sha256).hexdigest()
     return REQUESTER_LABEL_PREFIX + digest[:32]
+
+
+def _one_line(text: Any) -> Optional[str]:
+    """*text* as one printable line of at most MAX_REMEDIATION characters.
+
+    The host already clips the hint when it stores the review; the plane's
+    reader is a browser, so the upload repeats the bound rather than trusting
+    the sender. None for anything that is not a non-empty string.
+    """
+    if not isinstance(text, str):
+        return None
+    line = "".join(ch for ch in " ".join(text.split()) if ch.isprintable())
+    return line[:MAX_REMEDIATION] or None
 
 
 def _field(review: Any, name: str, default: Any = None) -> Any:
@@ -102,6 +117,7 @@ def build_record(review: Any, *, binding: str, agent_key: Optional[str] = None,
         "requester": requester,
         "policy_id": _field(review, "policy_id"),
         "reason": _field(review, "reason"),
+        "remediation": _one_line(_field(review, "remediation")),
         "args_digest": _field(review, "args_digest") or "",
         "preview": preview,
         "mask_counts": mask_counts,

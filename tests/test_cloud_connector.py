@@ -56,6 +56,7 @@ def test_on_file_masks_the_preview_and_keeps_the_exact_allow_list(tmp_path):
         "phase": "propose", "principal": "alice", "requester": "bob",
         "args_digest": "abc123", "created": 10.0, "pending_until": 20.0,
         "args_preview": "SECRET ARGS", "preview": "write ada@example.com",
+        "remediation": "use  `npm  publish`\n--dry-run",
     }
 
     assert connector.on_file(review) is True
@@ -65,14 +66,15 @@ def test_on_file_masks_the_preview_and_keeps_the_exact_allow_list(tmp_path):
     record = json.loads(gzip.decompress(batches[0].path.read_bytes()))
     columns = {
         "review_id", "binding", "action", "phase", "principal", "requester",
-        "policy_id", "reason", "args_digest", "preview", "mask_counts",
-        "created", "pending_until", "min_approvals", "allow_self_approval",
-        "approval_ttl",
+        "policy_id", "reason", "remediation", "args_digest", "preview",
+        "mask_counts", "created", "pending_until", "min_approvals",
+        "allow_self_approval", "approval_ttl",
     }
     assert set(record) == columns
     assert record["review_id"] == "rev-1"
     assert record["binding"] == "binding-rev-1"
     assert record["args_digest"] == "abc123"
+    assert record["remediation"] == "use `npm publish` --dry-run"
     assert "ada@example.com" not in json.dumps(record)
     assert record["mask_counts"] == {"EMAIL_ADDRESS": 1}
     # The requester is a stable label, not the local user name.

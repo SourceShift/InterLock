@@ -161,6 +161,7 @@ def _list_item(record: ReviewRecord, now: float) -> str:
         "{} approval(s)".format(record.min_approvals),
         ("masked: " + escape(masked)) if masked else "",
         _field(record.reason) if record.reason else "",
+        _field(record.remediation) if record.remediation else "",
     ) if part)
     return (
         "<li class=\"review\"><a href=\"{}\">"
@@ -234,6 +235,7 @@ def _detail_body(app: Any, request: Request, record: ReviewRecord,
         ("Requested by", record.requester or record.principal or "unknown"),
         ("Policy", record.policy_id or "—"),
         ("Reason", record.reason or "—"),
+        ("Remediation", record.remediation or "—"),
         ("Arguments", record.args_digest or "—"),
         ("Approvals", "{} of {}".format(len(record.approvers),
                                         record.min_approvals)),

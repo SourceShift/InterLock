@@ -112,6 +112,7 @@ def _upload_body(review_id="rev-1", **overrides):
         "requester": "hmac:" + "0" * 32,
         "policy_id": "p-1",
         "reason": "publishing",
+        "remediation": None,
         "args_digest": "d" * 64,
         "preview": "deploy to ada@example.com",
         "mask_counts": {"EMAIL_ADDRESS": 1},
@@ -161,6 +162,30 @@ def test_an_agent_uploads_the_exact_allow_list_and_the_preview_is_encrypted():
     assert b"ada@example.com" not in stored.preview_enc
 
 
+def test_the_remediation_hint_is_stored_returned_and_clipped_by_the_plane():
+    app, store, org, _user, host, _headers, _session = _app_with_user()
+    agent = _agent_headers(store, org, host)
+
+    status, _headers, payload = _upload(
+        app, agent, _upload_body(remediation="use npm publish --dry-run"))
+    assert status == 200
+    assert payload["review"]["remediation"] == "use npm publish --dry-run"
+    assert store.review_by_id(org.id, "rev-1").remediation == \
+        "use npm publish --dry-run"
+
+    status, _headers, payload = _upload(
+        app, agent, _upload_body(review_id="rev-2", binding="c" * 64,
+                                 remediation="y" * 500))
+    assert status == 200
+    assert payload["review"]["remediation"] == "y" * 200
+    assert len(store.review_by_id(org.id, "rev-2").remediation) == 200
+
+    status, _headers, payload = _upload(
+        app, agent, _upload_body(review_id="rev-3", binding="e" * 64))
+    assert status == 200
+    assert payload["review"]["remediation"] is None
+
+
 @pytest.mark.parametrize("forbidden", ["event", "args", "raw", "arguments"])
 def test_the_plane_refuses_a_raw_call_under_any_name(forbidden):
     app, store, org, _user, host, _headers, _session = _app_with_user()
@@ -196,6 +221,7 @@ def test_unknown_fields_and_missing_required_fields_are_422():
 
 @pytest.mark.parametrize("field,value", [
     ("preview", 7),
+    ("remediation", 7),
     ("mask_counts", {"EMAIL_ADDRESS": -1}),
     ("mask_counts", {"EMAIL_ADDRESS": True}),
     ("min_approvals", 0),

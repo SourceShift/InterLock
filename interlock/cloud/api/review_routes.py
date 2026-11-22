@@ -30,13 +30,15 @@ from ..auth.stepup import StepUpError, StepUpService
 from ..crypto import encrypt_preview
 from ..grants import GRANT_MAX_TTL, sign_grant
 from ..http import ApiError, Request, Response, json_response, parse_json_body
+from ...enforce import MAX_REMEDIATION
 from ..store import ReviewConflict, ReviewRecord
 
 #: The exact fields the connector may upload. Anything else is refused.
 UPLOAD_FIELDS = (
     "review_id", "binding", "action", "phase", "principal", "requester",
-    "policy_id", "reason", "args_digest", "preview", "mask_counts", "created",
-    "pending_until", "min_approvals", "allow_self_approval", "approval_ttl",
+    "policy_id", "reason", "remediation", "args_digest", "preview",
+    "mask_counts", "created", "pending_until", "min_approvals",
+    "allow_self_approval", "approval_ttl",
 )
 
 #: Names that would leak the raw call if they ever reached the plane.
@@ -147,6 +149,7 @@ def _upload_record(app: Any, request: Request) -> ReviewRecord:
             requester=_text(body, "requester"),
             policy_id=_text(body, "policy_id"),
             reason=_text(body, "reason"),
+            remediation=_text(body, "remediation", limit=MAX_REMEDIATION),
             args_digest=args_digest,
             preview_enc=preview_enc,
             mask_counts=mask_counts,
