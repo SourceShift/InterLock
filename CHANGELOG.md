@@ -33,7 +33,10 @@ breaking changes land.
   `<root>/<skill>` forms. `interlock skills unpin NAME` removes a single pin
   without hand-editing the JSON, atomically preserving every other name; it is
   keyed by name alone, so it needs no skills root and never hashes a directory.
-  See `docs/guides/skills.md` for the operator's walk-through.
+  `interlock doctor` now reports a `skills.pins` check - the pinned count, drift,
+  or pins whose directory is gone - by name only, so a stale pin is visible
+  without an agent activating that skill. See `docs/guides/skills.md` for the
+  operator's walk-through.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
   patch is judged by evidence it did not produce: every test file it touches

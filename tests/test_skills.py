@@ -9,6 +9,7 @@ must round-trip with mode ``0600`` through an atomic replace.
 """
 import json
 import os
+import shutil
 import stat
 
 import pytest
@@ -521,3 +522,121 @@ def test_cli_bare_skills_lists_every_action(capsys):
     assert main(["skills"]) == 64
     assert ("choose an action: pin, unpin, list, check"
             in capsys.readouterr().err)
+
+
+# --- the doctor check -------------------------------------------------------
+
+
+def test_doctor_reports_no_pins_as_info(tmp_path, monkeypatch):
+    # An empty pin set is not protection: it is INFO, never OK, because no
+    # skill activation is bound to a review yet.
+    from interlock.cli.doctor import _skills_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    rows = {check.id: check for check in _skills_checks()}
+    assert set(rows) == {"skills.pins"}
+    assert rows["skills.pins"].status == "info"
+    assert rows["skills.pins"].summary == (
+        "skill pins: none - every skill activation is allowed")
+
+
+def test_doctor_reports_an_unchanged_pin_as_ok(tmp_path, monkeypatch):
+    from interlock.cli.doctor import _skills_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _home_skill(tmp_path)
+    skills.pin_skill("reviewed")
+    row = _skills_checks()[0]
+    assert (row.id, row.status) == ("skills.pins", "ok")
+    assert row.summary == "skill pins: 1 pinned, all unchanged"
+    assert row.fix == ""
+
+
+def test_doctor_reports_drift_by_name_only(tmp_path, monkeypatch):
+    from interlock.cli.doctor import _skills_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    root = _home_skill(tmp_path)
+    pinned = skills.pin_skill("reviewed")
+    _write(root / "reviewed", "SKILL.md", "tampered instructions\n")
+
+    row = _skills_checks()[0]
+    assert row.status == "warn"
+    assert row.summary == "skill pins: 1 of 1 changed since pinning"
+    assert row.fix == "interlock skills check --all"
+    # Doctor output lands in bug reports: no digest and no path may appear.
+    for secret in (pinned, str(root / "reviewed")):
+        assert secret not in row.summary + row.fix
+
+
+def test_doctor_reports_a_missing_directory_as_warn(tmp_path, monkeypatch):
+    from interlock.cli.doctor import _skills_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    root = _home_skill(tmp_path)
+    skills.pin_skill("reviewed")
+    shutil.rmtree(str(root / "reviewed"))
+
+    row = _skills_checks()[0]
+    assert row.status == "warn"
+    assert row.summary == "skill pins: 1 of 1 no longer found"
+    assert row.fix == "interlock skills unpin NAME"
+
+
+def test_doctor_reports_a_malformed_pin_file_as_warn(tmp_path, monkeypatch):
+    from interlock.cli.doctor import _skills_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pins = tmp_path / ".interlock" / "skills.json"
+    pins.parent.mkdir(parents=True)
+    pins.write_text('{"skills": "not-a-map"}', encoding="utf-8")
+
+    row = _skills_checks()[0]
+    assert row.status == "warn"
+    assert row.summary == "skill pins: cannot be read"
+    assert row.fix == "interlock skills list"
+
+
+def test_doctor_reports_drift_before_missing(tmp_path, monkeypatch):
+    # A pin set can hold both states at once. One row, and drift wins: the
+    # missing-directory roll-up is named only when nothing drifted.
+    from interlock.cli.doctor import _skills_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    kept = _home_skill(tmp_path, "kept")
+    gone = _home_skill(tmp_path, "gone")
+    skills.pin_skill("kept")
+    skills.pin_skill("gone")
+    _write(kept / "kept", "SKILL.md", "changed after pinning\n")
+    shutil.rmtree(str(gone / "gone"))
+
+    rows = _skills_checks()
+    assert len(rows) == 1
+    assert rows[0].status == "warn"
+    assert rows[0].summary == "skill pins: 1 of 2 changed since pinning"
+    assert "no longer found" not in rows[0].summary
+
+
+def test_doctor_skills_check_never_raises_or_leaks_an_exception(
+        tmp_path, monkeypatch):
+    from interlock.cli.doctor import _skills_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    def boom(_path):
+        raise RuntimeError("SECRET pin detail")
+
+    monkeypatch.setattr(skills, "load_pins", boom)
+    row = _skills_checks()[0]
+    assert row.status == "warn"
+    assert "RuntimeError" in row.summary
+    assert "SECRET" not in row.summary + row.fix
+
+
+def test_doctor_cli_reports_the_skills_pins_row(tmp_path, monkeypatch, capsys):
+    from interlock.cli import main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert main(["doctor", "--json"]) in (0, 1)
+    payload = json.loads(capsys.readouterr().out)
+    assert "skills.pins" in {check["id"] for check in payload["checks"]}

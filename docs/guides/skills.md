@@ -261,6 +261,10 @@ may only tighten; it cannot disable a base rule or add a detector rule, so
 tuning this guard is an operator decision made in your own policy file, not
 something a checked-out repository can do to you.
 
+`interlock doctor` reports a `skills.pins` line (pinned count, drift, or pins
+that no longer resolve) so a stale pin is visible before an agent trips it. It
+never prints a skill's path or digest.
+
 ## The three-command recipe
 
 ```bash

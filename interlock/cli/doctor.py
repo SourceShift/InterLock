@@ -1,7 +1,7 @@
-"""Check that interlock protection is actually on.
+"""Check that interlock protection is actually on, including skill pins.
 
-Runs host-level checks and, when you point it at them, checks your policy,
-your sidecar and your receipt log:
+Runs host-level checks - skill pins among them - and, when you point it at
+them, checks your policy, your sidecar and your receipt log:
 
   interlock doctor
   interlock doctor --rules myapp.policy:RULES --receipts audit.jsonl --key-file audit.key
@@ -54,6 +54,7 @@ def run(args) -> int:
     checks.extend(_receipt_checks(args))
     checks.extend(_mesh_checks())
     checks.extend(_hook_checks())
+    checks.extend(_skills_checks())
     checks.extend(_framework_checks())
     for provider in EXTRA_CHECKS:
         try:
@@ -313,3 +314,59 @@ def _hook_checks() -> List[Check]:
                             "installed in {}{}".format(path, mode),
                             "re-install without --monitor once trialled" if mode else ""))
     return checks
+
+
+def _skills_checks() -> List[Check]:
+    """Whether the pinned skills still match, by count only.
+
+    Doctor runs on the host, outside the agent process, so it cannot see which
+    skills that process activates; it can check the pins it would consult. A
+    pin whose skill's bytes moved, or whose directory is gone, is otherwise
+    invisible until an agent happens to activate that skill. Every summary and
+    fix is name-only - never a path, a digest or file content - because doctor
+    output ends up in bug reports.
+
+    Empty pins are ``INFO``, not ``OK``: nothing is protected yet, but pinning
+    is opt-in. Drift is reported before a missing directory so a name found in
+    both states is never counted twice.
+    """
+    try:
+        from ..skills import DEFAULT_PINS_PATH, find_skill, load_pins, skill_digest
+
+        try:
+            pins = load_pins(DEFAULT_PINS_PATH)
+        except (OSError, ValueError):
+            return [Check("skills.pins", WARN, "skill pins: cannot be read",
+                          "interlock skills list")]
+        if not pins:
+            return [Check("skills.pins", INFO,
+                          "skill pins: none - every skill activation is allowed")]
+        changed = 0
+        missing = 0
+        for name in sorted(pins):
+            directory = find_skill(name)
+            if directory is None:
+                missing += 1
+                continue
+            try:
+                digest = skill_digest(directory)
+            except (OSError, ValueError):
+                changed += 1  # cannot be judged is never "unchanged"
+                continue
+            if digest != pins[name]:
+                changed += 1
+    except Exception as exc:  # a broken pin state must not hide the rest
+        return [Check("skills.pins", WARN,
+                      "skill pins: cannot be read: {}".format(type(exc).__name__),
+                      "interlock skills list")]
+    total = len(pins)
+    if changed:
+        return [Check("skills.pins", WARN,
+                      "skill pins: {} of {} changed since pinning".format(changed, total),
+                      "interlock skills check --all")]
+    if missing:
+        return [Check("skills.pins", WARN,
+                      "skill pins: {} of {} no longer found".format(missing, total),
+                      "interlock skills unpin NAME")]
+    return [Check("skills.pins", OK,
+                  "skill pins: {} pinned, all unchanged".format(total))]

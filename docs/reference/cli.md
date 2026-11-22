@@ -28,10 +28,10 @@ command) turns off color; color is also off when output isn't a terminal or
 
 ## `interlock doctor`
 
-Check that interlock protection is actually on.
+Check that interlock protection is actually on, including skill pins.
 
-Runs host-level checks and, when you point it at them, checks your policy,
-your sidecar and your receipt log:
+Runs host-level checks - skill pins among them - and, when you point it at
+them, checks your policy, your sidecar and your receipt log:
 
 ```bash
 interlock doctor
