@@ -32,6 +32,21 @@ from interlock.brace import (
     compile_profile,
     select_backend,
 )
+from interlock.brace.backends.landlock import landlock_abi
+
+
+def _landlock_tokens():
+    """Landlock's row, which depends on the kernel rather than the binary.
+
+    ``net`` is only handleable from ABI 4 (Linux 6.7+); on an older kernel the
+    backend honestly reports no ``net`` and this table must expect that, not
+    the newest row, or the drift test would fail on an older host.
+    """
+    tokens = ["env", "fs-ro", "fs-rw", "rlimit"]
+    if (landlock_abi() or 0) >= 4:
+        tokens.append("net")
+    return tuple(tokens)
+
 
 # The contract: the tokens each backend is allowed to claim, keyed by backend
 # name. The drift test at the bottom pins the union of what a backend reports
@@ -39,10 +54,17 @@ from interlock.brace import (
 TOKENS_BY_BACKEND = {
     "soft": ("env", "rlimit"),
     "bubblewrap": ("env", "fs-ro", "fs-rw", "pid", "net", "rlimit"),
+    "landlock": _landlock_tokens(),
     "sandbox-exec": ("env", "fs-rw", "net", "rlimit"),
 }
 
 _AVAILABLE = set(available_backends())
+
+
+def _needs_landlock_net(backend):
+    """Skip a net row for landlock on a kernel whose ABI has no net rules."""
+    if backend == "landlock" and (landlock_abi() or 0) < 4:
+        pytest.skip("landlock handles TCP only at ABI 4+ (Linux 6.7+)")
 
 
 def _backends(*names):
@@ -104,7 +126,7 @@ _ENV_PROBE = textwrap.dedent(
 ).format(key=_SENTINEL_KEY, value=_SENTINEL_VALUE)
 
 
-@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "landlock", "sandbox-exec"))
 def test_env_escape_parent_secret_never_reaches_child(backend, monkeypatch):
     """The parent process holds a sentinel secret in its environment; the
     sandboxed child reaches for it and must come up empty-handed."""
@@ -115,7 +137,7 @@ def test_env_escape_parent_secret_never_reaches_child(backend, monkeypatch):
     assert result.stdout.strip() == "SCRUBBED", "a parent env secret crossed into the sandbox"
 
 
-@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "landlock", "sandbox-exec"))
 def test_env_control_granted_secret_reaches_child(backend):
     """Control: the identical probe with the sentinel granted via the profile.
     The child sees it, which proves the SCRUBBED outcome above was the profile
@@ -134,7 +156,7 @@ def _tamper_command(protected):
     return ["/bin/sh", "-c", "echo TAMPERED > %s" % protected]
 
 
-@pytest.mark.parametrize("backend", _backends("bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("bubblewrap", "landlock", "sandbox-exec"))
 def test_fs_rw_escape_write_outside_grant_fails(backend, protected_dir):
     """The agent overwrites a config file outside its write grant. The write is
     denied and the file's bytes are untouched."""
@@ -150,7 +172,7 @@ def test_fs_rw_escape_write_outside_grant_fails(backend, protected_dir):
         assert f.read() == "TRUSTED=original", "an out-of-grant write tampered with the file"
 
 
-@pytest.mark.parametrize("backend", _backends("bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("bubblewrap", "landlock", "sandbox-exec"))
 def test_fs_rw_control_write_inside_grant_succeeds(backend, protected_dir):
     """Control: the same write to the same path, with the directory granted.
     It lands, which proves the denial above came from the grant, not from the
@@ -170,11 +192,14 @@ def test_fs_rw_control_write_inside_grant_succeeds(backend, protected_dir):
 # --- net: a secret in hand inside the sandbox must not be able to leave -------
 
 
-@pytest.mark.parametrize("backend", _backends("bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("bubblewrap", "landlock", "sandbox-exec"))
 def test_net_escape_exfiltration_to_outsider_fails(backend, outsider, credentials_file):
     """The agent holds a real credentials file and POSTs it to the outsider.
     The send is denied at the socket and the outsider receives nothing."""
-    profile = compile_profile({})  # no egress binding -> no network
+    _needs_landlock_net(backend)
+    # The secret is granted read-only so the attack genuinely has it in hand:
+    # otherwise a filesystem backend could "stop" the exfil by hiding the file.
+    profile = compile_profile({}).with_paths(read=[credentials_file])
     code = _exfil_code(credentials_file, outsider.url)
 
     result = _run(backend, profile, ["python3", "-c", code])
@@ -184,12 +209,14 @@ def test_net_escape_exfiltration_to_outsider_fails(backend, outsider, credential
     assert outsider.received == [], "a secret escaped the sandbox"
 
 
-@pytest.mark.parametrize("backend", _backends("bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("bubblewrap", "landlock", "sandbox-exec"))
 def test_net_control_egress_grant_lets_the_send_through(backend, outsider, credentials_file):
     """Control: the identical attack with an egress binding in the profile.
     The send succeeds and the outsider records the credentials, which proves
     the block above was policy, not broken networking."""
+    _needs_landlock_net(backend)
     profile = compile_profile({"egress_allowlist": {"allowed_hosts": ["127.0.0.1"]}})
+    profile = profile.with_paths(read=[credentials_file])
     code = _exfil_code(credentials_file, outsider.url)
 
     result = _run(backend, profile, ["python3", "-c", code])
@@ -199,7 +226,7 @@ def test_net_control_egress_grant_lets_the_send_through(backend, outsider, crede
     assert any("OPENAI_API_KEY" in blob for blob in outsider.received)
 
 
-# --- fs-ro: a read outside the grant must be denied (bubblewrap only) ---------
+# --- fs-ro: a read outside the grant must be denied (bubblewrap, landlock) ----
 
 _FS_RO_PROBE = textwrap.dedent(
     """
@@ -214,10 +241,11 @@ _FS_RO_PROBE = textwrap.dedent(
 )
 
 
-@pytest.mark.parametrize("backend", _backends("bubblewrap"))
+@pytest.mark.parametrize("backend", _backends("bubblewrap", "landlock"))
 def test_fs_ro_escape_read_outside_grant_fails(backend):
     """The agent reads a system file the profile never granted. Inside the
-    bwrap mount namespace the path simply does not exist, so the read fails."""
+    bwrap mount namespace the path simply does not exist; under landlock the
+    kernel refuses the open. Either way the read fails."""
     result = _run(backend, compile_profile({}), ["python3", "-c", _FS_RO_PROBE])
 
     assert "fs-ro" in result.enforced
@@ -225,11 +253,11 @@ def test_fs_ro_escape_read_outside_grant_fails(backend):
     assert result.stdout.strip().startswith("DENIED")
 
 
-@pytest.mark.parametrize("backend", _backends("bubblewrap"))
+@pytest.mark.parametrize("backend", _backends("bubblewrap", "landlock"))
 def test_fs_ro_control_granted_read_succeeds(backend):
-    """Control: the same read with /etc/passwd bound read-only into the
-    namespace. It succeeds, which proves the denial above was the absence of
-    the bind, not the file being unreadable on this host."""
+    """Control: the same read with /etc/passwd granted read. It succeeds,
+    which proves the denial above was the sandbox, not the file being
+    unreadable on this host."""
     profile = SandboxProfile.locked().with_paths(read=["/etc/passwd"])
     result = _run(backend, profile, ["python3", "-c", _FS_RO_PROBE])
 
@@ -282,7 +310,7 @@ def test_pid_control_shared_pid_namespace_can_signal(backend):
 # --- rlimit: a runaway CPU burn must die (soft backend, portable) -------------
 
 
-@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "landlock", "sandbox-exec"))
 def test_rlimit_escape_runaway_cpu_is_killed(backend):
     """A runaway agent burns CPU forever. RLIMIT_CPU kills it with SIGXCPU —
     asserted by signal number, not just "nonzero", because that is the exact
@@ -298,7 +326,7 @@ def test_rlimit_escape_runaway_cpu_is_killed(backend):
     )
 
 
-@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "landlock", "sandbox-exec"))
 def test_rlimit_control_no_ceiling_means_no_kill(backend):
     """Control: the identical infinite loop under a profile with no ceiling.
     Nothing inside the sandbox kills it, so the harness timeout is the only
@@ -318,7 +346,7 @@ _BATTERY = (
 )
 
 
-@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "sandbox-exec"))
+@pytest.mark.parametrize("backend", _backends("soft", "bubblewrap", "landlock", "sandbox-exec"))
 def test_reported_tokens_match_the_guarantee_table(backend):
     """Drift guard, both directions: the union of tokens a backend reports over
     a battery of profiles is exactly the set the guarantee table documents. A

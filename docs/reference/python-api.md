@@ -1261,7 +1261,7 @@ Sandbox(profile=None, *, backend=None, engine=None, enforcement="blocking",
 | Parameter | Meaning |
 |---|---|
 | `profile` | What the process may reach. Defaults to `SandboxProfile.locked()`: nothing. |
-| `backend` | Pin `"bubblewrap"`, `"sandbox-exec"`, or `"soft"`. Default: the strongest one available. |
+| `backend` | Pin `"bubblewrap"`, `"landlock"`, `"sandbox-exec"`, or `"soft"`. Default: the strongest one available. |
 | `engine`, `enforcement`, `principal` | As for [`enforce_tool_call`](#guarding-calls), applied to the launch check. |
 | `require` | `enforced` tokens that must hold, e.g. `("net", "fs-rw")`. `run()` refuses, before starting anything, when the backend can't deliver one. A bare string counts as one token. |
 
@@ -1349,7 +1349,7 @@ Builds a profile from the `{template_id: params}` dict that
 | `argv` | The command as executed (after any policy rewrite), without the wrapper. |
 | `returncode` | The exit status. |
 | `stdout`, `stderr` | Captured output, or `""` when not captured. |
-| `enforced` | The guarantees that actually held, as tokens: `pid`, `net`, `fs-ro`, `fs-rw`, `rlimit`, `env`. Only `soft` reports `rlimit`: bubblewrap and sandbox-exec apply the same limits but don't claim the token, because no escape test pins it for them yet. |
+| `enforced` | The guarantees that actually held, as tokens: `pid`, `net`, `fs-ro`, `fs-rw`, `rlimit`, `env`. `soft` and `landlock` report `rlimit` when the profile sets a limit; bubblewrap and sandbox-exec apply the same limits but don't claim the token. |
 | `ok` | Property: `returncode == 0`. |
 
 ### `available_backends` and `select_backend`

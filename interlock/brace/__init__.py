@@ -6,10 +6,12 @@ that governs the agent's in-process actions. One policy, two enforcement points:
 the detectors intercept the calls interlock can see, and BRACE confines the
 processes it cannot.
 
-The backend is chosen for the host at runtime: bubblewrap on Linux, Seatbelt on
-macOS, and a soft rlimits-and-scrubbed-env fallback everywhere else. The soft
-fallback is honest about not being a security boundary, and the result object
-reports which guarantees actually held so a caller can fail closed.
+The backend is chosen for the host at runtime: bubblewrap on Linux, Landlock
+where the kernel offers it but bubblewrap cannot run (an unprivileged container,
+a host with user namespaces disabled), Seatbelt on macOS, and a soft
+rlimits-and-scrubbed-env fallback everywhere else. The soft fallback is honest
+about not being a security boundary, and the result object reports which
+guarantees actually held so a caller can fail closed.
 
 Guarantee table
 ---------------
@@ -50,6 +52,12 @@ bubblewrap    net      POST a credentials file to a loopback     the send dies a
                                                                 granted egress
                                                                 delivers
 bubblewrap    rlimit   same CPU burn / control as soft          same as soft
+landlock      env      same sentinel attack / control as soft    same as soft
+landlock      fs-ro    same read attack / control as bubblewrap  same as bubblewrap
+landlock      fs-rw    same write attack / control as bubblewrap same as bubblewrap
+landlock      net      same exfil attack / control as bubblewrap same as bubblewrap,
+                                                               ABI 4+ only
+landlock      rlimit   same CPU burn / control as soft          same as soft
 sandbox-exec  env      same sentinel attack / control as soft    same as soft
 sandbox-exec  fs-rw    same write attack / control as bubblewrap same as bubblewrap
 sandbox-exec  net      same exfil attack / control as bubblewrap same as bubblewrap
@@ -58,8 +66,10 @@ sandbox-exec  rlimit   same CPU burn / control as soft          same as soft
 
 Tokens no backend may claim on these hosts: ``fs-ro`` and ``pid`` are never
 reported by sandbox-exec (macOS cannot confine reads, and has no PID
-namespaces), and ``soft`` reports only ``env`` and ``rlimit`` — it is not a
-security boundary and does not pretend to be one.
+namespaces), ``landlock`` never reports ``pid`` either (an LSM, not a namespace,
+so host pids stay visible) and claims ``net`` only where the kernel's ABI
+handles TCP (ABI 4, Linux 6.7+), and ``soft`` reports only ``env`` and
+``rlimit`` — it is not a security boundary and does not pretend to be one.
 
 Resource ceilings (``cpu_seconds``, ``memory_mb``) are applied on every
 backend: the rlimits are set on the wrapper before it execs and are inherited by

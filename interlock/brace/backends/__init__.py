@@ -2,8 +2,10 @@
 
 Selection prefers real kernel-enforced isolation and falls back to the soft
 backend only when nothing better is present. The order is deliberate: bubblewrap
-on Linux, Seatbelt on macOS, and the soft backend last so the API always works,
-just with the honest downgrade in what it can enforce.
+on Linux, then Landlock where the kernel offers it but ``bwrap`` is absent (an
+unprivileged container, a host with user namespaces disabled), then Seatbelt on
+macOS, and the soft backend last so the API always works, just with the honest
+downgrade in what it can enforce.
 """
 from __future__ import annotations
 
@@ -11,12 +13,14 @@ from typing import List, Optional, Type
 
 from .base import Backend, WrapPlan
 from .bubblewrap import BubblewrapBackend
+from .landlock import LandlockBackend
 from .sandbox_exec import SandboxExecBackend
 from .soft import SoftBackend
 
 # Highest-isolation first. SoftBackend is always available and always last.
 _ORDER: List[Type[Backend]] = [
     BubblewrapBackend,
+    LandlockBackend,
     SandboxExecBackend,
     SoftBackend,
 ]
@@ -52,6 +56,7 @@ __all__ = [
     "Backend",
     "WrapPlan",
     "BubblewrapBackend",
+    "LandlockBackend",
     "SandboxExecBackend",
     "SoftBackend",
     "available_backends",

@@ -69,7 +69,7 @@ Each of these is sometimes the right choice. Make it on purpose.
 | `ScopedEngine(..., allow_unscoped=True)` | A call with no principal matches no scope and is **allowed without running any rule** | Every guarded call already runs inside `span(principal=...)`, and you've checked |
 | A hand-written rule that can raise | The caller gets the rule's exception, not `Blocked`; code that only catches `Blocked` may mishandle it | Wrap risky tests in `deny_when` |
 | `Sandbox(..., backend="soft")`, or a host where only `soft` is available | Resource limits and a clean environment only; **not a security boundary** | Local development. In production, pass `require=` so `run()` refuses a weak backend |
-| Granting hosts to a sandbox profile | bubblewrap and Seatbelt can't filter by host, so the child gets **all** network; `net` is left out of `enforced` | The child is trusted with network access, and in-process egress rules cover the rest |
+| Granting hosts to a sandbox profile | bubblewrap, landlock and Seatbelt can't filter by host, so the child gets **all** network; `net` is left out of `enforced` | The child is trusted with network access, and in-process egress rules cover the rest |
 | `FileSink(path)` without `key=` | A random per-process key; after a restart, nobody can verify the old receipts | Tests |
 | Several processes appending to one audit file at once | Their receipts fork the chain; `verify()` reports the fork as a break. `FileSink(path, shared=True)` locks the file and keeps one chain | Never without `shared=True` |
 | `RemoteEngine(..., timeout=None)` (Python or Node.js) | No timeout: a hung sidecar hangs every guarded call. The default is 5 seconds | Never in production |
@@ -293,16 +293,18 @@ listed earlier on this page, and the plane does not compensate for them.
   reading half of it, so the cost bound fails closed. An attacker who can
   trigger escalations can still make the agent ask more often; the stress
   bound caps the cost per call, not the interruption rate.
-- **OS-level per-host egress needs root.** Between bubblewrap's "all network or
-  none" and nftables (per-host, root only, not selectable from `Sandbox`) there's
-  no unprivileged middle ground. macOS's Seatbelt can't express a host allowlist
-  at all. **Accepted:** use in-process egress rules for the gap, or run the
+- **OS-level per-host egress needs root.** Between bubblewrap's or landlock's
+  "all network or none" and nftables (per-host, root only, not selectable from
+  `Sandbox`) there's no unprivileged middle ground. macOS's Seatbelt can't
+  express a host allowlist at all. **Accepted:** use in-process egress rules for the gap, or run the
   sandbox as root with the nftables helper.
 - **macOS sandboxing can't confine reads or process visibility,** and can't cap
   memory. `sandbox-exec` never reports `fs-ro` or `pid`, and a profile with
   `memory_mb` raises `LimitUnsupported` on macOS rather than running without the
   limit. **Accepted:** Seatbelt cannot express either; use Linux for a
-  read-confined sandbox.
+  read-confined sandbox. Landlock confines reads but is an LSM, not a namespace:
+  the child still sees and can signal host processes, so it never reports
+  `pid` either.
 - **A sandbox timeout kills the process group; `setsid()` leaves it.** BRACE
   starts each sandbox in its own session so `timeout=` can kill the child and
   its descendants together, but a descendant that calls `setsid()` itself

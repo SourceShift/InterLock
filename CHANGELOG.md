@@ -11,6 +11,23 @@ breaking changes land.
 
 ### Added
 
+- **A Landlock backend, for Linux hosts where bubblewrap cannot run.** A
+  per-process LSM needs no user namespaces and no helper binary: the process
+  restricts itself, then execs the command (`python -I
+  _landlock_launcher.py <spec> -- <argv>`). It confines reads, writes, creates,
+  removes and executes to the granted paths (`fs-ro`, `fs-rw`), scrubs the
+  environment (`env`), applies the resource ceilings (`rlimit`), and denies TCP
+  where the kernel's ABI handles it (ABI 4, Linux 6.7+): `net` is claimed only
+  then, and only for a profile that grants no network. Selection puts it after
+  bubblewrap and before Seatbelt, so it takes over on an unprivileged container
+  or a host with user namespaces disabled. It never claims `pid` — an LSM is not
+  a namespace — so `require=("pid",)` refuses a landlock run without starting
+  anything. A spec that cannot be built makes the launcher exit without running
+  the command. The guarantee table and the token matrix
+  (`tests/integration/test_brace_token_matrix.py`) gained landlock escape and
+  control rows; the real confinement tests are Linux-gated, since the host this
+  was written on has no Landlock.
+
 - **`interlock report` says what happened after an injection.** A verdict count
   shows the guard withheld a poisoned result; it does not show whether the span
   kept working. The new `containment` section reads the same receipts: an

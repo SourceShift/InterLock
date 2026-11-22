@@ -8,7 +8,8 @@ and runs the command under the operating system's own isolation, so the child is
 confined even though interlock can't watch what it does.
 
 You'll need: interlock installed. On Linux, install `bubblewrap` (`bwrap`) for
-real isolation. On macOS, `sandbox-exec` ships with the system.
+real isolation; where `bwrap` cannot run, a kernel with Landlock (5.13+) is used
+directly, with no helper binary. On macOS, `sandbox-exec` ships with the system.
 
 ## Run a command in a sandbox
 
@@ -156,10 +157,11 @@ raises it.
 
 ## Refuse to run without the isolation you need
 
-BRACE picks the strongest backend available. On a machine without bubblewrap or
-Seatbelt, that's `soft`, which is not a security boundary. If your code needs
-real isolation, say so with `require=`. `run()` then refuses **before starting
-anything** when the backend can't deliver every token you named:
+BRACE picks the strongest backend available: bubblewrap, then Landlock on a
+Linux kernel that offers it, then Seatbelt, then `soft`, which is not a security
+boundary. If your code needs real isolation, say so with `require=`. `run()`
+then refuses **before starting anything** when the backend can't deliver every
+token you named:
 
 ```python
 from interlock.brace import IsolationUnavailable
@@ -264,10 +266,12 @@ takes `engine=`, `enforcement="monitor"`, and `principal=` for this check.
 | Backend | Runs on | `enforced` tokens | Reads confined | CPU/memory limits | `workdir` |
 |---|---|---|---|---|---|
 | `bubblewrap` | Linux with `bwrap` | `fs-ro`, `fs-rw`, `env`, `pid`, `net`* | yes | applied (not reported) | yes |
+| `landlock` | Linux 5.13+, no `bwrap` needed | `fs-ro`, `fs-rw`, `env`, `net`*, `rlimit`** | yes | yes | yes |
 | `sandbox-exec` | macOS | `fs-rw`, `env`, `net`* | no | CPU applied (not reported); memory refused | yes |
 | `soft` | anywhere | `env`, `rlimit`** | no | yes (memory refused on macOS) | yes |
 
-\* only when the profile grants no network.
+\* only when the profile grants no network; landlock can only claim it on
+kernels whose ABI handles TCP (ABI 4, Linux 6.7+).
 \*\* only when the profile sets a limit.
 
 What each token means:
@@ -279,7 +283,8 @@ What each token means:
   default; under bubblewrap `/tmp` and `/dev` are fresh trees private to the
   sandbox.
 - `fs-ro`: only the granted paths, plus read-only system directories such as
-  `/usr`, `/bin`, and `/etc/ssl`, exist inside the sandbox.
+  `/usr`, `/bin`, and `/etc/ssl`, are readable. Under bubblewrap the others do
+  not exist inside the namespace; under landlock the kernel refuses them.
 - `pid`: the child can't see or signal host processes.
 - `net`: the child has no network.
 - `rlimit`: the CPU and memory ceilings are applied.
@@ -309,6 +314,15 @@ A backend missing from the host is skipped with a reason (`pytest -rs`).
   described above.
 - **`sandbox-exec` is deprecated by Apple.** It works on current macOS but is
   not a supported API.
+- **Landlock is a filesystem LSM, not a namespace.** It confines reads, writes
+  and executes, but the child still shares the host's PID namespace, so it can
+  see and signal host processes (`pid` is never claimed, and `require=("pid",)`
+  refuses a landlock run). Sockets below TCP are untouched, and a profile that
+  grants network gets all of it — there is no host allowlist, exactly as with
+  bubblewrap. The TCP deny needs ABI 4 (Linux 6.7+); older kernels simply do not
+  claim `net`. The kernel itself is the wrapper: the run is
+  `python -I _landlock_launcher.py <spec> -- <argv>`, and a launch that cannot
+  build its ruleset exits without running the command.
 
 ## Next
 
