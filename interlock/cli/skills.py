@@ -74,6 +74,7 @@ def run(args) -> int:
         DEFAULT_PINS_PATH,
         discover_skills,
         find_skill,
+        load_pin_roots,
         load_pins,
         pin_skill,
         skill_digest,
@@ -88,6 +89,15 @@ def run(args) -> int:
 
     pins_file = args.pins or DEFAULT_PINS_PATH
     roots = getattr(args, "roots", None)
+    if roots is None:
+        # A pin records the roots it was taken under (version 2), so one
+        # ``--roots`` at pin time is enough for every later check. An explicit
+        # flag still wins; a malformed file falls through to the defaults and
+        # the action that reads the pins reports it.
+        try:
+            roots = load_pin_roots(pins_file)
+        except (OSError, ValueError):
+            roots = None
 
     if action == "pin":
         try:

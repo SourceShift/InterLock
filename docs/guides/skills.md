@@ -73,15 +73,18 @@ the plugin skills installed there, pass it explicitly:
 interlock skills check --all --roots ~/.claude/skills ~/.claude/plugins/marketplaces
 ```
 
-and give the detector the same list, so it resolves the same names:
+A `pin` with `--roots` records that list in the pin file, and every later
+`check` and the guard reuse it, so this one call is enough:
 
-```json
-"with": {"roots": ["~/.claude/skills", "~/.claude/plugins/marketplaces"]}
+```bash
+interlock skills pin python-pro --roots ~/.claude/skills ~/.claude/plugins/marketplaces
+interlock skills check python-pro
 ```
 
-The guard only sees the roots it is given. A plugin tree left out of `roots`
-stays invisible to the audit: its skills are never pinned, so an activation
-resolves to "unknown" and the default `on_unknown` policy allows it.
+The guard only sees the roots it is given or that the pin file records. A
+plugin tree left out of both stays invisible to the audit: its skills are
+never pinned, so an activation resolves to "unknown" and the default
+`on_unknown` policy allows it.
 
 The digest covers every regular file's relative POSIX path, byte size and
 sha256, folded in sorted path order. That makes it independent of directory
@@ -97,8 +100,11 @@ digest of the readable part.
 interlock skills pin reviewed-skill --roots ~/.claude/skills ~/work/skills --pins ~/.interlock/skills.json
 ```
 
-If you move them, the guard must be told the same locations; see
-[Wiring and tuning](#wiring-and-tuning).
+`pin` writes the roots it searched into the pin file (a version-2 document),
+so later `check` runs and the guard reuse them without repeating the flags. An
+explicit `--roots` or a `roots` value on the rule always wins over the recorded
+list. A version-1 pin file has no recorded roots and keeps working - it resolves
+under the default roots until the next `pin` rewrites it as version 2.
 
 ## Unpin
 
@@ -250,6 +256,10 @@ non-default locations:
 ```json
 "with": {"roots": ["/srv/agent-skills"], "pins_path": "/srv/interlock/skills.json"}
 ```
+
+`pins_path` alone is enough if that file was written by `interlock skills pin`
+with `--roots`: the rule reuses the recorded roots, so the two never disagree
+about where a skill lives.
 
 Keep the pin file somewhere the agent cannot write. The locked
 `self-protect-files` rule already keeps agent file tools out of

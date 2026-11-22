@@ -125,6 +125,32 @@ def test_a_pin_file_reread_on_each_call_sees_a_repin(skill_root, tmp_path):
     assert rule(_event(skill="reviewed")) is None
 
 
+def test_the_pin_files_recorded_roots_are_used_when_no_roots_are_given(
+        skill_root, tmp_path, monkeypatch):
+    # skill_root is NOT under ~/.claude/skills, so only the roots recorded at
+    # pin time can resolve it. One --roots at pin time is enough for the guard.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pins = tmp_path / ".interlock" / "skills.json"
+    save_pins(str(pins), _pin_for(skill_root), roots=[str(skill_root)])
+    (skill_root / "reviewed" / "SKILL.md").write_text(
+        "tampered instructions\n", encoding="utf-8")
+
+    decision = skill_digest_guard()(_event(skill="reviewed"))
+    assert decision.verdict is Verdict.BLOCK
+
+
+def test_an_explicit_roots_argument_overrides_the_pin_files_roots(
+        skill_root, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pins = tmp_path / ".interlock" / "skills.json"
+    save_pins(str(pins), _pin_for(skill_root), roots=[str(skill_root)])
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    # The explicit root does not hold the skill -> unknown -> allow.
+    assert skill_digest_guard(roots=[str(elsewhere)])(_event(skill="reviewed")) is None
+
+
 def test_the_default_pin_file_is_read_when_neither_is_given(
         skill_root, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))

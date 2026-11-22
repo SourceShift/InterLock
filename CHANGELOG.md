@@ -35,8 +35,11 @@ breaking changes land.
   keyed by name alone, so it needs no skills root and never hashes a directory.
   `interlock doctor` now reports a `skills.pins` check - the pinned count, drift,
   or pins whose directory is gone - by name only, so a stale pin is visible
-  without an agent activating that skill. See `docs/guides/skills.md` for the
-  operator's walk-through.
+  without an agent activating that skill. The pin file is now version 2: it
+  records the roots the pin was taken under, so one `--roots` at pin time is
+  enough for every later `check`, the guard and doctor, and an explicit
+  `--roots`/`roots` still wins. Version-1 files keep working unchanged. See
+  `docs/guides/skills.md` for the operator's walk-through.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
   patch is judged by evidence it did not produce: every test file it touches

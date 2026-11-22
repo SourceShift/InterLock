@@ -286,19 +286,52 @@ def test_load_pins_tolerates_a_missing_file(tmp_path):
     assert skills.load_pins(str(tmp_path / "absent.json")) == {}
 
 
+def test_load_pin_roots_is_none_for_version_1_and_a_missing_file(tmp_path):
+    path = tmp_path / "skills.json"
+    skills.save_pins(str(path), {"reviewed": "a" * 64})
+    assert skills.load_pin_roots(str(path)) is None
+    assert skills.load_pin_roots(str(tmp_path / "absent.json")) is None
+
+
+def test_save_pins_records_roots_as_version_2(tmp_path):
+    path = tmp_path / "skills.json"
+    skills.save_pins(str(path), {"reviewed": "a" * 64},
+                     roots=["~/.claude/skills", "~/work/skills"])
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document == {
+        "version": 2,
+        "roots": ["~/.claude/skills", "~/work/skills"],
+        "skills": {"reviewed": "a" * 64},
+    }
+    # Stored as given: ``~`` is expanded at call time, not at pin time.
+    assert skills.load_pin_roots(str(path)) == ["~/.claude/skills", "~/work/skills"]
+    assert skills.load_pins(str(path)) == {"reviewed": "a" * 64}
+
+
 @pytest.mark.parametrize("body", [
     "{not json",
     "{}",
     '{"version": 1}',
-    '{"version": 2, "skills": {}}',
+    '{"version": 3, "skills": {}}',
     '{"version": 1, "skills": []}',
     '{"version": 1, "skills": {"name": 3}}',
+    # roots belong to version 2; a version-1 file that carries them is wrong.
+    '{"version": 1, "skills": {}, "roots": ["~/x"]}',
 ])
 def test_load_pins_raises_on_a_malformed_file(tmp_path, body):
     path = tmp_path / "skills.json"
     path.write_text(body, encoding="utf-8")
     with pytest.raises(ValueError):
         skills.load_pins(str(path))
+
+
+@pytest.mark.parametrize("roots", ['"not-a-list"', '["ok", 3]', '[""]', '[null]'])
+def test_load_pin_roots_rejects_a_malformed_roots_list(tmp_path, roots):
+    path = tmp_path / "skills.json"
+    path.write_text('{"version": 2, "skills": {}, "roots": %s}' % roots,
+                    encoding="utf-8")
+    with pytest.raises(ValueError):
+        skills.load_pin_roots(str(path))
 
 
 def test_pin_skill_records_the_digest(tmp_path):
@@ -339,6 +372,31 @@ def test_pin_skill_refuses_an_unknown_skill(tmp_path):
         skills.pin_skill("absent", roots=[str(tmp_path)], pins_path=str(tmp_path / "p.json"))
 
 
+def test_pin_skill_records_the_roots_it_used(tmp_path):
+    # The operator's roots are recorded as written, so a later check and the
+    # guard can resolve the same skill without being told twice.
+    root = tmp_path / "share"
+    directory = root / "reviewed"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "reviewed")
+    pins = tmp_path / "skills.json"
+    skills.pin_skill("reviewed", roots=[str(root)], pins_path=str(pins))
+    assert skills.load_pin_roots(str(pins)) == [str(root)]
+
+
+def test_pin_skill_reuses_recorded_roots_when_none_are_passed(tmp_path):
+    root = tmp_path / "share"
+    directory = root / "reviewed"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "reviewed")
+    pins = tmp_path / "skills.json"
+    skills.pin_skill("reviewed", roots=[str(root)], pins_path=str(pins))
+    # A re-pin with no --roots still finds the skill through the file.
+    digest = skills.pin_skill("reviewed", pins_path=str(pins))
+    assert digest == skills.skill_digest(str(directory))
+    assert skills.load_pin_roots(str(pins)) == [str(root)]
+
+
 def test_unpin_skill_removes_only_the_named_pin(tmp_path):
     pins = tmp_path / "skills.json"
     skills.save_pins(str(pins), {"one": "a" * 64, "two": "b" * 64})
@@ -361,6 +419,16 @@ def test_unpin_skill_raises_for_a_missing_pin_file(tmp_path):
     with pytest.raises(ValueError, match="skill not pinned: reviewed"):
         skills.unpin_skill("reviewed", pins_path=str(pins))
     assert not pins.exists()
+
+
+def test_unpin_skill_preserves_the_recorded_roots(tmp_path):
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"one": "a" * 64, "two": "b" * 64},
+                     roots=["~/work/skills"])
+    skills.unpin_skill("one", pins_path=str(pins))
+    assert skills.load_pin_roots(str(pins)) == ["~/work/skills"]
+    document = json.loads(pins.read_text(encoding="utf-8"))
+    assert document["version"] == 2
 
 
 # --- the CLI ----------------------------------------------------------------
@@ -400,6 +468,47 @@ def test_cli_check_uses_the_default_pin_file_and_exit_codes(
 
     assert main(["skills", "check", "absent"]) == 2
     assert "is not pinned" in capsys.readouterr().err
+
+
+def test_cli_pin_records_roots_and_a_later_check_uses_them(
+        tmp_path, monkeypatch, capsys):
+    from interlock.cli import main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    root = tmp_path / "share" / "skills"
+    directory = root / "reviewed"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "reviewed instructions\n")
+    pins = tmp_path / "skills.json"
+
+    assert main(["skills", "pin", "reviewed", "--roots", str(root),
+                 "--pins", str(pins)]) == 0
+    capsys.readouterr()
+    assert skills.load_pin_roots(str(pins)) == [str(root)]
+
+    # No --roots: the check resolves through the roots recorded at pin time.
+    assert main(["skills", "check", "reviewed", "--pins", str(pins)]) == 0
+    assert capsys.readouterr().out.startswith("ok reviewed ")
+
+
+def test_cli_check_explicit_roots_override_the_file(tmp_path, monkeypatch, capsys):
+    from interlock.cli import main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    pinned_root = tmp_path / "share" / "skills"
+    directory = pinned_root / "reviewed"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "reviewed instructions\n")
+    pins = tmp_path / "skills.json"
+    assert main(["skills", "pin", "reviewed", "--roots", str(pinned_root),
+                 "--pins", str(pins)]) == 0
+    capsys.readouterr()
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert main(["skills", "check", "reviewed", "--roots", str(elsewhere),
+                 "--pins", str(pins)]) == 2
+    assert "not found" in capsys.readouterr().err
 
 
 def _audit_tree(tmp_path):
@@ -640,3 +749,21 @@ def test_doctor_cli_reports_the_skills_pins_row(tmp_path, monkeypatch, capsys):
     assert main(["doctor", "--json"]) in (0, 1)
     payload = json.loads(capsys.readouterr().out)
     assert "skills.pins" in {check["id"] for check in payload["checks"]}
+
+
+def test_doctor_resolves_a_pin_under_its_recorded_root(tmp_path, monkeypatch):
+    # A skill pinned under a second root lives in the file's roots; doctor must
+    # not report it "no longer found" just because it is not in ~/.claude/skills.
+    from interlock.cli.doctor import _skills_checks
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    root = tmp_path / "share" / "skills"
+    directory = root / "reviewed"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "reviewed instructions\n")
+    pins = tmp_path / ".interlock" / "skills.json"
+    skills.pin_skill("reviewed", roots=[str(root)], pins_path=str(pins))
+
+    row = _skills_checks()[0]
+    assert (row.id, row.status) == ("skills.pins", "ok")
+    assert row.summary == "skill pins: 1 pinned, all unchanged"

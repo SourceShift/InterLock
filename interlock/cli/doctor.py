@@ -331,9 +331,16 @@ def _skills_checks() -> List[Check]:
     both states is never counted twice.
     """
     try:
-        from ..skills import DEFAULT_PINS_PATH, find_skill, load_pins, skill_digest
+        from ..skills import (
+            DEFAULT_PINS_PATH,
+            find_skill,
+            load_pin_roots,
+            load_pins,
+            skill_digest,
+        )
 
         try:
+            roots = load_pin_roots(DEFAULT_PINS_PATH)
             pins = load_pins(DEFAULT_PINS_PATH)
         except (OSError, ValueError):
             return [Check("skills.pins", WARN, "skill pins: cannot be read",
@@ -344,7 +351,9 @@ def _skills_checks() -> List[Check]:
         changed = 0
         missing = 0
         for name in sorted(pins):
-            directory = find_skill(name)
+            # Resolve under the roots the pin file records, so a skill pinned
+            # outside the default tree is found rather than reported missing.
+            directory = find_skill(name, roots)
             if directory is None:
                 missing += 1
                 continue

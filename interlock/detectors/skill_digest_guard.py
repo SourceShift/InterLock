@@ -40,7 +40,13 @@ from ..actions import CanonicalActionSet, action_matches, canonical_actions
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
-from ..skills import DEFAULT_PINS_PATH, find_skill, load_pins, skill_digest
+from ..skills import (
+    DEFAULT_PINS_PATH,
+    find_skill,
+    load_pin_roots,
+    load_pins,
+    skill_digest,
+)
 
 POLICY_ID = "skill_digest"
 
@@ -112,8 +118,19 @@ def skill_digest_guard(
         if not isinstance(expected, str):
             return decide(on_unknown, "skill_digest: {} is not pinned".format(name))
 
+        # An explicit ``roots`` argument always wins. Otherwise reuse the roots
+        # the pin file records, so one ``--roots`` at pin time is enough here
+        # too; a version-1 file records none and the default roots apply.
+        search_roots = roots
+        if search_roots is None and pins is None:
+            try:
+                search_roots = load_pin_roots(
+                    DEFAULT_PINS_PATH if pins_path is None else pins_path)
+            except (OSError, ValueError):
+                search_roots = None
+
         try:
-            directory = find_skill(name, roots)
+            directory = find_skill(name, search_roots)
             if directory is None:
                 return decide(
                     on_unknown,

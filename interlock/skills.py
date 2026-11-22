@@ -230,46 +230,99 @@ def skill_digest(path: str) -> str:
     return hasher.hexdigest()
 
 
-def load_pins(path: Union[str, "os.PathLike[str]"]) -> Dict[str, str]:
-    """Read ``{"version": 1, "skills": {name: digest}}`` from ``path``.
+def _safe_roots(roots: object) -> Optional[List[str]]:
+    """Normalise a recorded/passed roots value to a list, or raise.
 
-    A missing file is an empty mapping. A file that is not valid JSON or does
-    not have that shape raises ``ValueError``; callers that must not fail on a
-    bad pin file (the detector) catch it and treat the skill as unknown.
+    A roots list is a convenience, never a way to smuggle a non-path: every
+    entry must be a non-empty string. ``None`` means "not recorded".
+    """
+    if roots is None:
+        return None
+    if isinstance(roots, str) or not isinstance(roots, Iterable):
+        raise ValueError("malformed skill pin file")
+    entries = list(roots)
+    for entry in entries:
+        if not isinstance(entry, str) or not entry:
+            raise ValueError("malformed skill pin file")
+    return entries
+
+
+def _read_pin_document(
+    path: Union[str, "os.PathLike[str]"]
+) -> Tuple[Dict[str, str], Optional[List[str]]]:
+    """Read a pin file into ``(pins, roots)``.
+
+    Version 1 is ``{"version": 1, "skills": {name: digest}}``: pins only, no
+    roots. Version 2 adds an optional ``"roots"`` list recording the roots the
+    pins were taken under, written exactly as the operator gave them (``~``
+    unexpanded), so the CLI, the guard and doctor resolve one answer. A missing
+    file is ``({}, None)``. Anything else raises ``ValueError``; callers that
+    must not fail on a bad pin file (the detector) catch it and treat the skill
+    as unknown.
     """
     pins_path = os.path.expanduser(os.fspath(path))
     try:
         with open(pins_path, "r", encoding="utf-8") as handle:
             document = json.load(handle)
     except FileNotFoundError:
-        return {}
+        return {}, None
     except json.JSONDecodeError as exc:
         raise ValueError("malformed skill pin file") from exc
-    if (not isinstance(document, dict)
-            or document.get("version") != 1
-            or not isinstance(document.get("skills"), dict)):
+    if not isinstance(document, dict):
+        raise ValueError("malformed skill pin file")
+    version = document.get("version")
+    if version not in (1, 2) or not isinstance(document.get("skills"), dict):
+        raise ValueError("malformed skill pin file")
+    if version == 1 and "roots" in document:
         raise ValueError("malformed skill pin file")
     pins = document["skills"]
     for name, digest in pins.items():
         if not isinstance(name, str) or not isinstance(digest, str):
             raise ValueError("malformed skill pin file")
-    return dict(pins)
+    return dict(pins), _safe_roots(document.get("roots"))
+
+
+def load_pins(path: Union[str, "os.PathLike[str]"]) -> Dict[str, str]:
+    """Read the ``{name: digest}`` pins from ``path`` (version 1 or 2).
+
+    A missing file is an empty mapping. A file that is not valid JSON or does
+    not have a recognised shape raises ``ValueError``.
+    """
+    return _read_pin_document(path)[0]
+
+
+def load_pin_roots(path: Union[str, "os.PathLike[str]"]) -> Optional[List[str]]:
+    """The roots recorded in ``path``, or ``None`` when none are recorded.
+
+    Version-1 files carry no roots, so they read as ``None`` and callers keep
+    their own defaults. Roots are returned exactly as stored - unexpanded - so
+    the caller expands ``~`` at call time, like :func:`_expand_roots` does.
+    """
+    return _read_pin_document(path)[1]
 
 
 def save_pins(
-    path: Union[str, "os.PathLike[str]"], pins: Mapping[str, str]
+    path: Union[str, "os.PathLike[str]"], pins: Mapping[str, str],
+    roots: Optional[Iterable[str]] = None,
 ) -> None:
     """Write the pin document atomically, mode ``0600``.
+
+    ``roots`` writes a version-2 document recording them; ``None`` writes
+    version 1, so a caller that never knew the roots cannot invent them.
 
     The temporary file is created in the destination directory so
     :func:`os.replace` is atomic on one filesystem. It is fsynced and chmodded
     before the replace, and the directory is fsynced afterwards where the
     platform allows it.
     """
+    recorded = _safe_roots(roots)
     pins_path = os.path.expanduser(os.fspath(path))
     directory = os.path.dirname(os.path.abspath(pins_path))
     os.makedirs(directory, exist_ok=True)
-    document = {"version": 1, "skills": dict(pins)}
+    document: Dict[str, object] = {"version": 2 if recorded is not None else 1,
+                                   "skills": dict(pins)}
+    if recorded is not None:
+        document["roots"] = recorded
     descriptor, temporary = tempfile.mkstemp(
         prefix=".skills-", suffix=".tmp", dir=directory)
     try:
@@ -305,17 +358,17 @@ def unpin_skill(
     """Remove ``name``'s pin, save, and return the digest that was removed.
 
     Removal is keyed by name alone, so nothing is discovered or hashed and
-    there is no ``roots`` argument. Every other pin in the file is preserved
-    and the file is rewritten through :func:`save_pins`. A missing name or a
-    missing pin file raises ``ValueError`` - a missing file loads as an empty
-    mapping - and leaves the file untouched.
+    there is no ``roots`` argument. Every other pin in the file is preserved,
+    and so are its recorded roots, so unpinning from a version-2 file never
+    downgrades it. A missing name or a missing pin file raises ``ValueError`` -
+    a missing file loads as an empty mapping - and leaves the file untouched.
     """
     pins_file = DEFAULT_PINS_PATH if pins_path is None else pins_path
-    pins = load_pins(pins_file)
+    pins, roots = _read_pin_document(pins_file)
     if name not in pins:
         raise ValueError("skill not pinned: {}".format(name))
     pinned = pins.pop(name)
-    save_pins(pins_file, pins)
+    save_pins(pins_file, pins, roots=roots)
     return pinned
 
 
@@ -328,16 +381,23 @@ def pin_skill(
     """Compute ``name``'s digest, merge it into the pins, and save.
 
     ``root`` names one explicit directory to search instead of ``roots``. The
-    pins file is created if absent. Returns the digest that was recorded.
+    search roots are the ones passed, else the roots recorded in the pin file,
+    else the defaults. Roots passed here are recorded in the file (version 2,
+    as given, unexpanded) so a later ``check`` and the guard reuse them; a call
+    that only reuses the file's roots or the defaults leaves the file's version
+    and roots as they were. Returns the digest that was recorded.
     """
     if root is not None:
         roots = (root,)
-    directory = find_skill(name, roots)
+    pins_file = DEFAULT_PINS_PATH if pins_path is None else pins_path
+    pins, recorded = _read_pin_document(pins_file)
+    explicit = _safe_roots(roots) if roots is not None else None
+    search = explicit if explicit is not None else recorded
+    directory = find_skill(name, search)
     if directory is None:
         raise ValueError("skill not found: {}".format(name))
     digest = skill_digest(directory)
-    pins_file = DEFAULT_PINS_PATH if pins_path is None else pins_path
-    pins = load_pins(pins_file)
     pins[name] = digest
-    save_pins(pins_file, pins)
+    save_pins(pins_file, pins,
+              roots=explicit if explicit is not None else recorded)
     return digest
