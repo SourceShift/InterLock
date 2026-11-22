@@ -90,7 +90,8 @@ jobs:
                   "drift",
                   "anchor",
                   "mesh",
-                  "cloud"
+                  "cloud",
+                  "skills"
                 ]
               }
             ]

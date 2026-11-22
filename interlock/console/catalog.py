@@ -136,6 +136,11 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
         "Exact-match indicators and private fingerprints the mesh publishes from what other deployments' guards refused.",
         ["mesh_indicator_guard", "mesh_similarity_guard"],
     ),
+    (
+        "Agent control surfaces",
+        "Whether the files an agent loads under a trusted name are the files that name was pinned to.",
+        ["skill_digest_guard"],
+    ),
 ]
 
 #: Scoping the action-name scan cannot see: conventions on the arguments, and

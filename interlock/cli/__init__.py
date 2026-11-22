@@ -6,8 +6,9 @@ guard do?), ``hook`` and ``install-hook`` (coding-agent adapters), ``patch``
 (gate an agent-written patch on tests that can fail), ``mcp`` (MCP
 inventory), ``policy`` (declarative policy files), ``trust`` (project-overlay
 trust), ``drift`` (diff a live surface against a corpus), ``learn`` (draft a
-policy from observed receipts) and ``anchor`` (record a receipt log's head
-outside it, to catch a cut tail).
+policy from observed receipts), ``anchor`` (record a receipt log's head
+outside it, to catch a cut tail) and ``skills`` (pin a skill's content and
+check it before activation).
 
 Exit codes are per command and documented in each one's ``--help``; 64 means
 the command line itself was wrong.
@@ -39,6 +40,7 @@ COMMANDS: List[Tuple[str, str, str]] = [
      "anchor"),
     ("mesh", "subscribe to community policy packs, or publish a commons", "mesh"),
     ("cloud", "Enroll hosts and run the cloud connector", "cloud"),
+    ("skills", "pin a skill's content and check it before activation", "skills"),
 ]
 
 

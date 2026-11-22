@@ -11,6 +11,18 @@ breaking changes land.
 
 ### Added
 
+- **The skill-activation digest gate** (`skill_digest_guard`,
+  `interlock skills pin|list|check`). A coding agent activates a skill by name,
+  and the name is what a human reviewed - but nothing read the files behind it,
+  so an edited or swapped `SKILL.md` ran under a name already trusted. The new
+  detector hashes a skill directory's regular files in a stable order, compares
+  the digest with a pin recorded under that name, and blocks a `Skill` call
+  whose content changed since it was pinned. Symlinks and other non-regular
+  entries are ignored, the walk is bounded at 512 files and 8 MiB, and the rule
+  degrades to an allow (unpinned), a block (drift) or an escalation (unreadable)
+  without ever raising into the agent loop. Pins live in
+  `~/.interlock/skills.json`; `interlock skills check` exits 2 on drift or an
+  unknown skill, so a hook can refuse the activation.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
   patch is judged by evidence it did not produce: every test file it touches

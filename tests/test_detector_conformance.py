@@ -22,6 +22,9 @@ NOT_JSON = {
     ("secret_path_command_guard", "secret_path_command_guard"):
         "paths are resolved against the process HOME, so its behaviour is pinned by "
         "tests/test_secret_path_command_guard.py",
+    ("skill_digest_guard", "skill_digest_guard"):
+        "the digest needs a real skill directory, which JSON cannot express, so its "
+        "behaviour is pinned by tests/test_skill_digest_guard.py",
 }
 
 

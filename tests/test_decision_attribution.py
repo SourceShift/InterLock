@@ -26,7 +26,9 @@ documented here rather than in KNOWN_GAPS (which is per module):
 import base64
 import importlib
 import logging
+import os
 import pathlib
+import tempfile
 
 import pytest
 
@@ -112,6 +114,22 @@ def _observe_under_mcp(rule, action, args, caplog):
     with caplog.at_level(logging.DEBUG, logger=LOGGER):
         enforce_tool_call(action, dict(args), enforcement="monitor")
     return caplog.text
+
+
+def _mismatched_skill_rule():
+    """A pinned skill whose on-disk bytes no longer match its pin.
+
+    A CASES row gets no pytest fixture, so the temp directory is built here and
+    every invocation of the factory makes a fresh one (the four parametrized
+    tests each call it once). OS cleanup of the temp dir is accepted.
+    """
+    root = tempfile.mkdtemp(prefix="interlock-skill-")
+    directory = os.path.join(root, "reviewed-skill")
+    os.makedirs(directory)
+    with open(os.path.join(directory, "SKILL.md"), "w", encoding="utf-8") as handle:
+        handle.write("reviewed instructions\n")
+    return dmod("skill_digest_guard").skill_digest_guard(
+        pins={"reviewed-skill": "0" * 64}, roots=[root])
 
 
 # One row per detector module that populates attributed_to. Fields:
@@ -406,6 +424,9 @@ CASES = [
     ("us_phone_redactor",
      lambda: dmod("us_phone_redactor").us_phone_redactor(),
      "http_post", {"data": "call (555) 123-4567"}, "data", Verdict.MODIFY),
+    # --- skill activation: the skill name is the argument; the files are checked
+    ("skill_digest_guard", _mismatched_skill_rule,
+     "Skill", {"skill": "reviewed-skill"}, "skill", Verdict.BLOCK),
 ]
 
 

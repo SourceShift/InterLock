@@ -24,6 +24,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`anchor`](#interlock-anchor) | record a receipt log's head outside it, or check it still reaches it |
 | [`mesh`](#interlock-mesh) | subscribe to community policy packs, or publish a commons |
 | [`cloud`](#interlock-cloud) | Enroll hosts and run the cloud connector |
+| [`skills`](#interlock-skills) | pin a skill's content and check it before activation |
 
 ## `interlock doctor`
 
@@ -630,4 +631,30 @@ usage: interlock cloud policy [-h] [--policy FILE] [--json] [--home DIR]
 usage: interlock cloud keys [-h] [--host HOST] [--key KEY] [--url URL] [--json] [--home DIR]
                             [rotate|revoke]
 usage: interlock cloud admin [-h] COMMAND ...
+```
+
+## `interlock skills`
+
+Pin a skill's on-disk content, and check it before activation.
+
+```bash
+interlock skills pin NAME [--roots DIR ...] [--pins FILE] [--json]
+interlock skills list [--pins FILE] [--json]
+interlock skills check NAME [--roots DIR ...] [--pins FILE] [--json]
+```
+
+A skill is a directory an agent loads under a trusted name. ``pin`` records the
+sha256 of the files behind that name in a pin file, ``list`` shows what is
+pinned, and ``check`` recomputes a skill's digest and compares it with its pin.
+The default pin file is ``~/.interlock/skills.json`` and the default roots are
+``~/.claude/skills``.
+
+Exit codes: 0 success / a matching digest, 2 a mismatch, an unknown skill or a
+missing skill, 64 no or unknown action.
+
+```text
+usage: interlock skills [-h] ACTION ...
+usage: interlock skills pin [-h] [--roots DIR [DIR ...]] [--pins FILE] [--json] name
+usage: interlock skills list [-h] [--pins FILE] [--json]
+usage: interlock skills check [-h] [--roots DIR [DIR ...]] [--pins FILE] [--json] name
 ```
