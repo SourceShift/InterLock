@@ -228,3 +228,101 @@ def test_declarative_bad_arguments_are_quarantined():
     })
     assert engine.quarantined
     assert engine.evaluate(_event("http_post")).verdict is not Verdict.BLOCK
+
+
+# --- the durable journal ----------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "journal" / "sequence.db")
+
+
+def test_a_state_file_carries_the_before_to_the_next_process(tmp_path):
+    sequence_guard(PAIR, state=_state(tmp_path))(_event("env_secret_read"))
+    second = sequence_guard(PAIR, state=_state(tmp_path))
+    assert cast(Decision, second(_event("http_post"))).verdict is Verdict.BLOCK
+
+
+def test_a_state_file_keeps_scope_and_window_across_processes(tmp_path):
+    sequence_guard(PAIR, state=_state(tmp_path))(_event("env_secret_read", span_id="run-1"))
+    other = sequence_guard(PAIR, state=_state(tmp_path))
+    assert other(_event("http_post", span_id="run-2")) is None
+
+    # window=1: the journalled action has aged out of the next process's view.
+    sequence_guard(PAIR, window=1, state=_state(tmp_path))(
+        _event("read_file", span_id="run-3"))
+    aged = sequence_guard(PAIR, window=1, state=_state(tmp_path))
+    assert aged(_event("env_secret_read", span_id="run-3")) is None
+
+
+def test_a_state_file_bounds_the_journal(tmp_path):
+    rule = sequence_guard(PAIR, window=2, state=_state(tmp_path))
+    rule(_event("env_secret_read"))
+    rule(_event("read_file"))
+    rule(_event("read_file"))  # the secret has aged out of the window
+    later = sequence_guard(PAIR, window=2, state=_state(tmp_path))
+    assert later(_event("http_post")) is None
+
+
+def test_a_state_file_bounds_the_scopes(tmp_path):
+    sequence_guard(PAIR, max_scopes=1, state=_state(tmp_path))(
+        _event("env_secret_read", span_id="run-1"))
+    rule = sequence_guard(PAIR, max_scopes=1, state=_state(tmp_path))
+    rule(_event("read_file", span_id="run-2"))  # evicts run-1
+    later = sequence_guard(PAIR, max_scopes=1, state=_state(tmp_path))
+    assert later(_event("http_post", span_id="run-1")) is None
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        sequence_guard(PAIR, state=state)
+
+
+def test_no_state_file_is_written_until_a_call_arrives(tmp_path):
+    path = tmp_path / "journal" / "sequence.db"
+    rule = sequence_guard(PAIR, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+    rule(_event("read_file"))
+    assert path.exists()
+
+
+def test_the_state_file_is_readable_only_by_its_owner(tmp_path):
+    import stat
+
+    path = tmp_path / "journal" / "sequence.db"
+    sequence_guard(PAIR, state=str(path))(_event("read_file"))
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_a_corrupt_state_file_falls_back_instead_of_raising(tmp_path):
+    path = tmp_path / "journal" / "sequence.db"
+    path.parent.mkdir()
+    path.write_bytes(b"this is not a sqlite database\n" * 64)
+    rule = sequence_guard(PAIR, state=str(path))
+    assert rule(_event("env_secret_read")) is None  # warned and fell back
+    assert cast(Decision, rule(_event("http_post"))).verdict is Verdict.BLOCK
+
+
+def test_declarative_rule_binds_state(tmp_path):
+    from interlock.policy.declarative import load_policy
+    from interlock.sequence_ledger import JournalLedger
+
+    path = _state(tmp_path)
+
+    def document():
+        return {"version": 1, "rules": [{
+            "id": "no-egress-after-secret",
+            "detector": "sequence_guard",
+            "with": {"never": PAIR, "state": path},
+        }]}
+
+    first = load_policy(document())
+    assert not first.quarantined
+    first.evaluate(_event("env_secret_read"))
+    assert JournalLedger(path).journal("run-1", window=50) == ["env_secret_read"]
+    second = load_policy(document())   # a separate host, the same state file
+    assert second.evaluate(_event("http_post")).verdict is Verdict.BLOCK

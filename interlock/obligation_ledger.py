@@ -31,6 +31,7 @@ import os
 import sqlite3
 from typing import List, Optional, Sequence, Tuple
 
+from ._sqlite import BUSY_TIMEOUT, connect, immediate, prepare
 from .obligations import Obligation
 
 _SCHEMA = """
@@ -45,10 +46,10 @@ CREATE TABLE IF NOT EXISTS openings (
 CREATE INDEX IF NOT EXISTS openings_scope ON openings (scope, seq);
 """
 
-#: Seconds a writer waits for another hook's transaction before giving up.
-#: The rule degrades to its in-process ledger on a failure, so this is a
-#: patience bound, not a correctness one.
-BUSY_TIMEOUT = 10.0
+#: Seconds a writer waits for another hook's transaction before giving up;
+#: re-exported from :mod:`interlock._sqlite`, where every durable ledger's
+#: patience bound lives.
+__all__ = ["BUSY_TIMEOUT", "FileLedger"]
 
 
 class FileLedger:
@@ -56,20 +57,10 @@ class FileLedger:
 
     def __init__(self, path: str) -> None:
         self.path = os.path.abspath(os.path.expanduser(path))
-        directory = os.path.dirname(self.path)
-        os.makedirs(directory, mode=0o700, exist_ok=True)
-        db = self._db()
-        try:
-            db.executescript(_SCHEMA)
-        finally:
-            db.close()
-        try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass
+        prepare(self.path, _SCHEMA)
 
     def _db(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path, timeout=BUSY_TIMEOUT, isolation_level=None)
+        return connect(self.path)
 
     def apply(self, scope: str, action: str, wanted: Sequence[Obligation], now: float, *,
               max_scopes: int, max_open: int) -> Optional[Tuple[Obligation, float]]:
@@ -78,19 +69,9 @@ class FileLedger:
         The returned tuple is ``(obligation, opened_at)`` - the same shape the
         in-process ledger produces, so the rule builds its decision one way.
         """
-        db = self._db()
-        try:
-            db.execute("BEGIN IMMEDIATE")
-            try:
-                breach = self._apply_locked(db, scope, action, wanted, now,
-                                            max_scopes=max_scopes, max_open=max_open)
-                db.execute("COMMIT")
-            except BaseException:
-                db.execute("ROLLBACK")
-                raise
-        finally:
-            db.close()
-        return breach
+        with immediate(self.path) as db:
+            return self._apply_locked(db, scope, action, wanted, now,
+                                      max_scopes=max_scopes, max_open=max_open)
 
     def _apply_locked(self, db: sqlite3.Connection, scope: str, action: str,
                       wanted: Sequence[Obligation], now: float, *,
@@ -163,5 +144,3 @@ class FileLedger:
         finally:
             db.close()
 
-
-__all__ = ["BUSY_TIMEOUT", "FileLedger"]

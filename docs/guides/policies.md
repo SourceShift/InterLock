@@ -205,11 +205,29 @@ reports `http.post` is covered by the same rule. Scope is the event's
 Result-phase events are ignored — a sequence is about what the agent did, not
 what a tool returned.
 
-Limits worth knowing: the journal is process-local, so a restart begins every
-run with an empty history; each run keeps at most `window` actions and at most
-`max_scopes` runs are tracked (the oldest is evicted first). A block's reason
-names the two actions and the window only — never an argument value — so it is
-safe to carry into a receipt.
+Limits worth knowing: the journal is process-local by default, so a restart
+begins every run with an empty history; each run keeps at most `window` actions
+and at most `max_scopes` runs are tracked (the oldest is evicted first). A
+block's reason names the two actions and the window only — never an argument
+value — so it is safe to carry into a receipt.
+
+A hook host runs one process per tool call, so a process-local journal never
+sees the `before` its own previous invocation wrote. Add an absolute `state`
+path and the journal lives in a small SQLite file instead — scope and action
+names only, created on the first call (so `interlock policy check` writes
+nothing), one transaction per call so racing hooks cannot both match against a
+journal the other is rewriting:
+
+```json
+{"id": "no-egress-after-secret", "detector": "sequence_guard",
+ "with": {"never": [["env_secret_read", "http_post"]], "window": 50,
+          "state": "/var/lib/interlock/sequence.db"}}
+```
+
+The [obligations](#obligation-what-must-happen-next) detector takes the same
+`state` argument, and both share the same guarantees: a relative path is
+refused, and a storage fault warns once and falls back to the in-process
+journal rather than refusing every call.
 
 ## Obligation: what must happen next
 

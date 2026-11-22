@@ -17,10 +17,21 @@ when no run is known, and to ``"<anon>"`` when neither is a non-empty string -
 the same fail-closed identity rule the rate limiters use. Result-phase events
 are ignored: a sequence is about what the agent *did*, not what tools returned.
 
-State lives in the closure, so each factory call owns a fresh journal and two
-rules cannot trip each other. It is process-local: a restart begins every scope
-with an empty journal. Eviction bounds memory twice - each scope keeps at most
-``window`` actions, and at most ``max_scopes`` scopes are tracked, oldest first.
+State lives in the closure by default, so each factory call owns a fresh
+journal and two rules cannot trip each other. That is process-local, which a
+daemon can live with but a hook host cannot: it runs one process per tool call,
+so the ``before`` in one invocation is forgotten before the ``after`` arrives
+in the next. Point ``state=`` at an absolute path and the journal moves to
+:class:`~interlock.sequence_ledger.JournalLedger` (a small SQLite file holding
+scope and canonical action names - never an argument), so the next invocation
+matches against the history the previous one wrote. The file is created on the
+first event, not at construction, so ``interlock policy check`` does not write
+anything. If it cannot be read or written the rule falls back to the in-process
+journal for that call and logs once: a storage fault is the same failure as a
+restart, which the receipt log still shows, and refusing every call would make
+the guard worse than the incident. Eviction bounds both versions twice - each
+scope keeps at most ``window`` actions, and at most ``max_scopes`` scopes are
+tracked, oldest first.
 
 Every call event is journalled, including one this rule blocks, so a blocked
 ``after`` step stays blocked while its ``before`` remains in the window instead
@@ -29,14 +40,19 @@ the window only, never an argument value, so it is safe to put in a receipt.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from typing import Deque, Dict, List, Optional, Sequence, Tuple
 
+from .._sqlite import LazyFile, check_state_path
 from ..actions import canonical_action
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
+from ..sequence_ledger import JournalLedger
+
+_log = logging.getLogger(__name__)
 
 POLICY_ID = "sequence"
 
@@ -99,6 +115,7 @@ def sequence_guard(
     never: Sequence[Sequence[str]],
     window: int = DEFAULT_WINDOW,
     max_scopes: int = DEFAULT_MAX_SCOPES,
+    state: Optional[str] = None,
 ) -> Rule:
     """Rule: block a call that completes a forbidden ordered pair.
 
@@ -107,8 +124,13 @@ def sequence_guard(
     Decision when the current call's action is some pair's *after* and that
     pair's *before* is still in the journal. Otherwise it returns None.
 
-    *window* must be a positive non-bool integer; *max_scopes* likewise. Any
-    invalid argument raises ``ValueError`` at construction. The journal is
+    *window* must be a positive non-bool integer; *max_scopes* likewise.
+    *state* is an absolute path to a SQLite file that makes the journal survive
+    the process - required for a hook host, which runs one process per call. A
+    relative path is refused: a hook's working directory is the agent's, and
+    the state must not sit where the guarded process can move it.
+
+    Any invalid argument raises ``ValueError`` at construction. The journal is
     updated under a per-rule lock and the rule never raises on odd input.
     """
     pairs = _pairs(never)
@@ -118,17 +140,14 @@ def sequence_guard(
             or max_scopes <= 0):
         raise ValueError("max_scopes must be a positive integer")
 
+    state = check_state_path(state)
     journals: Dict[str, Deque[str]] = {}
     lock = threading.Lock()
+    durable = (LazyFile(state, JournalLedger, "sequence journal", _log)
+               if state is not None else None)
 
-    def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "phase", "call") == "result":
-            return None
-        action = canonical_action(getattr(event, "action", None))
-        if not action:
-            return None
-
-        scope = _scope(event)
+    def _memory_apply(scope: str, action: str) -> Optional[Tuple[str, str]]:
+        """The in-process journal; returns the pair the call completes, if any."""
         with lock:
             journal = journals.get(scope)
             if journal is None:
@@ -142,6 +161,29 @@ def sequence_guard(
                     matched = (before, after)
                     break
             journal.append(action)
+            return matched
+
+    def _apply(scope: str, action: str) -> Optional[Tuple[str, str]]:
+        """Journal one call, falling back to memory on a storage fault."""
+        if durable is None:
+            return _memory_apply(scope, action)
+        ledger = durable.get()
+        if ledger is not None:
+            try:
+                return ledger.apply(scope, action, pairs, window=window,
+                                    max_scopes=max_scopes)
+            except Exception as exc:  # locked, full disk, a corrupted file
+                durable.fail(exc)
+        return _memory_apply(scope, action)
+
+    def rule(event: SensorEvent) -> Optional[Decision]:
+        if getattr(event, "phase", "call") == "result":
+            return None
+        action = canonical_action(getattr(event, "action", None))
+        if not action:
+            return None
+
+        matched = _apply(_scope(event), action)
         if matched is not None:
             return Decision.block(
                 reason="sequence: {} after {} within {} calls".format(

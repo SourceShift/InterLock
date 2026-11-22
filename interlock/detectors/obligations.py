@@ -46,11 +46,11 @@ to put in a receipt.
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from .._sqlite import LazyFile, check_state_path
 from ..actions import canonical_action
 from ..enforce import Decision
 from ..event import SensorEvent
@@ -115,14 +115,7 @@ def obligations(
     now_fn = time.time if clock is None else clock
     if not callable(now_fn):
         raise ValueError("clock must be a callable returning a float")
-    if state is not None:
-        if not isinstance(state, str) or not state.strip():
-            raise ValueError("state must be a non-empty path or None")
-        if not os.path.isabs(os.path.expanduser(state)):
-            raise ValueError(
-                "state must be an absolute path: a hook's working directory is "
-                "the agent's, and the ledger must not sit where the guarded "
-                "process can move it")
+    state = check_state_path(state)
 
     wanted: List[Obligation] = parse(require)
     if any(item.approvals_only for item in wanted):
@@ -133,8 +126,8 @@ def obligations(
 
     ledgers: Dict[str, List[_Open]] = {}
     lock = threading.Lock()
-    durable: Optional[FileLedger] = None
-    durable_failed = False
+    durable = (LazyFile(state, FileLedger, "obligation ledger", _log)
+               if state is not None else None)
 
     def _refuse(obligation: Obligation, opened_at: float, now: float) -> Decision:
         reason = "obligation: {} not followed by {} within {} (open {:.0f}s)".format(
@@ -181,26 +174,15 @@ def obligations(
 
     def _apply(scope: str, action: str, now: float) -> Optional[Tuple[Obligation, float]]:
         """Apply one call to the durable ledger, falling back on a storage fault."""
-        nonlocal durable, durable_failed
-        if state is None:
+        if durable is None:
             return _memory_apply(scope, action, now)
-        if durable is None and not durable_failed:
+        ledger = durable.get()
+        if ledger is not None:
             try:
-                durable = FileLedger(state)
-            except Exception as exc:  # a state file that cannot be opened
-                durable_failed = True
-                _log.warning(
-                    "interlock: obligation ledger %s unavailable (%s); the rule "
-                    "falls back to a process-local ledger", state, exc)
-        if durable is not None:
-            try:
-                return durable.apply(scope, action, wanted, now,
-                                     max_scopes=max_scopes, max_open=max_open)
+                return ledger.apply(scope, action, wanted, now,
+                                    max_scopes=max_scopes, max_open=max_open)
             except Exception as exc:  # locked, full disk, a corrupted file
-                durable, durable_failed = None, True
-                _log.warning(
-                    "interlock: obligation ledger %s failed (%s); the rule falls "
-                    "back to a process-local ledger", state, exc)
+                durable.fail(exc)
         return _memory_apply(scope, action, now)
 
     def rule(event: SensorEvent) -> Optional[Decision]:

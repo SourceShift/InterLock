@@ -11,6 +11,18 @@ breaking changes land.
 
 ### Added
 
+- **A sequence survives the process.** `sequence_guard` kept its journal in
+  the rule's closure, which a hook host cannot use: it starts a new process per
+  tool call, so the `env_secret_read` in one invocation was forgotten before
+  the `http_post` arrived in the next. Both stateful detectors now take an
+  absolute `state` path and keep their history in SQLite instead - the sequence
+  guard in a `journal` table (scope and canonical action names only), the
+  obligations detector in `openings`. The shared plumbing lives in
+  `interlock/_sqlite.py`: 10 s busy timeout, mode `0600`, one
+  `BEGIN IMMEDIATE` transaction per call, created on the first event so
+  `interlock policy check` writes nothing, a relative path refused, and any
+  storage fault warned once before falling back to the in-process state.
+
 - **A receipt records what the rule said to do instead.** The `remediation`
   hint was rendered to the agent, stored with an escalated review, and stopped
   there: the audit log could show what was refused but not what the policy
