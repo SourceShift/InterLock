@@ -1,6 +1,7 @@
 """duplicate_call_loop_guard: allow path (repeats within limit), block path
 (over limit), reset on a different call, argument-order normalisation, per-rule
 state isolation, odd-input safety, and engine integration."""
+import pytest
 from typing import Any, cast
 
 from interlock import Decision, PolicyEngine, SensorEvent, Verdict
@@ -160,3 +161,94 @@ def test_engine_allows_repeats_then_blocks_over_limit():
     third = engine.evaluate(_event())
     assert third.verdict is Verdict.BLOCK
     assert third.policy_id == POLICY_ID
+
+
+# --- the durable run --------------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+# Without the file each process sees the call as the first of its run, which is
+# why the in-process guard can never fire there.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "loop" / "loop.db")
+
+
+def test_a_state_file_carries_the_run_to_the_next_process(tmp_path):
+    path = _state(tmp_path)
+    duplicate_call_loop_guard(limit=2, state=path)(_event())
+    duplicate_call_loop_guard(limit=2, state=path)(_event())   # run is 2
+    third = duplicate_call_loop_guard(limit=2, state=path)
+    assert cast(Decision, third(_event())).verdict is Verdict.BLOCK
+
+
+def test_a_different_call_in_a_later_process_resets_the_run(tmp_path):
+    path = _state(tmp_path)
+    duplicate_call_loop_guard(limit=1, state=path)(_event())
+    duplicate_call_loop_guard(limit=1, state=path)(_event(action="write_file"))
+    back = duplicate_call_loop_guard(limit=1, state=path)
+    assert back(_event()) is None          # the run restarted at one
+
+
+def test_argument_order_does_not_break_the_durable_run(tmp_path):
+    path = _state(tmp_path)
+    duplicate_call_loop_guard(limit=1, state=path)(
+        _event(args={"a": 1, "b": 2}))
+    second = duplicate_call_loop_guard(limit=1, state=path)
+    assert cast(Decision, second(_event(args={"b": 2, "a": 1}))).verdict is Verdict.BLOCK
+
+
+def test_each_scope_keeps_its_own_run(tmp_path):
+    path = _state(tmp_path)
+    duplicate_call_loop_guard(limit=1, state=path)(
+        SensorEvent(action="read_file", args={"p": "/x"}, span_id="run-1"))
+    other = duplicate_call_loop_guard(limit=1, state=path)
+    assert other(SensorEvent(action="read_file", args={"p": "/x"},
+                             span_id="run-2")) is None
+
+
+def test_the_state_file_stores_a_digest_not_the_arguments(tmp_path):
+    path = _state(tmp_path)
+    duplicate_call_loop_guard(limit=1, state=path)(
+        _event(args={"path": "/secret/do-not-store"}))
+    blob = open(path, "rb").read()
+    assert b"/secret/do-not-store" not in blob
+
+
+def test_a_state_file_bounds_the_scopes(tmp_path):
+    path = _state(tmp_path)
+    duplicate_call_loop_guard(limit=1, state=path, max_scopes=1)(
+        SensorEvent(action="read_file", args={"p": "/x"}, span_id="run-1"))
+    nxt = duplicate_call_loop_guard(limit=1, state=path, max_scopes=1)
+    nxt(SensorEvent(action="read_file", args={"p": "/x"}, span_id="run-2"))
+    later = duplicate_call_loop_guard(limit=1, state=path, max_scopes=1)
+    assert later(SensorEvent(action="read_file", args={"p": "/x"},
+                             span_id="run-1")) is None
+
+
+def test_no_state_file_is_written_until_a_call_arrives(tmp_path):
+    path = tmp_path / "loop" / "loop.db"
+    duplicate_call_loop_guard(limit=2, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+
+
+def test_a_corrupt_state_file_falls_back_instead_of_raising(tmp_path):
+    path = tmp_path / "loop" / "loop.db"
+    path.parent.mkdir()
+    path.write_bytes(b"this is not a sqlite database\n" * 64)
+    rule = duplicate_call_loop_guard(limit=1, state=str(path))
+    assert rule(_event()) is None      # warned, then counted in memory
+    assert cast(Decision, rule(_event())).verdict is Verdict.BLOCK
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        duplicate_call_loop_guard(limit=2, state=state)
+
+
+@pytest.mark.parametrize("max_scopes", [0, -1, True])
+def test_the_rule_refuses_a_max_scopes_it_cannot_use(max_scopes):
+    with pytest.raises(ValueError):
+        duplicate_call_loop_guard(limit=2, max_scopes=max_scopes)

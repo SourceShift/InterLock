@@ -24,6 +24,17 @@ breaking changes land.
   cumulative: a durable limiter reads "N calls since the state file was
   created".
 
+- **The loop guard survives the process.** `duplicate_call_loop_guard` kept
+  the previous signature and its run length in the closure, so a hook host -
+  one process per call - saw every call as the first of its run and the guard
+  could never fire at all. It now takes `state=` (and `max_scopes`, default
+  1024) and keeps the runs in `interlock/loop_ledger.py`, one row per scope
+  (`span_id` -> `principal` -> `<anon>`), stalest scope evicted first. The file
+  stores a SHA-256 **digest** of the signature rather than the signature, which
+  stringifies the arguments: equality is all the guard needs, and the digest
+  cannot leak a path or an argument value. Without `state` it behaves exactly
+  as before, in memory.
+
 - **The two budget rules survive the process too.** `tool_budget_limiter`
   now takes the same `state=` and counts per tool name through the same
   ledger, and `cost_budget_guard` keeps its running total in the file's

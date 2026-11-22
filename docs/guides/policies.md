@@ -227,7 +227,11 @@ journal the other is rewriting:
 The [obligations](#obligation-what-must-happen-next) detector takes the same
 `state` argument, and both share the same guarantees: a relative path is
 refused, and a storage fault warns once and falls back to the in-process
-journal rather than refusing every call.
+journal rather than refusing every call. `duplicate_call_loop_guard` does too,
+with one privacy difference: its signature stringifies the arguments, so the
+file stores a SHA-256 **digest** of it — the guard only compares signatures for
+equality, and the digest cannot leak the argument text. The five counters
+described under [Budget: how much](#budget-how-much) take it as well.
 
 A durable journal still begins empty after a restart or a fresh install, so the
 first `http_post` of the day is judged against nothing. The receipt log already
