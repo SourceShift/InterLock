@@ -27,7 +27,8 @@ breaking changes land.
   until a skill is pinned. `interlock skills check --all` audits every
   discoverable skill - plain and plugin layout - reporting each as ok, drift,
   unpinned or error, so a skill that appeared after the last pin is visible
-  before it is activated.
+  before it is activated. See `docs/guides/skills.md` for the operator's
+  walk-through.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
   patch is judged by evidence it did not produce: every test file it touches

@@ -29,6 +29,7 @@ and want one review queue and audit trail across them? Read
 | [Declarative policies](guides/policies.md) | Write rules as JSON/YAML, lock the ones that must stay on, and accept project overlays safely |
 | [Approvals](guides/approvals.md) | Hold a call for a human with `ESCALATE`, and write an approver |
 | [Coding agents](guides/coding-agents.md) | Guard Claude Code, Codex and Cursor with one command |
+| [Skills](guides/skills.md) | Pin the files behind a skill's name and refuse an activation whose content changed since review |
 | [Credentials](guides/credentials.md) | Let agents use secrets they never see |
 | [Databases and APIs](guides/databases.md) | Judge SQL by what it does, mask what comes back, keep personal data out of queries |
 | [Review queue](guides/reviews.md) | Refuse now, let a human approve later, run the identical retry once |

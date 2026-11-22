@@ -83,6 +83,7 @@ nav = [
     { "Integrations" = "guides/integrations.md" },
     { "Coding agents" = "guides/coding-agents.md" },
     { "Patch gate" = "guides/patch-gate.md" },
+    { "Skills" = "guides/skills.md" },
     { "MCP" = "guides/mcp.md" },
     { "Databases and APIs" = "guides/databases.md" },
     { "Approvals" = "guides/approvals.md" },
