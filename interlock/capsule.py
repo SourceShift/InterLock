@@ -320,10 +320,15 @@ def adequacy(receipts: List[Receipt], manifest: Dict[str, Any],
     escalations = [r for r in receipts
                    if r.policy_verdict == "ESCALATE" or r.verdict == "ESCALATE"]
     settled = sum(1 for r in escalations if r.approval)
+    # A settlement names the grant that released it; a delegated one also
+    # names the chain behind that grant. Counting both keeps the answer
+    # honest without making a direct approval look incomplete.
+    delegated = sum(1 for r in escalations if r.approval and r.authority)
     add("under which authority was an escalation settled?",
         settled == len(escalations),
-        "{} of {} escalation receipt(s) name how they were settled".format(
-            settled, len(escalations)))
+        "{} of {} escalation receipt(s) name how they were settled{}".format(
+            settled, len(escalations),
+            " ({} of them with a delegation chain)".format(delegated) if delegated else ""))
 
     add("is the record intact?", not problems,
         "the manifest seal, every member digest and the receipt chain verify"

@@ -11,6 +11,21 @@ breaking changes land.
 
 ### Added
 
+- **Delegated authority on grants and receipts.** A cloud grant may name the
+  grant that authorised it, as `parent_grant`, and a host now walks that link:
+  each ancestor must be an envelope the host applied itself, verify under the
+  same pinned key for the same org and host, be an `approve` (a rejection
+  delegates nothing), have been inside its own lifetime when the child was
+  issued - so a lapsed grant cannot keep a fresh one alive - and sit at most
+  four links back. A broken chain is a new `ancestry` refusal code: nothing is
+  applied, the review stays pending, and the refusal is reported on the next
+  acknowledgement. A released call's receipt records the chain in a new
+  optional `authority` field (`cloud:<id>` names, oldest first, joined by
+  `<`), so an auditor can ask "was the delegated authority valid at the moment
+  of use" without any argument value; `interlock capsule verify`'s settlement
+  answer counts how many escalations carry one. A grant with no parent - every
+  existing one - verifies and serializes exactly as before.
+
 - **Derived capability scopes** (`interlock scope suggest`). An agent cannot be
   trusted to say which capabilities it needs, so derive them:
   `interlock scope suggest --from-receipts LOG --since 30d --out scope.json`

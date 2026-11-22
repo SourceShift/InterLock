@@ -131,6 +131,57 @@ uploaded. From there:
 The grant expires on its own. An approval that was never fetched does not
 release anything later.
 
+### Delegated authority
+
+A grant can name the grant that authorised it, as `parent_grant`. That turns
+"who decided" into "under whose authority", which is the question an auditor
+asks once the review itself is no longer the interesting part.
+
+A host only accepts a chain it can walk. Each link must be an envelope the
+host was given - the connector keeps the last 2 048 accepted ones - and must:
+
+- verify under the same pinned approval key, for the same org and the same
+  host (the signature rule is the same one the grant itself faces);
+- be an `approve`: a `reject` or a `revoke` delegates nothing;
+- have been inside its own lifetime when the child was issued, within the
+  same 60-second clock skew. A grant that had already lapsed cannot keep a
+  fresh one alive, so "was the authority valid at the moment of use" is
+  answered on the parent's clock, not the child's;
+- be at most four links from the child. A longer chain is a policy smell, and
+  the host refuses it rather than walking it.
+
+A refusal is one more check code - `ancestry` - and it refuses exactly like a
+bad signature: nothing is applied, the review stays pending, and the refusal
+is reported on the next acknowledgement.
+
+A receipt for a released call says which grant released it in `approval`, and
+which grants stood behind that one in `authority`, oldest first:
+
+```json
+{"approval": "cloud:g-review", "authority": "cloud:g-operator"}
+```
+
+Both are names, never an argument. A grant the plane signed directly has no
+parent, so it stamps no `authority` at all: the field is left out of the
+receipt, and a log written before it existed verifies unchanged.
+
+Verifying the chain is the host's job, and it is one call:
+
+```python
+from interlock.cloud.grants import ancestry_chain, verify_grant
+
+# A mapping of grant id to envelope, or any callable taking the id.
+parents = {grant["grant_id"]: grant for grant in accepted_grants}
+verify_grant(child, public_key, org_id=org, host_id=host,
+             now=now, parents=parents)      # None, or "ancestry"
+ancestry_chain(child, parents)               # ["g-operator", "g-reviewer"]
+```
+
+What this does not do: prove the plane issued the parent. The chain is only
+as trustworthy as the host's own store of accepted grants - the host never
+trusts the plane's word for it, which is the point, but it also means a
+parent the host has pruned cannot be reported as valid.
+
 ## Reading status
 
 Four surfaces, for four different questions.

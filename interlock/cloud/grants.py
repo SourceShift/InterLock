@@ -19,6 +19,15 @@ valid.
 The approval seed is loaded from a file (``IL_CLOUD_APPROVAL_KEY_FILE``) by
 the plane; it is never persisted in the database and never logged. The host
 holds only the matching public key, pinned at enrollment.
+
+A grant may also name the grant that delegated its authority, as
+``parent_grant``. A host that is given the parent envelopes then answers the
+auditor's hardest question - was the authority valid at the moment of use - by
+walking ``parent_grant`` up to :data:`MAX_ANCESTRY_DEPTH` links: every parent
+must verify under the same key for the same org and host, must be an
+``approve``, and must itself have been valid when the child was issued. A
+grant that names no parent is unchanged, so an existing chain verifies exactly
+as before.
 """
 from __future__ import annotations
 
@@ -26,7 +35,7 @@ import json
 import math
 import os
 import time
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from ..mesh.ed25519 import KEY_SIZE, SIGNATURE_SIZE, generate_seed, public_key, sign, verify
 
@@ -39,8 +48,14 @@ DEFAULT_MAX_SKEW = 60
 #: The `prev` value of the first grant in a host's chain.
 GENESIS = "GENESIS"
 
+#: How many ``parent_grant`` links :func:`verify_grant` will walk. Four is
+#: enough for plane -> operator -> reviewer -> host reconciliation; a longer
+#: chain is a policy smell, not a delegation, so it is refused as ``ancestry``.
+MAX_ANCESTRY_DEPTH = 4
+
 #: The check codes :func:`verify_grant` returns, in evaluation order.
-CHECKS = ("version", "signature", "org", "host", "expiry", "future", "seq", "prev")
+CHECKS = ("version", "signature", "org", "host", "expiry", "future", "seq", "prev",
+          "ancestry")
 
 
 class GrantError(ValueError):
@@ -79,6 +94,15 @@ def sign_grant(seed: bytes, body: Mapping[str, Any]) -> Dict[str, Any]:
     if expires - issued > GRANT_MAX_TTL:
         raise GrantError(
             "a grant may not be valid for more than {} seconds".format(GRANT_MAX_TTL))
+    parent = envelope.get("parent_grant")
+    if parent is not None:
+        # A self-reference is never a delegation, and an empty id names
+        # nothing to look up - both are bugs at the signing side, where the
+        # plane is the only author.
+        if not isinstance(parent, str) or not parent:
+            raise GrantError("parent_grant must be a non-empty grant id")
+        if parent == envelope.get("grant_id"):
+            raise GrantError("a grant may not name itself as its parent")
     signature = sign(bytes(seed), canonical_grant(envelope))
     envelope["sig"] = signature.hex()
     return envelope
@@ -122,7 +146,8 @@ def verify_grant(envelope: Any, public_key_bytes: bytes, *,
                  now: Optional[float] = None,
                  max_skew: float = DEFAULT_MAX_SKEW,
                  expected_seq: Optional[int] = None,
-                 expected_prev: Optional[str] = None) -> Optional[str]:
+                 expected_prev: Optional[str] = None,
+                 parents: Any = None) -> Optional[str]:
     """Return the first failed check code, or ``None`` when the grant is good.
 
     Checks are evaluated in the order documented by :data:`CHECKS`. The
@@ -131,24 +156,19 @@ def verify_grant(envelope: Any, public_key_bytes: bytes, *,
     ``expected_seq`` is exact match when given (the connector instead checks
     ``seq > last_seq`` itself, because it must also accept a skipped grant
     only after the chain check); ``expected_prev`` is exact match when given.
+
+    ``parents`` supplies the envelopes a ``parent_grant`` link names: a
+    mapping of grant id to envelope, or a callable taking the id and returning
+    the envelope (or ``None``). It is only consulted when the envelope names a
+    parent, so a grant without one verifies with no parents at all.
     """
     if not isinstance(envelope, Mapping):
         return "version"
     if envelope.get("v") != 1:
         return "version"
 
-    signature_hex = envelope.get("sig")
-    try:
-        signature = bytes.fromhex(signature_hex) if isinstance(signature_hex, str) else b""
-    except ValueError:
-        return "signature"
     public = bytes(public_key_bytes) if isinstance(public_key_bytes, (bytes, bytearray)) else b""
-    if len(public) != KEY_SIZE or len(signature) != SIGNATURE_SIZE:
-        return "signature"
-    try:
-        if not verify(public, canonical_grant(envelope), signature):
-            return "signature"
-    except Exception:
+    if not _signature_ok(envelope, public):
         return "signature"
 
     if org_id is not None and envelope.get("org_id") != org_id:
@@ -180,7 +200,126 @@ def verify_grant(envelope: Any, public_key_bytes: bytes, *,
         return "seq"
     if expected_prev is not None and envelope.get("prev") != expected_prev:
         return "prev"
+    return _ancestry_problem(envelope, public, org_id=org_id, host_id=host_id,
+                             parents=parents, issued=issued, max_skew=max_skew)
+
+
+def _signature_ok(envelope: Mapping[str, Any], public: bytes) -> bool:
+    """Whether ``envelope``'s ``sig`` verifies under ``public`` (never raises).
+
+    Separated from :func:`verify_grant` so a parent envelope is checked with
+    exactly the same rules as the grant naming it - one signature rule for
+    the whole chain.
+    """
+    signature_hex = envelope.get("sig")
+    try:
+        signature = bytes.fromhex(signature_hex) if isinstance(signature_hex, str) else b""
+    except ValueError:
+        return False
+    if len(public) != KEY_SIZE or len(signature) != SIGNATURE_SIZE:
+        return False
+    try:
+        return bool(verify(public, canonical_grant(envelope), signature))
+    except Exception:
+        return False
+
+
+def _lookup(source: Any, grant_id: str) -> Any:
+    """The envelope ``grant_id`` names in ``source``, or ``None``.
+
+    Accepts a mapping (``.get``) or a callable; a source that raises is a
+    missing parent, not a crashed connector cycle.
+    """
+    if source is None:
+        return None
+    getter = getattr(source, "get", None)
+    try:
+        if callable(getter):
+            return getter(grant_id)
+        if callable(source):
+            return source(grant_id)
+    except Exception:
+        return None
     return None
+
+
+def _ancestry_problem(envelope: Mapping[str, Any], public: bytes, *,
+                      org_id: Optional[str], host_id: Optional[str],
+                      parents: Any, issued: float,
+                      max_skew: float) -> Optional[str]:
+    """Walk ``parent_grant`` links; return ``"ancestry"`` or ``None``.
+
+    Each link must name an envelope the host was given, verify under the same
+    approval key for the same org and host, be an ``approve`` (nothing else
+    delegates authority), and have been inside its own lifetime when the child
+    was issued. A lapsed parent therefore cannot be used to keep a new grant
+    alive: "was the authority valid at the moment of use" is answered on the
+    chain, not on the child's own clock.
+    """
+    depth = 0
+    seen: set = set()
+    own = envelope.get("grant_id")
+    if isinstance(own, str):
+        # A grant that (forged or not) names itself is a one-link loop.
+        seen.add(own)
+    child, child_issued = envelope, issued
+    while True:
+        parent_id = child.get("parent_grant")
+        if parent_id is None:
+            return None
+        if not isinstance(parent_id, str) or not parent_id or parent_id in seen:
+            return "ancestry"
+        depth += 1
+        if depth > MAX_ANCESTRY_DEPTH:
+            return "ancestry"
+        seen.add(parent_id)
+        parent = _lookup(parents, parent_id)
+        if not isinstance(parent, Mapping) or parent.get("grant_id") != parent_id:
+            return "ancestry"
+        if not _signature_ok(parent, public):
+            return "ancestry"
+        if org_id is not None and parent.get("org_id") != org_id:
+            return "ancestry"
+        if host_id is not None and parent.get("host_id") != host_id:
+            return "ancestry"
+        if parent.get("decision") != "approve":
+            return "ancestry"
+        try:
+            parent_issued = float(parent["issued_at"])
+            parent_expires = float(parent["expires_at"])
+        except (KeyError, TypeError, ValueError):
+            return "ancestry"
+        if not math.isfinite(parent_issued) or not math.isfinite(parent_expires):
+            return "ancestry"
+        if parent_expires - parent_issued > GRANT_MAX_TTL + max_skew:
+            return "ancestry"
+        if not (parent_issued - max_skew <= child_issued <= parent_expires + max_skew):
+            return "ancestry"
+        child, child_issued = parent, parent_issued
+
+
+def ancestry_chain(envelope: Any, parents: Any = None) -> List[str]:
+    """The grant ids an envelope's authority descends from, oldest first.
+
+    Names only, bounded by :data:`MAX_ANCESTRY_DEPTH`; it does not verify, so
+    pair it with a :func:`verify_grant` call over the same ``parents``. A
+    receipt records the result, which is how an auditor later asks "under
+    whose authority was this settled" without storing any argument value.
+    """
+    chain: List[str] = []
+    current = envelope
+    seen: set = set()
+    if isinstance(envelope, Mapping) and isinstance(envelope.get("grant_id"), str):
+        seen.add(envelope["grant_id"])
+    while isinstance(current, Mapping) and len(chain) < MAX_ANCESTRY_DEPTH:
+        parent_id = current.get("parent_grant")
+        if not isinstance(parent_id, str) or not parent_id or parent_id in seen:
+            break
+        seen.add(parent_id)
+        chain.append(parent_id)
+        current = _lookup(parents, parent_id)
+    chain.reverse()
+    return chain
 
 
 __all__ = [
@@ -188,7 +327,9 @@ __all__ = [
     "DEFAULT_MAX_SKEW",
     "GENESIS",
     "GRANT_MAX_TTL",
+    "MAX_ANCESTRY_DEPTH",
     "GrantError",
+    "ancestry_chain",
     "approval_public_key",
     "approval_public_key_hex",
     "canonical_grant",

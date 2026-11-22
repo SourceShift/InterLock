@@ -67,6 +67,7 @@ forge one or quietly skip one. Allowed calls get receipts too.
 | `policy_epoch` | which rule set decided (`PolicyEngine.epoch`) |
 | `policy_verdict` | what the policy said, when it differs from `verdict` (an approved or refused `ESCALATE`, a rewrite an agent couldn't apply) |
 | `approval` | how an escalation was settled: `approved:once`, `reused:session`, `declined`, `no-approver`, `delegated:claude-code`, ... |
+| `authority` | the delegation chain behind a remote approval, oldest first: `cloud:<grant_id>` names joined by `<`, e.g. `cloud:g-operator<cloud:g-review`. `approval` names the grant that released the call; this names the grants that authorised *that* one. Absent for a local decision and for a grant the plane signed directly |
 | `outcome`, `enforcer` | on `phase="outcome"` receipts for an allowed tool that then failed: `failed`, and `os` (a permission error, which under the sandbox is the sandbox refusing), `policy` (a guard inside the tool) or `tool` |
 | `elapsed_us` | how long the policy evaluation took, in microseconds |
 
@@ -246,7 +247,9 @@ digest, and a removed tail fails even when they re-signed the manifest.
 `verify` then prints the adequacy answers, one line per question: who acted,
 when, which policy decided, how an escalation was settled, whether the record is
 intact, whether the whole run is covered, what was redacted, and which build
-produced it. Each entry it cannot answer is printed as `UNANSWERED` with the
+produced it. When a remote approval recorded a delegation chain in
+`authority`, the settlement answer says how many did - so "settled" does not
+quietly cover a chain the bundle cannot show. Each entry it cannot answer is printed as `UNANSWERED` with the
 reason - most commonly "no external anchor", which means a receipt removed from
 the tail cannot be detected. That is the point: the report says what the record
 can prove, not what you hope it proves.

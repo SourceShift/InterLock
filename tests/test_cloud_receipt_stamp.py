@@ -44,9 +44,9 @@ def _pending(queue):
     return pending[0]
 
 
-def _remote_approve(queue, review_id, grant_id="g-deadbeef"):
+def _remote_approve(queue, review_id, grant_id="g-deadbeef", *, parent=None):
     now = time.time()
-    queue.apply_grant({
+    body = {
         "v": 1, "grant_id": grant_id, "org_id": "org-1", "host_id": "host-1",
         "review_id": review_id, "binding": queue.binding_of(review_id),
         "decision": "approve",
@@ -55,7 +55,10 @@ def _remote_approve(queue, review_id, grant_id="g-deadbeef"):
         "step_up": {"method": "webauthn", "at": now},
         "issued_at": now, "expires_at": now + 300, "seq": 1,
         "prev": "GENESIS", "sig": "00" * 64,
-    }, binding=queue.binding_of(review_id), now=now)
+    }
+    if parent is not None:
+        body["parent_grant"] = parent
+    queue.apply_grant(body, binding=queue.binding_of(review_id), now=now)
 
 
 def test_a_remote_grant_is_stamped_and_the_chain_still_verifies(tmp_path, sink):
@@ -172,5 +175,66 @@ def test_a_cloud_stamp_does_not_confuse_the_one_use_claim(tmp_path, sink):
         assert code == 2
         assert "review" in stderr
         assert sink.receipts[-1].approval.startswith("pending:r-")
+    finally:
+        set_sink(None)
+
+
+def test_a_delegated_grant_stamps_the_chain_it_descends_from(tmp_path, sink):
+    """A grant released under another grant's authority names that chain.
+
+    ``approval`` answers "which grant settled this call"; ``authority``
+    answers "which grant authorised that one", which is the question an
+    auditor asks when the review itself is no longer the interesting part.
+    """
+    queue = ReviewQueue(str(tmp_path / "reviews.db"))
+    from interlock.receipt import set_sink
+
+    set_sink(sink)
+    try:
+        run_hook(get_adapter("codex"), PAYLOAD, _engine(), reviews=queue)
+        operator_review = _pending(queue)
+        _remote_approve(queue, operator_review.id, grant_id="g-operator")
+
+        # A different cwd is a different binding, so this is a second review
+        # rather than a retry of the first one.
+        second = dict(PAYLOAD, cwd="/w2")
+        run_hook(get_adapter("codex"), second, _engine(), reviews=queue)
+        review = [item for item in queue.list("pending")
+                  if item.id != operator_review.id][0]
+        _remote_approve(queue, review.id, grant_id="g-review",
+                        parent="g-operator")
+
+        assert run_hook(get_adapter("codex"), second, _engine(),
+                        reviews=queue) == ("", "", 0)
+
+        receipt = sink.receipts[-1]
+        assert receipt.approval == "cloud:g-review"
+        assert receipt.authority == "cloud:g-operator"
+        # The chain rides inside the sealed receipt and its MAC still verifies.
+        assert verify_chain(sink.receipts, sink._signer, sink._key) is None
+        assert sink.verify() is None
+    finally:
+        set_sink(None)
+
+
+def test_a_direct_grant_stamps_no_authority(tmp_path, sink):
+    queue = ReviewQueue(str(tmp_path / "reviews.db"))
+    from interlock.receipt import set_sink
+
+    set_sink(sink)
+    try:
+        run_hook(get_adapter("codex"), PAYLOAD, _engine(), reviews=queue)
+        review = _pending(queue)
+        _remote_approve(queue, review.id, grant_id="g-direct")
+
+        assert run_hook(get_adapter("codex"), PAYLOAD, _engine(),
+                        reviews=queue) == ("", "", 0)
+
+        receipt = sink.receipts[-1]
+        assert receipt.approval == "cloud:g-direct"
+        # A grant the plane signed itself delegates from nothing: the field is
+        # omitted entirely, so the receipt is byte-identical to a pre-F8 one.
+        assert receipt.authority is None
+        assert "authority" not in receipt.fields()
     finally:
         set_sink(None)

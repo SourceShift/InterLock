@@ -52,7 +52,7 @@ def test_a_good_grant_verifies_and_the_checks_are_documented():
     seed = generate_seed()
     assert _verify(_body(seed), seed) is None
     assert CHECKS == ("version", "signature", "org", "host", "expiry",
-                      "future", "seq", "prev")
+                      "future", "seq", "prev", "ancestry")
 
 
 def test_the_canonical_bytes_exclude_the_signature_and_ignore_key_order():

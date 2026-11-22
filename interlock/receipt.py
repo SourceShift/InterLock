@@ -87,6 +87,13 @@ empty, the same rule ``observed`` follows, so older chains verify unchanged:
   name only, so ``interlock report`` can count gaps by class without any
   argument value reaching the log. Omitted when the secondary answered or the
   class was never delegated.
+- ``authority`` is the delegation chain a remote approval descended from,
+  oldest first and joined by ``<``: ``cloud:<grant_id>`` names only, e.g.
+  ``cloud:g-operator<cloud:g-review``. ``approval`` names the grant that
+  settled the call; ``authority`` names the grants that authorised *that*
+  one, which is how an auditor later asks "was the delegated authority valid
+  at the moment of use" without reading any argument. Omitted for a local
+  decision and for a grant signed directly by the plane.
 
 A sink that fails to write is not allowed to turn into a silent gap: the
 failed write raises :class:`~interlock.enforce.Blocked` (fail closed), and the
@@ -228,6 +235,13 @@ class Receipt:
     # coverage gaps by class. Declared last so older receipts are byte-
     # identical and their MACs unchanged.
     coverage_gap: Optional[str] = None
+    # The delegation chain a remote approval descended from, oldest first,
+    # joined by ``<`` as ``cloud:<grant_id>`` names - e.g.
+    # ``cloud:g-operator<cloud:g-review``. Empty (omitted) for a local
+    # decision and for a grant the plane signed directly. It answers "under
+    # whose authority was this settled" without storing an argument, and
+    # declares last so older receipts stay byte-identical.
+    authority: Optional[str] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape.
@@ -264,7 +278,7 @@ _FIELD_NAMES = tuple(f.name for f in dataclasses.fields(Receipt))
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
     "enforcer", "elapsed_us", "masked", "tokens", "scope_document", "catalog",
-    "policy_artifact", "coverage_gap",
+    "policy_artifact", "coverage_gap", "authority",
 )
 
 # The catalog id receipts carry, once a mesh component has set it. None (the
@@ -423,6 +437,7 @@ def emit_receipt(
     scope_document: Optional[str] = None,
     policy_artifact: Optional[str] = None,
     coverage_gap: Optional[str] = None,
+    authority: Optional[str] = None,
 ) -> None:
     """Build one Receipt from the enforced decision and write it to the sink.
 
@@ -474,6 +489,7 @@ def emit_receipt(
         catalog=_CATALOG_ID,
         policy_artifact=policy_artifact,
         coverage_gap=coverage_gap,
+        authority=authority,
     )
     if sink is not None:
         _write(sink, receipt, event.action)

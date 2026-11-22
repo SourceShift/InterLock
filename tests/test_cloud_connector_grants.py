@@ -160,9 +160,10 @@ def test_a_valid_grant_is_applied_and_the_chain_advances(tmp_path):
     assert state["grant_last_sig"] == grant["sig"]
     assert state["grants_applied"] == 1
     assert state["grants_acked"] == 1
+    # A grant the plane signed directly descends from nothing: no chain.
     assert state["last_grant_applied"] == {
         "grant_id": grant["grant_id"], "review_id": review.id,
-        "decision": "approve", "seq": 1, "at": NOW,
+        "decision": "approve", "seq": 1, "authority": [], "at": NOW,
     }
 
 
@@ -362,6 +363,7 @@ def test_state_defaults_and_normalisation():
         "grant_last_seq": 4,
         "grant_last_sig": "abc",
         "seen_grants": ["g-1", 7, "g-2"],
+        "grant_envelopes": {"g-1": {"grant_id": "g-1"}},
         "grants_applied": 2,
         "grants_refused": 1,
         "grants_acked": 3,
@@ -370,7 +372,8 @@ def test_state_defaults_and_normalisation():
     })
     assert normalised == {
         "grant_last_seq": 4, "grant_last_sig": "abc",
-        "seen_grants": ["g-1", "g-2"], "grants_applied": 2,
+        "seen_grants": ["g-1", "g-2"],
+        "grant_envelopes": {"g-1": {"grant_id": "g-1"}}, "grants_applied": 2,
         "grants_refused": 1, "grants_acked": 3,
         "last_grant_refusal": {"grant_id": "g-2", "code": "signature"},
         "last_grant_applied": None,

@@ -430,6 +430,18 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                 grant_id = None
             note = ("cloud:" + grant_id) if grant_id \
                 else "approved:review " + review.id
+            # The grants that authorised *that* one, oldest first. Recorded
+            # only when the queue can name a chain; a direct plane grant, a
+            # local approval and an older queue all stamp nothing.
+            authority = None
+            if grant_id:
+                try:
+                    walker = getattr(reviews, "grant_ancestry", None)
+                    chain = walker(review.id) if callable(walker) else []
+                except Exception:
+                    chain = []
+                if chain:
+                    authority = "<".join("cloud:" + ancestor for ancestor in chain)
             if decision.modified_args:
                 # The human saw and approved the rewritten call. Run that
                 # rewrite - never the pre-rewrite arguments - or refuse.
@@ -441,7 +453,7 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                                            attributed_to=decision.attributed_to),
                          policy_epoch=epoch, elapsed_us=elapsed,
                          policy_verdict="ESCALATE", approval=note,
-                         policy_artifact=artifact)
+                         authority=authority, policy_artifact=artifact)
                     return adapter.render(call, HookOutcome(
                         Verdict.BLOCK, reason, decision.policy_id, Verdict.ESCALATE))
                 emit(primary, Decision(Verdict.MODIFY, decision.reason,
@@ -449,14 +461,15 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                                        attributed_to=decision.attributed_to),
                      policy_epoch=epoch, elapsed_us=elapsed,
                      policy_verdict="ESCALATE", approval=note,
-                     policy_artifact=artifact)
+                     authority=authority, policy_artifact=artifact)
                 return adapter.render(call, HookOutcome(
                     Verdict.MODIFY, decision.reason, decision.policy_id, Verdict.ESCALATE,
                     modified_args=decision.modified_args))
             emit(primary, Decision(Verdict.ALLOW, decision.reason, decision.policy_id,
                                    attributed_to=decision.attributed_to),
                  policy_epoch=epoch, elapsed_us=elapsed, policy_verdict="ESCALATE",
-                 approval=note, policy_artifact=artifact)
+                 approval=note, authority=authority,
+                 policy_artifact=artifact)
             return adapter.render(call, HookOutcome(Verdict.ALLOW))
         outcome = replace(outcome, verdict=Verdict.BLOCK, reason="{} - {}".format(
             decision.reason, pending_message(review)))

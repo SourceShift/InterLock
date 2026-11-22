@@ -128,6 +128,19 @@ _MIGRATED_COLUMNS = (
     ("mac", "TEXT"),
 )
 
+#: Columns later added to ``cloud_grants``; NULL keeps an older database's
+#: rows readable - a grant applied before the ancestry link existed has none.
+_CLOUD_GRANT_MIGRATED_COLUMNS = (
+    ("parent_grant", "TEXT"),
+)
+
+#: How far :meth:`ReviewQueue.grant_ancestry` walks ``parent_grant``. Looser
+#: than ``interlock.cloud.grants.MAX_ANCESTRY_DEPTH`` on purpose: the queue
+#: records the link it was handed and only names the chain - verification and
+#: its four-link cap belong to the connector, and a shorter walk here would
+#: silently truncate a chain that cap still allows.
+_GRANT_CHAIN_DEPTH = 8
+
 
 def default_path() -> str:
     return os.path.join(os.path.expanduser("~"), ".interlock", "reviews.db")
@@ -319,6 +332,11 @@ class ReviewQueue:
         for name, declaration in _MIGRATED_COLUMNS:
             if name not in columns:
                 db.execute("ALTER TABLE reviews ADD COLUMN {} {}".format(name, declaration))
+        grant_columns = {row[1] for row in db.execute("PRAGMA table_info(cloud_grants)")}
+        for name, declaration in _CLOUD_GRANT_MIGRATED_COLUMNS:
+            if name not in grant_columns:
+                db.execute("ALTER TABLE cloud_grants ADD COLUMN {} {}".format(
+                    name, declaration))
         settings_columns = {row[1] for row in db.execute("PRAGMA table_info(settings)")}
         if "seq" not in settings_columns:
             db.execute("ALTER TABLE settings ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
@@ -613,6 +631,35 @@ class ReviewQueue:
                 "ORDER BY applied DESC, rowid DESC LIMIT 1", (review_id,)).fetchone()
         return row[0] if row is not None else None
 
+    def grant_ancestry(self, review_id: str) -> List[str]:
+        """The grant ids that delegated the authority ``review_id`` was settled by.
+
+        Oldest first, outermost delegation first, and excluding the grant that
+        settled the review itself (that id is ``grant_for``'s answer and travels
+        in ``approval``). Empty for a local decision, for a grant the plane
+        signed directly, and for a database written before the link existed -
+        all three are "no delegation to record", not an error. Names only:
+        nothing here stores an argument value.
+        """
+        grant_id = self.grant_for(review_id)
+        if grant_id is None:
+            return []
+        chain: List[str] = []
+        seen = {grant_id}
+        current: Optional[str] = grant_id
+        with self._db() as db:
+            while current is not None and len(chain) < _GRANT_CHAIN_DEPTH:
+                row = db.execute(
+                    "SELECT parent_grant FROM cloud_grants WHERE grant_id = ?",
+                    (current,)).fetchone()
+                if row is None or not row[0] or row[0] in seen:
+                    break
+                current = str(row[0])
+                seen.add(current)
+                chain.append(current)
+        chain.reverse()
+        return chain
+
     def apply_grant(self, grant: Dict[str, Any], *, binding: str,
                     now: Optional[float] = None) -> Review:
         """Settle a review from a verified remote grant, atomically.
@@ -707,11 +754,15 @@ class ReviewQueue:
                 if cursor.rowcount != 1:
                     raise GrantRefused("status")
                 self._seal(db, review_id)
+                parent_grant = grant.get("parent_grant")
                 db.execute(
                     "INSERT INTO cloud_grants (grant_id, review_id, decision, "
-                    "approver, seq, applied) VALUES (?, ?, ?, ?, ?, ?)",
+                    "approver, seq, applied, parent_grant) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (grant_id, review_id, decision, approver,
-                     int(grant.get("seq") or 0), now))
+                     int(grant.get("seq") or 0), now,
+                     parent_grant if isinstance(parent_grant, str) and parent_grant
+                     else None))
                 seq = self._bump(db)
                 review = self._review(db, self._row(db, review_id))
                 db.execute("COMMIT")

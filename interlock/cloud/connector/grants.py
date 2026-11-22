@@ -22,17 +22,23 @@ import hmac
 import time
 from typing import Any, Dict, Iterable, List, Mapping
 
-from ..grants import GENESIS, DEFAULT_MAX_SKEW, verify_grant
+from ..grants import GENESIS, DEFAULT_MAX_SKEW, ancestry_chain, verify_grant
 from ...reviews import GrantRefused
 
 #: The persisted dedupe set is capped; oldest ids are dropped first. A grant
 #: older than the cap that is redelivered still fails the chain check.
 DEDUPE_CAP = 10_000
 
+#: How many applied envelopes are kept so a later grant's ``parent_grant`` can
+#: be resolved. A grant lives at most ten minutes, so a parent outside this
+#: window could never have been valid for the child anyway.
+ANCESTRY_CAP = 2_048
+
 #: State keys this module owns in ``connector.json``.
 STATE_KEYS = (
-    "grant_last_seq", "grant_last_sig", "seen_grants", "grants_applied",
-    "grants_refused", "grants_acked", "last_grant_refusal", "last_grant_applied",
+    "grant_last_seq", "grant_last_sig", "seen_grants", "grant_envelopes",
+    "grants_applied", "grants_refused", "grants_acked", "last_grant_refusal",
+    "last_grant_applied",
 )
 
 
@@ -48,6 +54,7 @@ def initial_state() -> Dict[str, Any]:
         "grant_last_seq": 0,
         "grant_last_sig": GENESIS,
         "seen_grants": [],
+        "grant_envelopes": {},
         "grants_applied": 0,
         "grants_refused": 0,
         "grants_acked": 0,
@@ -73,6 +80,10 @@ def load_state(raw: Mapping[str, Any]) -> Dict[str, Any]:
         elif key == "seen_grants":
             if isinstance(value, list):
                 state[key] = [item for item in value if isinstance(item, str)]
+        elif key == "grant_envelopes":
+            if isinstance(value, dict):
+                state[key] = {item_id: envelope for item_id, envelope in value.items()
+                              if isinstance(item_id, str) and isinstance(envelope, dict)}
         elif value is None or isinstance(value, dict):
             state[key] = value
     return state
@@ -83,13 +94,15 @@ class GrantProcessor:
 
     def __init__(self, queue: Any, *, public_key: Any, org_id: str,
                  host_id: str, clock: Any = time.time,
-                 dedupe_cap: int = DEDUPE_CAP) -> None:
+                 dedupe_cap: int = DEDUPE_CAP,
+                 ancestry_cap: int = ANCESTRY_CAP) -> None:
         self.queue = queue
         self.public_key = self._public_bytes(public_key)
         self.org_id = org_id
         self.host_id = host_id
         self.clock = clock
         self.dedupe_cap = max(1, int(dedupe_cap))
+        self.ancestry_cap = max(1, int(ancestry_cap))
 
     @staticmethod
     def _public_bytes(value: Any) -> bytes:
@@ -116,6 +129,25 @@ class GrantProcessor:
             seen.append(grant_id)
         if len(seen) > self.dedupe_cap:
             del seen[:len(seen) - self.dedupe_cap]
+
+    def _parents(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """The applied envelopes a ``parent_grant`` link may name."""
+        envelopes = state.get("grant_envelopes")
+        if not isinstance(envelopes, dict):
+            envelopes = {}
+            state["grant_envelopes"] = envelopes
+        return envelopes
+
+    def _remember(self, state: Dict[str, Any], grant: Mapping[str, Any]) -> None:
+        """Keep an accepted envelope so a later child can name it as a parent."""
+        grant_id = grant.get("grant_id")
+        if not isinstance(grant_id, str) or not grant_id:
+            return
+        envelopes = self._parents(state)
+        envelopes.pop(grant_id, None)
+        envelopes[grant_id] = dict(grant)
+        while len(envelopes) > self.ancestry_cap:
+            del envelopes[next(iter(envelopes))]
 
     def _advance(self, state: Dict[str, Any], grant: Mapping[str, Any]) -> None:
         seq = int(grant.get("seq") or 0)
@@ -159,10 +191,12 @@ class GrantProcessor:
                 acked.append(grant_id)
                 continue
 
+            # A grant that names a parent is only good if this host can still
+            # answer for that parent: the envelope must have been applied here.
             failure = verify_grant(
                 grant, self.public_key, org_id=self.org_id,
                 host_id=self.host_id, now=_clock(self.clock),
-                max_skew=DEFAULT_MAX_SKEW)
+                max_skew=DEFAULT_MAX_SKEW, parents=self._parents(state))
             if failure is not None:
                 self._refuse(state, refusals, grant_id, failure)
                 continue
@@ -210,6 +244,7 @@ class GrantProcessor:
                 # Consume the chain position and ack; the local status is the
                 # report the kickoff asks for. Nothing is applied.
                 self._advance(state, grant)
+                self._remember(state, grant)
                 self._record_seen(state, grant_id)
                 acked.append(grant_id)
                 local.append({"grant_id": grant_id, "status": review.status})
@@ -224,6 +259,7 @@ class GrantProcessor:
                     except Exception:
                         current = "unknown"
                     self._advance(state, grant)
+                    self._remember(state, grant)
                     self._record_seen(state, grant_id)
                     acked.append(grant_id)
                     local.append({"grant_id": grant_id, "status": current})
@@ -235,6 +271,7 @@ class GrantProcessor:
                 continue
 
             self._advance(state, grant)
+            self._remember(state, grant)
             self._record_seen(state, grant_id)
             acked.append(grant_id)
             applied.append(grant_id)
@@ -242,6 +279,8 @@ class GrantProcessor:
             state["last_grant_applied"] = {
                 "grant_id": grant_id, "review_id": grant["review_id"],
                 "decision": grant.get("decision"), "seq": seq,
+                # Names only: the verified chain this decision descended from.
+                "authority": ancestry_chain(grant, self._parents(state)),
                 "at": _clock(self.clock),
             }
 
