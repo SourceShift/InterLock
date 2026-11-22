@@ -22,7 +22,9 @@ breaking changes land.
   degrades to an allow (unpinned), a block (drift) or an escalation (unreadable)
   without ever raising into the agent loop. Pins live in
   `~/.interlock/skills.json`; `interlock skills check` exits 2 on drift or an
-  unknown skill, so a hook can refuse the activation.
+  unknown skill, so a hook can refuse the activation. The built-in
+  `coding-agent` pack now runs the rule for every `Skill` activation, inert
+  until a skill is pinned.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
   patch is judged by evidence it did not produce: every test file it touches

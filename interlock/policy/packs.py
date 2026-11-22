@@ -45,6 +45,7 @@ CODING_AGENT_TOOLS: Dict[str, List[str]] = {
     "Glob": ["pattern", "path"],
     "Grep": ["pattern", "path", "glob", "type", "output_mode", "multiline", "head_limit",
              "-i", "-n", "-A", "-B", "-C"],
+    "Skill": ["skill", "name"],
 }
 
 WRITE_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]
@@ -171,6 +172,9 @@ def coding_agent() -> Dict[str, Any]:
              "detector": "secret_path_command_guard",
              "with": {"prefixes": [], "exact": hook_settings,
                       "keys": ["command"], "verdict": "escalate"}},
+            # No ``with``: the detector must read ~/.interlock/skills.json on
+            # every call so a skill pinned after the engine was built is seen.
+            {"id": "skill-digest", "on": "Skill", "detector": "skill_digest_guard"},
             {"id": "result-injection", "detector": "tool_result_injection_guard"},
             {"id": "result-secrets", "detector": "tool_output_secret_redactor"},
         ],

@@ -58,6 +58,29 @@ def receipts(home, tmp_path_factory):
     set_sink(None)
 
 
+@pytest.fixture(scope="module")
+def skill_pins(home):
+    """Two pinned skills - one drifted after pinning - and one left unpinned.
+
+    Distinct names keep the module-scoped HOME from leaking pin state between
+    cases, and the drift appends real bytes: rewriting identical bytes hashes
+    the same and would silently allow.
+    """
+    from interlock.skills import pin_skill
+
+    skills = os.path.join(home, ".claude", "skills")
+    for name in ("drifted-skill", "stable-skill", "unpinned-skill"):
+        directory = os.path.join(skills, name)
+        os.makedirs(directory, exist_ok=True)
+        with open(os.path.join(directory, "SKILL.md"), "w") as fh:
+            fh.write("# {}\n\nRun the reviewed instructions.\n".format(name))
+    pin_skill("drifted-skill")
+    pin_skill("stable-skill")
+    with open(os.path.join(skills, "drifted-skill", "SKILL.md"), "a") as fh:
+        fh.write("\nThe instructions changed after review.\n")
+    return skills
+
+
 def _new_receipts(path: str, before: int) -> List[Dict[str, Any]]:
     if not os.path.exists(path):
         return []
@@ -320,6 +343,12 @@ CALL_CASES = [
     ("agent-hook-settings", claude_pre("apply_patch", {"command": "*** Begin Patch\n*** Update File: /{home}/.codex/config.toml\n@@\n-hooks = 1\n+hooks = 0\n*** End Patch"}), ESCALATE),
     ("secret_path_command", bash("echo '{}' > ~/.claude/settings.json"), ESCALATE),
     (None, claude_pre("Read", {"file_path": "~/.claude/settings.json"}), ALLOW),
+
+    # skill-digest: a Skill activation is refused when its pinned files changed;
+    # an unchanged skill, or one never pinned, is left alone
+    ("skill_digest", claude_pre("Skill", {"skill": "drifted-skill"}), BLOCK),
+    (None, claude_pre("Skill", {"skill": "stable-skill"}), ALLOW),
+    (None, claude_pre("Skill", {"skill": "unpinned-skill"}), ALLOW),
 ]
 
 AGENT_CASES = [
@@ -399,7 +428,7 @@ def _id(case) -> str:
 
 
 @pytest.mark.parametrize("case", CALL_CASES + AGENT_CASES, ids=_id)
-def test_call(engine, receipts, home, case):
+def test_call(engine, receipts, home, skill_pins, case):
     rule, payload, verdict = case
     expect(engine, receipts, _fill(payload, home), verdict, rule)
 
@@ -449,7 +478,8 @@ def test_every_rule_in_the_pack_has_a_case(engine):
                     "result-injection": "tool_result_injection", "result-secrets": "tool_output_secret_redact",
                     "unreadable-commands": "command_intent",
                     "secret-file-commands": "secret_path_command",
-                    "agent-hook-settings-commands": "secret_path_command"}
+                    "agent-hook-settings-commands": "secret_path_command",
+                    "skill-digest": "skill_digest"}
     covered = {c[0] for c in CALL_CASES + AGENT_CASES + RESULT_CASES if c[0]}
     for rule in builtin_pack("coding-agent")["rules"]:
         assert detector_ids.get(rule["id"], rule["id"]) in covered, rule["id"]

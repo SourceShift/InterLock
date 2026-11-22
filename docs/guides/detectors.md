@@ -11,8 +11,10 @@ The full list, with what each one catches and which calls it looks at, is the
 
 ## Install the ones you want
 
-Nothing is on by default. Import a detector's factory, call it to build the rule,
-and install it like any other rule:
+Nothing is on by default here, with one exception: the built-in `coding-agent`
+pack installs `skill-digest`, which blocks a `Skill` activation whose files
+changed since the skill was pinned. Import a detector's factory, call it to
+build the rule, and install it like any other rule:
 
 ```python
 import interlock
