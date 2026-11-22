@@ -298,6 +298,27 @@ def save_pins(
         os.close(directory_fd)
 
 
+def unpin_skill(
+    name: str,
+    pins_path: Optional[str] = None,
+) -> str:
+    """Remove ``name``'s pin, save, and return the digest that was removed.
+
+    Removal is keyed by name alone, so nothing is discovered or hashed and
+    there is no ``roots`` argument. Every other pin in the file is preserved
+    and the file is rewritten through :func:`save_pins`. A missing name or a
+    missing pin file raises ``ValueError`` - a missing file loads as an empty
+    mapping - and leaves the file untouched.
+    """
+    pins_file = DEFAULT_PINS_PATH if pins_path is None else pins_path
+    pins = load_pins(pins_file)
+    if name not in pins:
+        raise ValueError("skill not pinned: {}".format(name))
+    pinned = pins.pop(name)
+    save_pins(pins_file, pins)
+    return pinned
+
+
 def pin_skill(
     name: str,
     roots: Optional[Iterable[str]] = None,

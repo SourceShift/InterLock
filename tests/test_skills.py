@@ -338,6 +338,30 @@ def test_pin_skill_refuses_an_unknown_skill(tmp_path):
         skills.pin_skill("absent", roots=[str(tmp_path)], pins_path=str(tmp_path / "p.json"))
 
 
+def test_unpin_skill_removes_only_the_named_pin(tmp_path):
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"one": "a" * 64, "two": "b" * 64})
+    removed = skills.unpin_skill("one", pins_path=str(pins))
+    assert removed == "a" * 64
+    assert skills.load_pins(str(pins)) == {"two": "b" * 64}
+
+
+def test_unpin_skill_leaves_the_file_identical_for_an_unknown_name(tmp_path):
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"reviewed": "a" * 64})
+    before = pins.read_bytes()
+    with pytest.raises(ValueError, match="skill not pinned: absent"):
+        skills.unpin_skill("absent", pins_path=str(pins))
+    assert pins.read_bytes() == before
+
+
+def test_unpin_skill_raises_for_a_missing_pin_file(tmp_path):
+    pins = tmp_path / "absent.json"
+    with pytest.raises(ValueError, match="skill not pinned: reviewed"):
+        skills.unpin_skill("reviewed", pins_path=str(pins))
+    assert not pins.exists()
+
+
 # --- the CLI ----------------------------------------------------------------
 
 
@@ -458,3 +482,42 @@ def test_cli_check_requires_exactly_one_of_name_or_all(tmp_path, capsys):
     assert "NAME or --all" in capsys.readouterr().err
     assert main(["skills", "check"]) == 64
     assert "NAME or --all" in capsys.readouterr().err
+
+
+def test_cli_unpin_removes_one_pin_and_prints_the_digest(tmp_path, capsys):
+    from interlock.cli import main
+
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"one": "a" * 64, "two": "b" * 64})
+    assert main(["skills", "unpin", "one", "--pins", str(pins)]) == 0
+    assert capsys.readouterr().out == "unpinned one {}\n".format("a" * 64)
+    assert skills.load_pins(str(pins)) == {"two": "b" * 64}
+
+
+def test_cli_unpin_json_reports_name_pinned_and_pins(tmp_path, capsys):
+    from interlock.cli import main
+
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"one": "a" * 64})
+    assert main(["skills", "unpin", "one", "--pins", str(pins), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "name": "one", "pinned": "a" * 64, "pins": str(pins)}
+
+
+def test_cli_unpin_a_second_time_exits_2_with_not_pinned(tmp_path, capsys):
+    from interlock.cli import main
+
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"one": "a" * 64})
+    assert main(["skills", "unpin", "one", "--pins", str(pins)]) == 0
+    capsys.readouterr()
+    assert main(["skills", "unpin", "one", "--pins", str(pins)]) == 2
+    assert "not pinned" in capsys.readouterr().err
+
+
+def test_cli_bare_skills_lists_every_action(capsys):
+    from interlock.cli import main
+
+    assert main(["skills"]) == 64
+    assert ("choose an action: pin, unpin, list, check"
+            in capsys.readouterr().err)

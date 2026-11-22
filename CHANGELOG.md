@@ -30,8 +30,10 @@ breaking changes land.
   before it is activated, and both `find_skill` and the audit resolve the flat
   `<root>/<plugin>/<skill>` plugin layout Claude Code activates as
   `plugin:skill`, alongside the `<root>/<plugin>/skills/<skill>` and
-  `<root>/<skill>` forms. See `docs/guides/skills.md` for the operator's
-  walk-through.
+  `<root>/<skill>` forms. `interlock skills unpin NAME` removes a single pin
+  without hand-editing the JSON, atomically preserving every other name; it is
+  keyed by name alone, so it needs no skills root and never hashes a directory.
+  See `docs/guides/skills.md` for the operator's walk-through.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
   patch is judged by evidence it did not produce: every test file it touches

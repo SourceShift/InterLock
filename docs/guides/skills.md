@@ -100,6 +100,25 @@ interlock skills pin reviewed-skill --roots ~/.claude/skills ~/work/skills --pin
 If you move them, the guard must be told the same locations; see
 [Wiring and tuning](#wiring-and-tuning).
 
+## Unpin
+
+Retire a skill you no longer trust by name, without hand-editing the JSON:
+
+```bash
+interlock skills unpin reviewed-skill
+```
+
+```
+unpinned reviewed-skill bb13efcb75b55a6fe95d4ef0371e8af10daecde43731afda2a45ecbe8da37a37
+```
+
+Removal is keyed by the pin's name alone, so `unpin` takes no `--roots` and
+never reads or hashes a skills directory. It rewrites the pin file atomically
+and preserves every other name in it. Unpinning a name that is not pinned - or
+from a pin file that does not exist - exits `2` and leaves the file unchanged;
+the skill then falls under the guard's `on_unknown` policy. Pass `--json` for
+`name`, `pinned` (the digest that was removed) and `pins` (the file).
+
 ## Check before trust
 
 Check one skill before you let an agent activate it:
