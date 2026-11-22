@@ -109,12 +109,13 @@ def discover_skills(
     A directory directly under a root is a plain skill when it contains a
     regular ``SKILL.md``; a directory ``<root>/<plugin>/skills/<skill>`` or
     ``<root>/<plugin>/<skill>`` is a ``plugin:skill`` when ``<skill>`` contains
-    one. A directory that is itself a skill is never a plugin: when it holds a
-    ``SKILL.md`` of its own it is reported as the plain skill and its
-    subdirectories are not promoted to ``plugin:skill``. Names the component
-    rule would reject are skipped, so every returned name is one
-    :func:`find_skill` accepts. Symlinked directories are never followed: they
-    are not part of the tree the operator reviewed.
+    one. A directory that holds a ``SKILL.md`` of its own is reported as the
+    plain skill and its other children are not promoted to ``plugin:skill``; an
+    explicit ``skills/`` subdirectory is still scanned, because that layout is
+    unambiguous whatever else the directory holds. Names the component rule
+    would reject are skipped, so every returned name is one :func:`find_skill`
+    accepts. Symlinked directories are never followed: they are not part of the
+    tree the operator reviewed.
 
     The result is sorted by name and deduplicated across roots (the first root
     that names a skill wins). Only directory entries and ``SKILL.md`` presence

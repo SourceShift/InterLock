@@ -60,9 +60,11 @@ disk that name can live in three layouts under a root. For `plugin:skill`,
 | `<root>/<skill>` | `marketplaces/kubernetes-skill` | `kubernetes-skill:kubernetes-skill` |
 
 A directory that is itself a skill - one holding a regular `SKILL.md` - is a
-plain skill, not a plugin: its subdirectories are never promoted to
+plain skill, not a plugin: its other subdirectories are not promoted to
 `plugin:skill`. Only a plugin directory with no `SKILL.md` of its own
-contributes flat `<plugin>/<skill>` entries.
+contributes flat `<plugin>/<skill>` entries. An explicit `skills/`
+subdirectory is still scanned, because that layout is unambiguous whatever
+else the directory holds.
 
 `~/.claude/plugins/marketplaces` is **not** a default root. To audit and pin
 the plugin skills installed there, pass it explicitly:
