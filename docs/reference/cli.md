@@ -737,8 +737,9 @@ usage: interlock mesh log [-h] [--root FILE] [--json] DIR_OR_URL
 usage: interlock mesh gossip [-h] --peer URL [--dir DIR] [--token TOKEN]
 usage: interlock mesh credential [-h] ACTION ...
 usage: interlock mesh harness [-h] --policy FILE --benign FILE [--samples FILE] [--poisons FILE]
-                              [--stress] [--max-fp-rate RATE] [--max-p95-us US]
-                              [--max-induced-rate RATE] [--max-stress-p95-us US]
+                              [--stress] [--over-safety] [--max-fp-rate RATE] [--max-p95-us US]
+                              [--max-induced-rate RATE] [--max-refused-rate RATE]
+                              [--max-missed-rate RATE] [--max-stress-p95-us US]
                               [--min-recall RATE] [--json]
 usage: interlock mesh forge [-h] --state FILE --benign FILE --out DIR [--samples FILE]
                             [--max-fp-rate RATE] [--min-recall RATE]

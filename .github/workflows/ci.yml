@@ -80,6 +80,15 @@ jobs:
         # skip by row, so skips here are expected and not a failure.
         run: python -m pytest -q
 
+      - name: Default pack stays usable on authorized destructive commands
+        # The over-safety gate: authorized-but-scary work (rm -rf build/, a
+        # force-push to a topic branch, a delete sweep in the checkout) must
+        # not be BLOCKed, while its unauthorized twin must still be caught.
+        # A detector that starts keying on scary words fails here, on one
+        # interpreter, before the full matrix repeats it.
+        if: matrix.python-version == '3.11'
+        run: python -m pytest -q tests/test_over_safety_gate.py
+
       - name: Detector catalog is current
         # docs/reference/detectors.md is generated from the detector modules.
         # A detector added, renamed, or rescoped without regenerating the page

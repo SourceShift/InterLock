@@ -330,9 +330,16 @@ def add_arguments(parser) -> None:
                          help="JSONL bait strings, to measure induced blocking")
     harness.add_argument("--stress", action="store_true",
                          help="time pathological but legal calls")
+    harness.add_argument("--over-safety", action="store_true",
+                         help="judge authorized-but-scary commands and their unauthorized "
+                              "twins: the policy must refuse neither the work nor the attack")
     harness.add_argument("--max-fp-rate", type=float, default=0.001, metavar="RATE")
     harness.add_argument("--max-p95-us", type=int, default=5000, metavar="US")
     harness.add_argument("--max-induced-rate", type=float, default=0.0, metavar="RATE")
+    harness.add_argument("--max-refused-rate", type=float, default=0.0, metavar="RATE",
+                         help="with --over-safety: ceiling on authorized commands refused")
+    harness.add_argument("--max-missed-rate", type=float, default=0.0, metavar="RATE",
+                         help="with --over-safety: ceiling on unauthorized twins allowed")
     harness.add_argument("--max-stress-p95-us", type=int, default=50000, metavar="US")
     harness.add_argument("--min-recall", type=float, default=0.8, metavar="RATE")
     harness.add_argument("--json", action="store_true")
@@ -515,8 +522,9 @@ def _credential(args) -> int:
 
 
 def _harness(args) -> int:
-    from ..mesh.harness import (gate, gate_induced, gate_stress, induced_blocking,
-                                load_corpus, load_poisons, measure, recall, stress)
+    from ..mesh.harness import (gate, gate_induced, gate_over_safety, gate_stress,
+                                induced_blocking, load_corpus, load_poisons, measure,
+                                over_safety, recall, stress)
 
     try:
         with open(args.policy, "r", encoding="utf-8") as fh:
@@ -532,10 +540,14 @@ def _harness(args) -> int:
     induced = (induced_blocking(policy, benign, poisons, source=args.policy)
                if poisons else None)
     stressed = stress(policy, source=args.policy) if args.stress else None
+    boundary = over_safety(policy, source=args.policy) if args.over_safety else None
     ok, reasons = gate(measured, max_fp_rate=args.max_fp_rate, max_p95_us=args.max_p95_us,
                        recalled=recalled, min_recall=args.min_recall if recalled else 0.0)
     if induced is not None:
         reasons.extend(gate_induced(induced, max_rate=args.max_induced_rate))
+    if boundary is not None:
+        reasons.extend(gate_over_safety(boundary, max_refused_rate=args.max_refused_rate,
+                                        max_missed_rate=args.max_missed_rate))
     if stressed is not None:
         reasons.extend(gate_stress(stressed, max_p95_us=args.max_stress_p95_us))
     ok = not reasons
@@ -543,6 +555,8 @@ def _harness(args) -> int:
         payload = {"passed": ok, "reasons": reasons, "measured": measured, "recall": recalled}
         if induced is not None:
             payload["induced"] = induced
+        if boundary is not None:
+            payload["over_safety"] = boundary
         if stressed is not None:
             payload["stress"] = stressed
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -558,6 +572,11 @@ def _harness(args) -> int:
         if induced is not None:
             print("  induced blocking: {} of {} poisoned call(s) refused ({:.4%})".format(
                 induced["induced"], induced["variants"], induced["induced_rate"]))
+        if boundary is not None:
+            print("  over-safety: {} of {} authorized command(s) refused, "
+                  "{} of {} unauthorized twin(s) allowed".format(
+                      boundary["authorized_refused"], boundary["pairs"],
+                      boundary["unauthorized_allowed"], boundary["pairs"]))
         if stressed is not None:
             for row in stressed:
                 print("  stress case {} ({}): p50 {} us, p95 {} us".format(

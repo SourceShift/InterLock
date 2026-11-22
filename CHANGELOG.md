@@ -11,6 +11,23 @@ breaking changes land.
 
 ### Added
 
+- **An over-safety gate: authorized-but-scary commands must not be refused.**
+  The induced-blocking gate measures bait in fields that do not execute; this
+  measures the other refusal failure. `over_safety()` in
+  `interlock/mesh/harness.py` judges six built-in pairs whose two sides differ
+  in authorization, not menace - `rm -rf build/` against `rm -rf /`, a `.pyc`
+  delete sweep in the checkout against one started at `/`, a force-push to a
+  topic branch against one to `main`, a `.gitignore` edit against an agent hook
+  settings file, and two more - and reports the authorized commands `BLOCK`ed
+  (over-safe) and the unauthorized twins `ALLOW`ed (under-safe).
+  `gate_over_safety()` fails on either at zero by default, because either half
+  alone is satisfied by a useless policy. `ESCALATE` is neither: it asks a
+  human and then runs the call. The built-in coding-agent pack refuses 0 of 6
+  and allows 0 of 6; `interlock mesh harness --over-safety` and
+  `scripts/fp_baseline.py --over-safety` run it over any policy, and
+  `tests/test_over_safety_gate.py` is its own CI step so a detector that starts
+  keying on scary words fails there.
+
 - **A seccomp syscall denylist on the Landlock backend (`syscalls`).** Landlock
   reasons about paths, not syscalls, so the launcher now installs a classic-BPF
   filter after the ruleset and `no_new_privs`: `mount`, `pivot_root`, `chroot`,

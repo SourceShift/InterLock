@@ -30,11 +30,15 @@ from interlock.mesh.harness import (  # noqa: E402
     DEFAULT_MAX_FP_RATE,
     DEFAULT_MAX_INDUCED_RATE,
     DEFAULT_MAX_P95_US,
+    DEFAULT_MAX_MISSED_RATE,
+    DEFAULT_MAX_REFUSED_RATE,
     DEFAULT_MAX_STRESS_P95_US,
     gate,
     gate_induced,
+    gate_over_safety,
     gate_stress,
     induced_blocking,
+    over_safety,
     load_corpus,
     load_poisons,
     measure,
@@ -65,6 +69,10 @@ def main(argv=None) -> int:
     parser.add_argument("--stress", action="store_true",
                         help="time pathological but legal calls (huge args, deep nesting)")
     parser.add_argument("--max-induced-rate", type=float, default=DEFAULT_MAX_INDUCED_RATE)
+    parser.add_argument("--over-safety", action="store_true",
+                        help="judge authorized-but-scary commands and their unauthorized twins")
+    parser.add_argument("--max-refused-rate", type=float, default=DEFAULT_MAX_REFUSED_RATE)
+    parser.add_argument("--max-missed-rate", type=float, default=DEFAULT_MAX_MISSED_RATE)
     parser.add_argument("--max-stress-p95-us", type=int, default=DEFAULT_MAX_STRESS_P95_US)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -85,6 +93,10 @@ def main(argv=None) -> int:
     stressed = stress(policy, source=source, repeats=max(1, args.repeats)) if args.stress else None
     if stressed is not None:
         reasons.extend(gate_stress(stressed, max_p95_us=args.max_stress_p95_us))
+    boundary = over_safety(policy, source=source) if args.over_safety else None
+    if boundary is not None:
+        reasons.extend(gate_over_safety(boundary, max_refused_rate=args.max_refused_rate,
+                                        max_missed_rate=args.max_missed_rate))
     ok = not reasons
 
     if args.json:
@@ -95,6 +107,8 @@ def main(argv=None) -> int:
             payload["per_detector"] = detectors
         if induced is not None:
             payload["induced"] = induced
+        if boundary is not None:
+            payload["over_safety"] = boundary
         if stressed is not None:
             payload["stress"] = stressed
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -143,6 +157,16 @@ def main(argv=None) -> int:
             induced["induced"], induced["variants"], induced["induced_rate"]))
         for rule, hits in induced["by_rule"].items():
             print("  {}: {}".format(rule, hits))
+    if boundary is not None:
+        print()
+        print("over-safety: {} of {} authorized command(s) refused, "
+              "{} of {} unauthorized twin(s) allowed".format(
+                  boundary["authorized_refused"], boundary["pairs"],
+                  boundary["unauthorized_allowed"], boundary["pairs"]))
+        for row in boundary["refused"]:
+            print("  refused {} -> {}".format(row["family"], row["rule"]))
+        for row in boundary["missed"]:
+            print("  allowed {} -> {}".format(row["family"], row["command"]))
     if stressed is not None:
         print()
         print("stress (pathological but legal calls):")
