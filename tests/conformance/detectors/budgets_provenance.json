@@ -3,7 +3,12 @@
     "detector": "sequence_guard",
     "factory": "sequence_guard",
     "kwargs": {
-      "never": [["env_secret_read", "http_post"]],
+      "never": [
+        [
+          "env_secret_read",
+          "http_post"
+        ]
+      ],
       "window": 4,
       "max_scopes": 2
     },
@@ -1074,6 +1079,137 @@
           "action": "write_file",
           "principal": "alice",
           "args": "not-a-dict"
+        }
+      }
+    ]
+  },
+  {
+    "detector": "obligations",
+    "factory": "obligations",
+    "clock": {
+      "start": 1000
+    },
+    "kwargs": {
+      "require": [
+        {
+          "when": "deploy",
+          "then": "approve",
+          "within": 600
+        }
+      ],
+      "on_breach": "escalate"
+    },
+    "cases": [
+      {
+        "name": "a deploy opens a deadline",
+        "expect": "ALLOW",
+        "event": {
+          "action": "deploy",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "an unrelated call inside the deadline is allowed",
+        "advance": 300,
+        "expect": "ALLOW",
+        "event": {
+          "action": "ls",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "another run is unaffected",
+        "expect": "ALLOW",
+        "event": {
+          "action": "ls",
+          "span_id": "run-2"
+        }
+      },
+      {
+        "name": "the next call after the deadline is escalated",
+        "advance": 400,
+        "expect": "ESCALATE",
+        "event": {
+          "action": "ls",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "the breach fires once, so the run can be corrected",
+        "expect": "ALLOW",
+        "event": {
+          "action": "ls",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "a second run opens its own deadline",
+        "expect": "ALLOW",
+        "event": {
+          "action": "deploy",
+          "span_id": "run-3"
+        }
+      },
+      {
+        "name": "an approval inside the deadline discharges it",
+        "advance": 100,
+        "expect": "ALLOW",
+        "event": {
+          "action": "approve",
+          "span_id": "run-3"
+        }
+      },
+      {
+        "name": "nothing is owed after the discharge",
+        "advance": 1000,
+        "expect": "ALLOW",
+        "event": {
+          "action": "ls",
+          "span_id": "run-3"
+        }
+      }
+    ]
+  },
+  {
+    "detector": "obligations",
+    "factory": "obligations",
+    "clock": {
+      "start": 2000
+    },
+    "kwargs": {
+      "require": [
+        {
+          "when": "deploy",
+          "then": "approve",
+          "within": 600
+        }
+      ],
+      "on_breach": "block"
+    },
+    "cases": [
+      {
+        "name": "a deploy opens a deadline",
+        "expect": "ALLOW",
+        "event": {
+          "action": "deploy",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "the next call after the deadline is blocked, not escalated",
+        "advance": 601,
+        "expect": "BLOCK",
+        "event": {
+          "action": "ls",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "the block fires once",
+        "expect": "ALLOW",
+        "event": {
+          "action": "ls",
+          "span_id": "run-1"
         }
       }
     ]

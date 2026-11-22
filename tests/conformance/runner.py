@@ -21,6 +21,10 @@ A case file (``tests/conformance/detectors/<category>.json``) is a list of entri
   ``principal``, ``span_id``, ``parent_principal``, ``call_id``.
 - ``{{name}}`` in any string is replaced by a credential-shaped fixture built
   here at run time (see :data:`FIXTURES`), so no literal key is ever committed.
+- An entry whose detector judges time declares ``"clock": {"start": 1000}``.
+  The runner then passes ``clock=`` a fake clock to the factory, and a case's
+  ``"advance": 60`` moves that clock forward before the event is evaluated -
+  so a deadline can lapse between two cases without waiting.
 
 ``python3 tests/conformance/runner.py [FILE ...]`` prints one line per case:
 pass/fail, the detector, the case name and the verdicts - never the payload.
@@ -116,6 +120,19 @@ class Outcome:
     detail: str = ""
 
 
+class _Clock:
+    """A fake clock: callable for the factory, movable between cases."""
+
+    def __init__(self, start: float) -> None:
+        self.now = float(start)
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += float(seconds)
+
+
 def _event(spec: Dict[str, Any]) -> SensorEvent:
     spec = expand(spec)
     return SensorEvent(action=spec["action"], args=spec.get("args", {}), phase=spec.get("phase", "call"),
@@ -126,10 +143,17 @@ def _event(spec: Dict[str, Any]) -> SensorEvent:
 def run_entry(entry: Dict[str, Any]) -> List[Outcome]:
     module = importlib.import_module("interlock.detectors." + entry["detector"])
     factory = getattr(module, entry["factory"])
-    rule = factory(**copy.deepcopy(expand(entry.get("kwargs", {}))))
+    kwargs = copy.deepcopy(expand(entry.get("kwargs", {})))
+    clock = None
+    if "clock" in entry:
+        clock = _Clock(expand(entry["clock"]).get("start", 0.0))
+        kwargs["clock"] = clock
+    rule = factory(**kwargs)
     engine = PolicyEngine([rule])
     out: List[Outcome] = []
     for case in entry["cases"]:
+        if clock is not None:
+            clock.advance(case.get("advance", 0.0))
         try:
             decision = engine.evaluate(_event(case["event"]))
             got = decision.verdict.name

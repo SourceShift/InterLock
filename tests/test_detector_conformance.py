@@ -25,9 +25,6 @@ NOT_JSON = {
     ("skill_digest_guard", "skill_digest_guard"):
         "the digest needs a real skill directory, which JSON cannot express, so its "
         "behaviour is pinned by tests/test_skill_digest_guard.py",
-    ("obligations", "obligations"):
-        "a deadline needs an injectable clock, which JSON cases cannot express, so its "
-        "behaviour is pinned by tests/test_obligations.py",
 }
 
 
