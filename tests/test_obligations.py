@@ -337,6 +337,148 @@ def test_the_rule_refuses_approvals_only_at_construction():
         obligations(spec)
 
 
+# --- the durable ledger -----------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "ledger" / "obligations.db")
+
+
+def test_a_state_file_carries_an_opening_to_the_next_process(tmp_path):
+    clock = _Clock()
+    obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))(_event("deploy"))
+    clock.advance(601)
+    second = obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))
+    assert cast(Decision, second(_event("write_file"))).verdict is Verdict.ESCALATE
+
+
+def test_a_state_file_carries_the_discharge(tmp_path):
+    clock = _Clock()
+    obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))(_event("deploy"))
+    clock.advance(60)
+    second = obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))
+    assert second(_event("approve")) is None
+    clock.advance(601)
+    third = obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))
+    assert third(_event("write_file")) is None
+
+
+def test_a_state_file_keeps_two_runs_apart(tmp_path):
+    clock = _Clock()
+    obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))(
+        _event("deploy", span_id="run-1"))
+    obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))(
+        _event("approve", span_id="run-2"))
+    clock.advance(601)
+    rule = obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))
+    assert cast(Decision, rule(_event("x", span_id="run-1"))).verdict is Verdict.ESCALATE
+
+
+def test_max_open_holds_across_processes(tmp_path):
+    clock = _Clock()
+    before = clock.now
+    for _ in range(2):  # max_open=1, so the first opening must be evicted
+        obligations(DEPLOY_APPROVE, max_open=1, clock=clock,
+                    state=_state(tmp_path))(_event("deploy"))
+        clock.advance(500)
+    clock.now = before + 700  # the evicted opening's deadline has passed
+    rule = obligations(DEPLOY_APPROVE, max_open=1, clock=clock,
+                       state=_state(tmp_path))
+    assert rule(_event("x")) is None
+    clock.now = before + 1101  # the kept opening's deadline has passed
+    rule = obligations(DEPLOY_APPROVE, max_open=1, clock=clock,
+                       state=_state(tmp_path))
+    assert cast(Decision, rule(_event("x"))).verdict is Verdict.ESCALATE
+
+
+def test_max_scopes_holds_across_processes(tmp_path):
+    clock = _Clock()
+    obligations(DEPLOY_APPROVE, max_scopes=1, clock=clock,
+                state=_state(tmp_path))(_event("deploy", span_id="run-1"))
+    rule = obligations(DEPLOY_APPROVE, max_scopes=1, clock=clock,
+                       state=_state(tmp_path))
+    rule(_event("deploy", span_id="run-2"))  # evicts run-1
+    clock.advance(601)
+    rule = obligations(DEPLOY_APPROVE, max_scopes=1, clock=clock,
+                       state=_state(tmp_path))
+    assert rule(_event("x", span_id="run-1")) is None
+    rule = obligations(DEPLOY_APPROVE, max_scopes=1, clock=clock,
+                       state=_state(tmp_path))
+    assert cast(Decision, rule(_event("x", span_id="run-2"))).verdict is Verdict.ESCALATE
+
+
+def test_a_state_file_drops_a_deadline_the_policy_no_longer_lists(tmp_path):
+    clock = _Clock()
+    obligations(DEPLOY_APPROVE, clock=clock, state=_state(tmp_path))(_event("deploy"))
+    revoked = [{"when": "deploy", "then": "revoke", "within": 600}]
+    clock.advance(601)
+    rule = obligations(revoked, clock=clock, state=_state(tmp_path))
+    assert rule(_event("write_file")) is None
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        obligations(DEPLOY_APPROVE, state=state)
+
+
+def test_a_state_path_may_be_home_relative():
+    # Expanded, not refused: resolve() is what makes it absolute.
+    obligations(DEPLOY_APPROVE, state="~/interlock-never-written.db")
+
+
+def test_no_state_file_is_written_until_a_call_arrives(tmp_path):
+    path = tmp_path / "ledger" / "obligations.db"
+    rule = obligations(DEPLOY_APPROVE, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+    rule(_event("unrelated"))
+    assert path.exists()
+
+
+def test_the_state_file_is_readable_only_by_its_owner(tmp_path):
+    import stat
+
+    path = tmp_path / "ledger" / "obligations.db"
+    obligations(DEPLOY_APPROVE, state=str(path))(_event("deploy"))
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_a_corrupt_state_file_falls_back_instead_of_raising(tmp_path):
+    path = tmp_path / "ledger" / "obligations.db"
+    path.parent.mkdir()
+    path.write_bytes(b"this is not a sqlite database\n" * 64)
+    clock = _Clock()
+    rule = obligations(DEPLOY_APPROVE, clock=clock, state=str(path))
+    assert rule(_event("deploy")) is None  # warned and fell back, never raised
+    clock.advance(601)
+    assert cast(Decision, rule(_event("x"))).verdict is Verdict.ESCALATE
+
+
+def test_declarative_rule_binds_state(tmp_path):
+    from interlock.obligation_ledger import FileLedger
+    from interlock.policy.declarative import load_policy
+
+    path = _state(tmp_path)
+
+    def document():
+        return {"version": 1, "rules": [{
+            "id": "deploy-needs-approval",
+            "detector": "obligations",
+            "with": {"require": DEPLOY_APPROVE, "state": path},
+        }]}
+
+    first = load_policy(document())
+    assert not first.quarantined
+    first.evaluate(_event("deploy"))
+    assert FileLedger(path).open_count() == 1
+    second = load_policy(document())   # a separate host, the same state file
+    second.evaluate(_event("approve"))
+    assert FileLedger(path).open_count() == 0
+
+
 # --- the CLI ----------------------------------------------------------------
 
 

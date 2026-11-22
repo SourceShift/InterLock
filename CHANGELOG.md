@@ -11,6 +11,20 @@ breaking changes land.
 
 ### Added
 
+- **An obligation survives the process.** The `obligations` detector kept its
+  open deadlines in memory, which a daemon can live with but a hook host cannot:
+  it runs one process per tool call, so the `deploy` in one invocation was
+  forgotten before the `approve` arrived in the next. Pass `"state": "/abs/path"`
+  (or the factory's `state=`) and the openings move to a small SQLite file
+  shared by every invocation - scope, the two action names and two timestamps,
+  never an argument, mode `0600`, one `BEGIN IMMEDIATE` transaction per call so
+  racing hooks cannot both discharge or both open. A relative path is refused,
+  because a hook's working directory is the agent's. The file is created on the
+  first call, not at load, so `interlock policy check` writes nothing; a
+  storage fault warns once and falls back to the in-process ledger instead of
+  refusing every call. Rows whose `(when, then)` pair an edited policy no
+  longer lists are dropped on sight.
+
 - **The policy's hint reaches the approver.** A rule's `remediation` - one line
   saying what would be allowed instead - was rendered to the agent but stopped
   at the approval boundary. It now travels with `ApprovalRequest.remediation`

@@ -240,6 +240,39 @@ Three properties are deliberate:
 - **Scope is the run.** `span_id`, else `principal`, else `"<anon>"` — one run's
   deploy cannot be discharged by another run's approval.
 
+### Across hook processes
+
+By default the ledger lives in the rule's memory: one process, one ledger. That
+fits a daemon, which holds the process open for the whole run, but not a hook
+host — it starts a new process for every tool call, so the `deploy` in one
+process is forgotten before the `approve` arrives in the next. Point `state` at
+a file and the openings move there instead:
+
+```json
+{"id": "deploy-needs-approval", "detector": "obligations",
+ "with": {"require": [{"when": "deploy", "then": "approve", "within": 600}],
+          "state": "/var/lib/interlock/obligations.db"}}
+```
+
+The file is a small SQLite database holding the scope, the two action names and
+two timestamps — never an argument. It must be an **absolute** path: a hook's
+working directory is the agent's, and the ledger must not sit where the guarded
+process can move it. It is created on the first call, not at load, so
+`interlock policy check` writes nothing, and it is mode `0600`.
+
+Two properties are worth knowing here too:
+
+- **One transaction per call.** Two hook processes racing on the same call
+  cannot both discharge an obligation or both open it.
+- **A storage fault degrades, it never blocks.** If the file cannot be read or
+  written — locked too long, corrupt, disk full — the rule warns once, falls
+  back to its in-process ledger, and keeps deciding. That is the same failure as
+  a restart, which the log check still reports from the receipts; refusing every
+  call over a filesystem problem would make the guard worse than the incident.
+
+Editing the policy does not resurrect a deadline it removed: rows whose
+`(when, then)` pair the policy no longer lists are dropped when next seen.
+
 ### Checking a log instead
 
 The receipt log carries actions, verdicts and timestamps, so the same model is
@@ -261,8 +294,10 @@ Two things only the log check can do:
 - `"approvals_only": true` requires the follow-up receipt to carry an `approval`,
   so an unreviewed call does not discharge it. The live detector refuses such a
   rule at construction, because an event does not yet carry the approval.
-- An obligation whose trigger ran before the process started. The detector's
-  ledger is in memory and begins empty after a restart; the log does not.
+- An obligation whose trigger ran before the process started. Without `state`
+  the detector's ledger is in memory and begins empty after a restart; the log
+  does not. With `state` the opening survives, and only the log still reports
+  the late ones.
 
 Both instruments read the same receipt fields, so a run that passes the live
 guard still passes the check. The reverse is not promised: the check sees the

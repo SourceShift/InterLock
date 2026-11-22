@@ -24,16 +24,29 @@ approval is stamped on the **receipt** by the adapter after the rule runs, so
 the live event cannot answer it; a rule that guessed would be silently weaker
 than the log check. Use the log check for that obligation shape.
 
-State lives in the closure, so each factory call owns a fresh ledger and two
-rules cannot discharge each other. It is process-local, like the sequence
-guard: a restart forgets every open obligation, and the log check still knows
-better. Scope is ``span_id`` -> ``principal`` -> ``"<anon>"``, evicted oldest
-first beyond ``max_scopes``; one scope holds at most ``max_open`` openings,
-evicting its own oldest. Every reason names actions and the deadline only, so
-it is safe to put in a receipt.
+State lives in the closure by default, so each factory call owns a fresh
+ledger and two rules cannot discharge each other. That is process-local, which
+a daemon can live with but a hook host cannot: it runs one process per tool
+call, so the ``when`` in one process is forgotten before the ``then`` arrives.
+Point ``state=`` at an absolute path and the openings move to
+:class:`~interlock.obligation_ledger.FileLedger` (a small SQLite file holding
+scope, action names and timestamps - never an argument), so the next hook
+invocation enforces the deadline the previous one opened. The file is created
+on the first event, not at construction, so ``interlock policy check`` does not
+write anything. If it cannot be read or written the rule falls back to the
+in-process ledger for that call and logs once: a storage fault is the same
+failure as a restart, which the log check still reports from the receipts, and
+refusing every call would make the guard worse than the incident.
+
+Scope is ``span_id`` -> ``principal`` -> ``"<anon>"``, evicted oldest first
+beyond ``max_scopes``; one scope holds at most ``max_open`` openings, evicting
+its own oldest. Every reason names actions and the deadline only, so it is safe
+to put in a receipt.
 """
 from __future__ import annotations
 
+import logging
+import os
 import threading
 import time
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -41,8 +54,11 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from ..actions import canonical_action
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..obligation_ledger import FileLedger
 from ..obligations import Obligation, parse, subject_of
 from ..policy.engine import Rule
+
+_log = logging.getLogger(__name__)
 
 POLICY_ID = "obligation"
 
@@ -67,6 +83,7 @@ def obligations(
     max_scopes: int = DEFAULT_MAX_SCOPES,
     max_open: int = DEFAULT_MAX_OPEN,
     clock: Optional[Callable[[], float]] = None,
+    state: Optional[str] = None,
 ) -> Rule:
     """Rule: refuse a call once an obligation the run opened has lapsed.
 
@@ -78,6 +95,11 @@ def obligations(
     continue; the default) or ``"block"``. *max_scopes* and *max_open* bound
     memory and must be positive non-bool integers. *clock* returns the current
     time as a float and defaults to :func:`time.time`; tests pass a fake.
+
+    *state* is an absolute path to a SQLite file that makes the ledger survive
+    the process - required for a hook host, which runs one process per call.
+    A relative path is refused: a hook's working directory is the agent's, and
+    the ledger must not be writable by the thing it is guarding.
 
     Any invalid argument raises ``ValueError`` at construction, where the
     operator can still see it. The ledger is mutated under a per-rule lock and
@@ -93,6 +115,14 @@ def obligations(
     now_fn = time.time if clock is None else clock
     if not callable(now_fn):
         raise ValueError("clock must be a callable returning a float")
+    if state is not None:
+        if not isinstance(state, str) or not state.strip():
+            raise ValueError("state must be a non-empty path or None")
+        if not os.path.isabs(os.path.expanduser(state)):
+            raise ValueError(
+                "state must be an absolute path: a hook's working directory is "
+                "the agent's, and the ledger must not sit where the guarded "
+                "process can move it")
 
     wanted: List[Obligation] = parse(require)
     if any(item.approvals_only for item in wanted):
@@ -103,6 +133,8 @@ def obligations(
 
     ledgers: Dict[str, List[_Open]] = {}
     lock = threading.Lock()
+    durable: Optional[FileLedger] = None
+    durable_failed = False
 
     def _refuse(obligation: Obligation, opened_at: float, now: float) -> Decision:
         reason = "obligation: {} not followed by {} within {} (open {:.0f}s)".format(
@@ -112,15 +144,8 @@ def obligations(
             return Decision.block(reason=reason, policy_id=POLICY_ID)
         return Decision.escalate(reason=reason, policy_id=POLICY_ID)
 
-    def rule(event: SensorEvent) -> Optional[Decision]:
-        if getattr(event, "phase", "call") != "call":
-            return None
-        action = canonical_action(getattr(event, "action", None))
-        if not action:
-            return None
-        scope = subject_of(event)
-        now = float(now_fn())
-
+    def _memory_apply(scope: str, action: str, now: float) -> Optional[Tuple[Obligation, float]]:
+        """The in-process ledger; returns the breached obligation, if any."""
         with lock:
             ledger = ledgers.get(scope)
             if ledger is None:
@@ -133,21 +158,16 @@ def obligations(
             #    the oldest opening it matches. Late is still dropped here -
             #    the log check reports it as a breach, and refusing the
             #    compensating call would make the run worse.
-            for position, (index, _opened, _by) in enumerate(ledger):
-                if action == wanted[index].then:
+            for position, entry in enumerate(ledger):
+                if action == wanted[entry[0]].then:
                     del ledger[position]
                     break
 
             # 2. Expire: the oldest lapsed obligation refuses this call, once.
-            lapsed: Optional[_Open] = None
             for position, entry in enumerate(ledger):
-                index, _opened, required_by = entry
-                if now > required_by:
+                if now > entry[2]:
                     lapsed = ledger.pop(position)
-                    break
-            if lapsed is not None:
-                obligation = wanted[lapsed[0]]
-                return _refuse(obligation, lapsed[1], now)
+                    return wanted[lapsed[0]], lapsed[1]
 
             # 3. Open: a trigger action starts its clock.
             for index, obligation in enumerate(wanted):
@@ -158,6 +178,44 @@ def obligations(
                     ledger.pop(0)
                 ledger.append((index, now, now + obligation.within))
             return None
+
+    def _apply(scope: str, action: str, now: float) -> Optional[Tuple[Obligation, float]]:
+        """Apply one call to the durable ledger, falling back on a storage fault."""
+        nonlocal durable, durable_failed
+        if state is None:
+            return _memory_apply(scope, action, now)
+        if durable is None and not durable_failed:
+            try:
+                durable = FileLedger(state)
+            except Exception as exc:  # a state file that cannot be opened
+                durable_failed = True
+                _log.warning(
+                    "interlock: obligation ledger %s unavailable (%s); the rule "
+                    "falls back to a process-local ledger", state, exc)
+        if durable is not None:
+            try:
+                return durable.apply(scope, action, wanted, now,
+                                     max_scopes=max_scopes, max_open=max_open)
+            except Exception as exc:  # locked, full disk, a corrupted file
+                durable, durable_failed = None, True
+                _log.warning(
+                    "interlock: obligation ledger %s failed (%s); the rule falls "
+                    "back to a process-local ledger", state, exc)
+        return _memory_apply(scope, action, now)
+
+    def rule(event: SensorEvent) -> Optional[Decision]:
+        if getattr(event, "phase", "call") != "call":
+            return None
+        action = canonical_action(getattr(event, "action", None))
+        if not action:
+            return None
+        scope = subject_of(event)
+        now = float(now_fn())
+
+        breach = _apply(scope, action, now)
+        if breach is None:
+            return None
+        return _refuse(breach[0], breach[1], now)
 
     return rule
 

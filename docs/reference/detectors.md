@@ -240,7 +240,7 @@ Bind what must happen next: after one call, another must arrive inside a time li
 
 | Detector | What it catches | Verdict | Scoped to | Factory |
 |---|---|---|---|---|
-| [`obligations`](https://github.com/SourceShift/InterLock/blob/main/interlock/detectors/obligations.py) | Live obligation guard: refuse a run that ignored a deadline it opened. | block, ask | any call, tracked per span id (else principal); a `when` action opens a deadline and the matching `then` action must arrive within `within` seconds, or the next call is refused | `obligations(require, on_breach=…, max_scopes=…, max_open=…, clock=…)` |
+| [`obligations`](https://github.com/SourceShift/InterLock/blob/main/interlock/detectors/obligations.py) | Live obligation guard: refuse a run that ignored a deadline it opened. | block, ask | any call, tracked per span id (else principal); a `when` action opens a deadline and the matching `then` action must arrive within `within` seconds, or the next call is refused | `obligations(require, on_breach=…, max_scopes=…, max_open=…, clock=…, state=…)` |
 
 ## Agent control surfaces
 
