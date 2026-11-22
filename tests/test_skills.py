@@ -565,6 +565,43 @@ def test_cli_check_all_exits_2_on_drift(tmp_path, capsys):
     assert line.split()[1] == "drift"
 
 
+def test_cli_check_all_reports_a_pinned_skill_whose_directory_is_gone(
+        tmp_path, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+    skills.save_pins(str(pins), skills.load_pins(str(pins)) | {"removed": "a" * 64})
+
+    assert main(_audit_args(root, pins)) == 2
+    out = capsys.readouterr().out
+    line = next(line for line in out.splitlines() if line.startswith("removed"))
+    assert line.split()[1] == "missing"
+    assert "a" * 64 in line
+
+
+def test_cli_check_all_lists_a_missing_pin_in_json(tmp_path, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+    skills.save_pins(str(pins), skills.load_pins(str(pins)) | {"removed": "a" * 64})
+
+    assert main(_audit_args(root, pins, "--json")) == 2
+    payload = json.loads(capsys.readouterr().out)
+    entries = {entry["name"]: entry for entry in payload["skills"]}
+    assert entries["removed"]["status"] == "missing"
+    assert entries["removed"]["digest"] is None
+    assert entries["removed"]["pinned"] == "a" * 64
+    assert entries["matched"]["status"] == "ok"
+
+
+def test_cli_check_all_stays_0_when_every_pin_resolves(tmp_path, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+    assert main(_audit_args(root, pins)) == 0
+    assert "missing" not in capsys.readouterr().out
+
+
 def test_cli_check_all_exits_2_when_a_skill_cannot_be_hashed(
         tmp_path, monkeypatch, capsys):
     from interlock.cli import main

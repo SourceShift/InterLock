@@ -38,8 +38,10 @@ breaking changes land.
   without an agent activating that skill. The pin file is now version 2: it
   records the roots the pin was taken under, so one `--roots` at pin time is
   enough for every later `check`, the guard and doctor, and an explicit
-  `--roots`/`roots` still wins. Version-1 files keep working unchanged. See
-  `docs/guides/skills.md` for the operator's walk-through.
+  `--roots`/`roots` still wins. Version-1 files keep working unchanged. An audit
+  now also lists a pinned skill whose directory is gone as `missing` and exits
+  2, so a pin left behind by a moved skill no longer disappears from
+  `check --all`. See `docs/guides/skills.md` for the operator's walk-through.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
   patch is judged by evidence it did not produce: every test file it touches

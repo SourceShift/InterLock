@@ -147,9 +147,10 @@ interlock skills check drifted-skill
 interlock skills: drifted-skill changed since it was pinned
 ```
 
-`check --all` audits every discoverable skill under the roots. It is
-read-only: it never writes the pin file. Run against a tree with one skill in
-each state, it prints one line per skill and exits `2`:
+`check --all` audits every discoverable skill under the roots, plus every pin
+whose skill is not there. It is read-only: it never writes the pin file. Run
+against a tree with one skill in each state, it prints one line per skill and
+exits `2`:
 
 ```bash
 interlock skills check --all
@@ -168,10 +169,14 @@ reviewed-skill                   ok        bb13efcb75b55a6fe95d4ef0371e8af10daec
 | `drift` | it does not; the line shows both digests, and the default guard refuses the activation |
 | `unpinned` | the skill was found but never pinned; the guard's `on_unknown` policy applies |
 | `error` | the directory could not be read or hashed (unreadable file, or a bound exceeded); the line says why |
+| `missing` | a pin has no directory under the roots any more, so it can never match an activation again |
 
-An audit exits `2` when any skill is `drift` or `error`, and `0` otherwise -
-an `unpinned` skill is reported but does not by itself fail the audit, because
-pinning is an opt-in decision. `check NAME` is stricter about missing input: an
+An audit exits `2` when any skill is `drift`, `error` or `missing`, and `0`
+otherwise - an `unpinned` skill is reported but does not by itself fail the
+audit, because pinning is an opt-in decision. `missing` is listed from the pin
+file rather than the directory walk, so a pin left behind by a moved or deleted
+skill is visible instead of silently absent; unpin it if the removal was
+intended. `check NAME` is stricter about missing input: an
 unpinned name, a name with no directory, and an unreadable directory each exit
 `2`. Usage errors - `check` given neither or both of `NAME` and `--all`, or no
 action at all - exit `64`; an unrecognized subcommand is rejected by the
@@ -179,7 +184,8 @@ argument parser with exit `2`.
 
 Add `--json` to any subcommand for automation. `check --all --json` emits one
 entry per skill with `name`, `status`, `digest` and `pinned` (`null` when
-unpinned); `check NAME --json` emits `name`, `digest`, `pinned` and `match`.
+unpinned; `digest` is `null` for `error` and `missing`); `check NAME --json`
+emits `name`, `digest`, `pinned` and `match`.
 
 ## What the guard does on activation
 

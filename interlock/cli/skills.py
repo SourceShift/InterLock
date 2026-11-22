@@ -11,14 +11,16 @@ sha256 of the files behind that name in a pin file, ``unpin`` removes one
 name's pin without touching the others, ``list`` shows what is pinned, and
 ``check`` recomputes a skill's digest and compares it with its pin.
 With ``--all``, ``check`` walks the roots and audits every discoverable skill,
-reporting each as ``ok``, ``drift``, ``unpinned`` or ``error``. The audit is
-read-only: it never writes the pin file. The default pin file is
-``~/.interlock/skills.json`` and the default roots are ``~/.claude/skills``.
+reporting each as ``ok``, ``drift``, ``unpinned``, ``error`` or ``missing`` - the
+last for a pin whose directory no longer exists anywhere the walk covers. The
+audit is read-only: it never writes the pin file. The default pin file is
+``~/.interlock/skills.json`` and the default roots are ``~/.claude/skills``
+unless the pin file records its own.
 
-Exit codes: 0 success / a matching digest / an audit with no drift or error,
-2 a mismatch, an unknown or missing skill, a name that is not pinned, or an
-unreadable one, 64 no or unknown action, or a ``check`` that names neither or
-both of NAME and ``--all``.
+Exit codes: 0 success / a matching digest / an audit with no drift, error or
+missing pin, 2 a mismatch, an unknown or missing skill, a name that is not
+pinned, or an unreadable one, 64 no or unknown action, or a ``check`` that
+names neither or both of NAME and ``--all``.
 """
 from __future__ import annotations
 
@@ -62,6 +64,8 @@ def _audit_line(name, status, digest, pinned, detail) -> str:
     """One ``check --all`` line: the name, the status, then what applies."""
     if status == "drift":
         suffix = "{} (pinned {})".format(digest, pinned)
+    elif status == "missing":
+        suffix = "pinned {}, not found under the roots".format(pinned)
     elif status == "error":
         suffix = detail or "digest unavailable"
     else:
@@ -181,6 +185,18 @@ def run(args) -> int:
                             "digest": digest, "pinned": pinned})
             if not args.json:
                 print(_audit_line(name, status, digest, pinned, detail))
+        # A pin whose directory is gone is invisible to the walk above, so it
+        # is listed from the pin file instead - otherwise the audit would call
+        # "nothing to report" a pin that can no longer resolve at all.
+        found = {entry["name"] for entry in results}
+        for name in sorted(pins):
+            if name in found:
+                continue
+            failed = True
+            results.append({"name": name, "status": "missing",
+                            "digest": None, "pinned": pins[name]})
+            if not args.json:
+                print(_audit_line(name, "missing", None, pins[name], None))
         if args.json:
             print(json.dumps({"pins": pins_file, "skills": results},
                              indent=2, sort_keys=True))
