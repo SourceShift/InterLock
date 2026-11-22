@@ -19,7 +19,7 @@ each section says which one.
 - [Decisions](#decisions): `Verdict`, `Decision`, `Blocked`
 - [Events](#events): `SensorEvent`
 - [Flow provenance](#flow-provenance): `FlowTracker`, `flow_matches`,
-  `origin_for_tool`, `record_origin`
+  `origin_for_tool`, `record_origin`, `tainted_labels`
 - [Run identity](#run-identity): `span`, `new_span`, `current_span`,
   `current_principal`, `current_parent_principal`, `set_principal`
 - [Scopes](#scopes-interlockpolicy): `interlock.policy`
@@ -760,6 +760,25 @@ from interlock import record_origin
 
 record_origin("quarterly revenue: 42", "tool:read_document", span_id="run-1")
 ```
+
+### Taint
+
+`interlock.taint` labels a result that *carried* an instruction override, so a
+`flow` rule can refuse "send what a poisoned page told you" without also
+refusing a trusted page — both are `tool:fetch_url` to a provenance-only rule.
+
+| Call | Meaning |
+|---|---|
+| `contains_instruction_override(value)` | Whether any string under `value` carries a signature from `tool_result_injection_sanitizer`'s built-in set. Bounded the same way `FlowTracker`'s scan is. |
+| `tainted_labels(labels, delivered, inbound=None)` | `labels`, plus `taint:injection` when `inbound` (default `delivered`) is poisoned. Duplicates collapse, order is preserved. |
+| `TAINT_INJECTION` | The label itself, `"taint:injection"`, matched by the selector `taint:*`. |
+
+Both result boundaries apply this themselves: `enforce_tool_result` (and with
+it `@guard`) scans the result as the tool returned it — before a sanitizer
+rewrote a line — and records the *delivered* text under its usual origins plus
+the taint. A result that was withheld records nothing. It is a substring
+scanner, not a classifier: a paraphrase is not labelled, and the taint never
+blocks on its own — it only feeds a rule that names it.
 
 ---
 

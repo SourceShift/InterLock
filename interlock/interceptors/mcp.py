@@ -44,6 +44,7 @@ from ..flow import (
     origin_for_tool,
 )
 from ..policy.engine import PolicyEngine
+from ..taint import tainted_labels
 from ._settle import record_failure, settle
 
 _log = logging.getLogger("interlock")
@@ -201,6 +202,11 @@ def _enforce_result(
     principal_label = origin_for_principal(event.principal)
     if principal_label is not None:
         labels_out.append(principal_label)
+    # A result that carried an injected instruction is untrusted as a whole:
+    # its label rides on the delivered text, so a later call copying it into an
+    # egress field is refused by a ``block_origins`` policy. The inbound
+    # payload is what is scanned - a sanitizer may have removed the line.
+    labels_out = tainted_labels(labels_out, result_payload(delivered), payload)
     get_tracker().record(result_payload(delivered), labels_out, span_id=span_id)
     return delivered
 

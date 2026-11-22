@@ -37,8 +37,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..enforce import MAX_REMEDIATION, Decision, Verdict
 from ..event import SensorEvent, result_payload, strip_trust_labels
+from ..flow import get_tracker, origin_for_principal, origin_for_tool
 from ..policy.engine import epoch_of
 from ..receipt import emit_receipt
+from ..taint import tainted_labels
 
 #: Argument names that hold file paths, normalized to absolute paths.
 PATH_ARGS = ("file_path", "notebook_path", "path")
@@ -262,20 +264,27 @@ def call_events(agent: str, tool_name: str, args: Dict[str, Any], *,
         root = args.get("path")
         root = normalize_path(root, cwd) if isinstance(root, str) and root else cwd
         args["pattern"] = normalize_path(args["pattern"], root)
-    common = dict(principal=agent, span_id=session_id, call_id=call_id, cwd=cwd)
+    normalized = normalize_args(args, cwd)
+    # Provenance crosses the hook boundary the same way it crosses ``@guard``:
+    # a call that copies text a previous tool returned carries that tool's
+    # label, so a ``flow``/``block_origins`` rule sees the data path here too.
+    common = dict(principal=agent, span_id=session_id, call_id=call_id, cwd=cwd,
+                  origins=get_tracker().origins_for(normalized, span_id=session_id))
     if tool_name == "apply_patch" and isinstance(args.get("command"), str):
         targets = patch_targets(args["command"], cwd)
         if targets:
             return [SensorEvent(action=tool_name,
                                 args={"command": args["command"], "file_path": t}, **common)
                     for t in targets]
-    return [SensorEvent(action=tool_name, args=normalize_args(args, cwd), **common)]
+    return [SensorEvent(action=tool_name, args=normalized, **common)]
 
 
 def result_event(call: HookCall) -> SensorEvent:
-    return SensorEvent(action=call.tool_name, args=strip_trust_labels(result_payload(call.result)),
+    payload = strip_trust_labels(result_payload(call.result))
+    return SensorEvent(action=call.tool_name, args=payload,
                        principal=call.agent, span_id=call.session_id,
-                       call_id=call.call_id, phase="result", cwd=call.cwd)
+                       call_id=call.call_id, phase="result", cwd=call.cwd,
+                       origins=get_tracker().origins_for(payload, span_id=call.session_id))
 
 
 # --- the decision path ----------------------------------------------------------
@@ -478,6 +487,20 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
     return adapter.render(call, outcome)
 
 
+def _record_result(call: HookCall, delivered: Any, inbound: Any) -> None:
+    """Remember what the agent will read, so a later call that copies it
+    carries this tool's label - and the taint label when *inbound* (the
+    result as the tool returned it, before any rewrite) carried an injected
+    instruction. Never called for a result that was withheld."""
+    payload = result_payload(delivered)
+    labels = [origin_for_tool(call.tool_name)]
+    principal_label = origin_for_principal(call.agent)
+    if principal_label is not None:
+        labels.append(principal_label)
+    get_tracker().record(payload, tainted_labels(labels, payload, inbound),
+                         span_id=call.session_id)
+
+
 def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: str) -> Rendered:
     view, rebuild = adapter.result_view(call)
     # A result payload is model-influenced: the server's text can carry a
@@ -485,7 +508,8 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
     view = strip_trust_labels(view)
     event = SensorEvent(action=call.tool_name, args=view, principal=call.agent,
                         span_id=call.session_id, call_id=call.call_id, phase="result",
-                        cwd=call.cwd)
+                        cwd=call.cwd,
+                        origins=get_tracker().origins_for(view, span_id=call.session_id))
     started = time.perf_counter()
     decision = engine.evaluate(event)
     elapsed = int((time.perf_counter() - started) * 1_000_000)
@@ -495,6 +519,7 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
     if policy == Verdict.ALLOW:
         emit_receipt(event, decision, policy_epoch=epoch, elapsed_us=elapsed,
                      policy_artifact=artifact)
+        _record_result(call, view, view)
         return adapter.render(call, HookOutcome(Verdict.ALLOW))
     able = {Verdict.BLOCK: call.can_block_result, Verdict.ESCALATE: call.can_block_result,
             Verdict.MODIFY: call.can_rewrite_result}.get(policy, call.can_block_result)
@@ -503,6 +528,7 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
         # wanted, and record that it was observed, not enforced.
         emit_receipt(event, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed,
                      policy_artifact=artifact)
+        _record_result(call, view, view)
         return adapter.render(call, HookOutcome(Verdict.ALLOW, decision.reason,
                                                 decision.policy_id, policy, observed=True,
                                                 remediation=decision.remediation))
@@ -515,6 +541,9 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
                  elapsed_us=elapsed,
                  policy_verdict=policy.name if verdict != policy else None,
                  policy_artifact=artifact)
+    if verdict != Verdict.BLOCK:
+        delivered = outcome.modified_result if verdict == Verdict.MODIFY else view
+        _record_result(call, delivered, view)
     return adapter.render(call, outcome)
 
 

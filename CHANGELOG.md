@@ -11,6 +11,22 @@ breaking changes land.
 
 ### Added
 
+- **Result-phase taint** (`taint:injection`). Provenance named the tool, so a
+  trusted page and a page that told the agent what to do were the same
+  `tool:fetch_url` to a `flow` or `block_origins` selector. A guarded result
+  that carries a known instruction-override phrase (the set
+  `tool_result_injection_sanitizer` rewrites) is now recorded under
+  `taint:injection` alongside its usual origins, and a later call copying that
+  text carries the label — so
+  `{"block_origins": ["taint:*"]}` refuses "send what a poisoned page told
+  you" without refusing the trusted page. The scan reads the result as the
+  tool returned it (a sanitizer's rewrite does not untaint the document) while
+  the label rides on the delivered text; a blocked result records nothing.
+  Coding-agent hooks now also record result provenance and stamp call events
+  with it, so a `flow` rule sees the data path there too when the host keeps
+  one process. It is a substring scanner, not a classifier, and never blocks on
+  its own.
+
 - **Remediation hints on a denial** (`Decision.remediation`, the `remediation`
   rule key). A block that says only "blocked" leaves the agent retrying blindly
   or giving up; a block that says what *would* be allowed lets it converge.

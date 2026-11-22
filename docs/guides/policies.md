@@ -164,6 +164,28 @@ action: `{"detector": "data_egress.network_egress_guard", "with":
 {"allowed_hosts": ["api.acme.com"], "block_origins": ["tool:fetch_url"]}}`
 denies a payload carrying fetched data even to an allowlisted host.
 
+### A poisoned result is untrusted whole
+
+Provenance names the tool. It cannot tell a trusted page from a page whose
+text told the agent what to do — both are `tool:fetch_url` to a selector. So
+when a guarded result carries a known instruction-override phrase (the same
+list `tool_result_injection_sanitizer` rewrites), the boundary records the
+delivered text under `taint:injection` as well:
+
+```json
+{"id": "no-tainted-egress", "detector": "data_egress.network_egress_guard",
+ "with": {"allowed_hosts": ["api.acme.com"], "block_origins": ["taint:*"]}}
+```
+
+The scan reads the result as the tool returned it, before a sanitizer rewrote a
+line: deleting the offending sentence does not make the rest of a poisoned
+document trusted. The label rides on the text the model actually reads, and a
+result that was withheld records nothing. Two limits are worth knowing: the
+scanner matches known phrasings, so a paraphrase is not labelled, and the
+fragments live in the process that saw them — an MCP server or a `@guard`
+runtime sees the whole chain, while a coding-agent host that runs every hook
+in a fresh process does not carry the label between them.
+
 ## Sequence: what came before
 
 A flat condition judges one call. Some of the worst shapes are about order:
