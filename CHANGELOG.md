@@ -11,6 +11,16 @@ breaking changes land.
 
 ### Added
 
+- **A sequence journal can be seeded from the receipt log.** A durable
+  `state=` file survives the process but not a restart or a fresh install: the
+  first `http_post` of the day is judged against an empty journal. The new
+  `interlock sequence hydrate --log audit.jsonl --state /abs/journal.db`
+  replays the log's call-phase receipts into the journal - scope identity and
+  canonical action name only, oldest first, each scope keeping its newest
+  `--window` actions, at most `--max-scopes` scopes - and replaces the file's
+  contents, so a second run over one log gives the same journal. A relative
+  `--state` is refused, exactly as the rule refuses it.
+
 - **The cloud plane's review carries the remediation hint.** The masked
   upload had a `reason` but not the line the policy offered as allowed instead,
   so a remote reviewer saw what was refused and not the alternative a local one

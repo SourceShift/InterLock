@@ -307,6 +307,53 @@ def test_a_corrupt_state_file_falls_back_instead_of_raising(tmp_path):
     assert cast(Decision, rule(_event("http_post"))).verdict is Verdict.BLOCK
 
 
+def test_a_seeded_journal_blocks_the_first_call_after_a_restart(tmp_path):
+    from interlock.sequence_ledger import JournalLedger
+
+    path = _state(tmp_path)
+    written = JournalLedger(path).seed(
+        [("run-1", "env_secret_read"), ("run-1", "read_file")],
+        window=50, max_scopes=1024)
+    assert written == 2
+
+    # A fresh rule object over the seeded file is the process after a restart.
+    rule = sequence_guard(PAIR, state=path)
+    assert cast(Decision, rule(_event("http_post"))).verdict is Verdict.BLOCK
+
+
+def test_seeding_replaces_rather_than_appends(tmp_path):
+    from interlock.sequence_ledger import JournalLedger
+
+    path = _state(tmp_path)
+    ledger = JournalLedger(path)
+    ledger.seed([("run-1", "a"), ("run-1", "b")], window=50, max_scopes=1024)
+    ledger.seed([("run-1", "c")], window=50, max_scopes=1024)  # same log, twice
+    assert ledger.journal("run-1", window=50) == ["c"]
+
+
+def test_a_seed_keeps_the_newest_window_per_scope(tmp_path):
+    from interlock.sequence_ledger import JournalLedger
+
+    path = _state(tmp_path)
+    ledger = JournalLedger(path)
+    entries = [("run-1", "a{}".format(i)) for i in range(5)] + [
+        ("run-2", "z")]
+    ledger.seed(entries, window=2, max_scopes=1024)
+    assert ledger.journal("run-1", window=50) == ["a3", "a4"]
+    assert ledger.journal("run-2", window=50) == ["z"]
+
+
+def test_a_seed_tracks_at_most_max_scopes_oldest_evicted(tmp_path):
+    from interlock.sequence_ledger import JournalLedger
+
+    path = _state(tmp_path)
+    ledger = JournalLedger(path)
+    ledger.seed([("run-1", "a"), ("run-2", "b"), ("run-3", "c")],
+                window=50, max_scopes=2)
+    assert ledger.journal("run-1", window=50) == []   # the oldest scope went
+    assert ledger.journal("run-3", window=50) == ["c"]
+
+
 def test_declarative_rule_binds_state(tmp_path):
     from interlock.policy.declarative import load_policy
     from interlock.sequence_ledger import JournalLedger

@@ -8,6 +8,7 @@ inventory), ``policy`` (declarative policy files), ``trust`` (project-overlay
 trust), ``drift`` (diff a live surface against a corpus), ``learn`` (draft a
 policy from observed receipts), ``scope`` (derive a capability scope from those
 receipts), ``obligations`` (check what had to happen after an action, by when),
+``sequence`` (seed a sequence journal from a receipt log, after a restart),
 ``anchor`` (record a receipt log's head outside it, to catch a cut tail) and
 ``skills`` (pin a skill's content and check it before activation).
 
@@ -36,6 +37,8 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("scope", "derive a capability scope document from observed receipts", "scope"),
     ("obligations", "check a receipt log against obligations that had a deadline",
      "obligations"),
+    ("sequence", "seed a sequence journal from a receipt log, after a restart",
+     "sequence"),
     ("trust", "trust a project's policy overlay", "trust"),
     ("mcp", "inventory the MCP servers configured on this machine", "mcp"),
     ("reviews", "decide pending reviews; serve their status to agents", "reviews"),

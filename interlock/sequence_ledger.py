@@ -19,7 +19,7 @@ and at most ``max_scopes`` scopes are tracked, oldest first.
 from __future__ import annotations
 
 import os
-from typing import Optional, Sequence, Tuple
+from typing import Iterable, Optional, Sequence, Tuple
 
 from ._sqlite import connect, immediate, prepare
 
@@ -83,6 +83,35 @@ class JournalLedger:
             "SELECT scope FROM journal GROUP BY scope ORDER BY MIN(seq)").fetchall()]
         if len(scopes) >= max_scopes:
             db.execute("DELETE FROM journal WHERE scope = ?", (scopes[0],))
+
+    def seed(self, entries: Iterable[Tuple[str, str]], *, window: int,
+             max_scopes: int) -> int:
+        """Replace the journal with *entries*, replayed in the order given.
+
+        The log is the older and more complete record than the file, so a seed
+        *replaces* rather than appends: running it twice over one log yields
+        the same journal, and a fresh install after a restart sees exactly the
+        history the receipts show. Each scope keeps its newest *window*
+        actions, and at most *max_scopes* scopes survive, oldest first -
+        the same bounds :meth:`apply` keeps. Returns the number of actions
+        written.
+        """
+        written = 0
+        with immediate(self.path) as db:
+            db.execute("DELETE FROM journal")
+            for scope, action in entries:
+                self._claim_scope(db, scope, max_scopes)
+                db.execute("INSERT INTO journal (scope, action) VALUES (?, ?)",
+                           (scope, action))
+                written += 1
+            for (scope,) in db.execute(
+                    "SELECT DISTINCT scope FROM journal").fetchall():
+                db.execute(
+                    "DELETE FROM journal WHERE scope = ? AND seq NOT IN "
+                    "(SELECT seq FROM journal WHERE scope = ? "
+                    "ORDER BY seq DESC LIMIT ?)",
+                    (scope, scope, window))
+        return written
 
     def journal(self, scope: str, *, window: int) -> list:
         """The recent actions for *scope*, oldest first (the newest *window*)."""

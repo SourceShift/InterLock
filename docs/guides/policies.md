@@ -229,6 +229,22 @@ The [obligations](#obligation-what-must-happen-next) detector takes the same
 refused, and a storage fault warns once and falls back to the in-process
 journal rather than refusing every call.
 
+A durable journal still begins empty after a restart or a fresh install, so the
+first `http_post` of the day is judged against nothing. The receipt log already
+records every call the guard saw, so seed the journal from it once:
+
+```bash
+interlock sequence hydrate --log /var/log/interlock/audit.jsonl \
+    --state /var/lib/interlock/sequence.db
+```
+
+Every call-phase receipt whose action normalises to a name is replayed under the
+guard's own scope identity, oldest first, each scope keeping its newest
+`window` actions. Only action and scope names are copied - a receipt carries no
+arguments - and the replay replaces the journal, so running it twice over one
+log gives the same result. Pass the rule's own `--window` when it differs from
+the default 50.
+
 ## Obligation: what must happen next
 
 Every rule above forbids something. An obligation binds the other way: *after*

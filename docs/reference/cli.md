@@ -19,6 +19,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`learn`](#interlock-learn) | draft a reviewable policy from observed receipts |
 | [`scope`](#interlock-scope) | derive a capability scope document from observed receipts |
 | [`obligations`](#interlock-obligations) | check a receipt log against obligations that had a deadline |
+| [`sequence`](#interlock-sequence) | seed a sequence journal from a receipt log, after a restart |
 | [`trust`](#interlock-trust) | trust a project's policy overlay |
 | [`mcp`](#interlock-mcp) | inventory the MCP servers configured on this machine |
 | [`reviews`](#interlock-reviews) | decide pending reviews; serve their status to agents |
@@ -389,6 +390,43 @@ line was wrong.
 ```text
 usage: interlock obligations [-h] ACTION ...
 usage: interlock obligations check [-h] --log FILE --obligations FILE [--json] [--now TIME]
+```
+
+## `interlock sequence`
+
+Seed a sequence journal from a receipt log, so a restart keeps its history.
+
+```bash
+interlock sequence hydrate --log audit.jsonl --state /var/lib/interlock/seq.db
+interlock sequence hydrate --log audit.jsonl --state /var/lib/interlock/seq.db \
+    --window 20
+```
+
+The `sequence_guard` detector refuses a call that completes a forbidden
+`[before, after]` pair - read a secret, then reach the network - by recalling
+the last `window` actions of a run. Given an absolute `state` path that history
+survives the process (see the policies guide), but not a restart or a fresh
+install: the file begins empty, so the first `http_post` of the day is judged
+against nothing.
+
+The receipt log is the older record. This command replays it into the journal:
+every `phase="call"` receipt whose action normalises to a non-empty name is
+journalled under the same scope the live guard uses (`span_id`, else
+`principal`, else `<anon>`), in log order, and each scope keeps only its newest
+`window` actions. The replay *replaces* the journal rather than appending, so
+running it twice over one log gives the same result.
+
+Only action names and scope identities are copied - a receipt carries no
+arguments, and the journal stores none either. A verdict does not filter the
+replay: the live guard journals a call whether the rule then allowed, escalated
+or blocked it, so a blocked `after` stays blocked.
+
+Exit codes: 0 the journal was seeded, 3 the log or the state path could not be
+used, 64 the command line was wrong.
+
+```text
+usage: interlock sequence [-h] ACTION ...
+usage: interlock sequence hydrate [-h] --log FILE --state FILE [--window N] [--max-scopes N]
 ```
 
 ## `interlock trust`
