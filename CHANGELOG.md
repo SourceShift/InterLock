@@ -11,6 +11,18 @@ breaking changes land.
 
 ### Added
 
+- **The policy's hint reaches the approver.** A rule's `remediation` - one line
+  saying what would be allowed instead - was rendered to the agent but stopped
+  at the approval boundary. It now travels with `ApprovalRequest.remediation`
+  and is stored on the review, so `tty_approver()` prints it beside the reason,
+  `interlock reviews show` lists it, the Slack/webhook notification carries it
+  (as `remediation` in the JSON format) and the agent's "review ... is pending"
+  answer ends with it. It is guidance, not authority: it is not part of the
+  approval's binding, but it is signed with the rest of the row because a
+  reviewer reads it. Databases written by an earlier release are upgraded in
+  place - the queue re-signs the rows that still verify under the old signature
+  payload and leaves an edited row refused.
+
 - **Obligations with a deadline.** Every other rule forbids an action; an
   obligation binds what must happen *after* one. The new `obligations` detector
   opens a deadline when a configured `when` action is allowed and closes it when

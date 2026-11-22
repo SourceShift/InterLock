@@ -1438,7 +1438,7 @@ Guide: [approvals](../guides/approvals.md).
 |---|---|
 | `set_approver(fn)` / `get_approver()` | Install or read the process approver. `fn(request) -> True / Approval / False / None`. |
 | `approve_once()`, `approve_for_session()`, `approve_for(seconds)` | What an approver returns to approve. |
-| `ApprovalRequest` | Frozen: `request_id`, `action`, `phase`, `args_digest`, `reason` (one line, at most 512 bytes), `principal`, `span_id`, `call_id`, `policy_id`, `attributed_to`, `policy_epoch`, `created`, `event` (the full call, for display), and `binding`, the tuple an approval is bound to. |
+| `ApprovalRequest` | Frozen: `request_id`, `action`, `phase`, `args_digest`, `reason` (one line, at most 512 bytes), `principal`, `span_id`, `call_id`, `policy_id`, `attributed_to`, `policy_epoch`, `created`, `remediation` (the policy's hint at what would be allowed instead, clipped like `reason`; not part of the binding), `event` (the full call, for display), and `binding`, the tuple an approval is bound to. |
 | `grants()` | The `GrantStore` of session and TTL grants: `active()`, `revoke(action=, principal=, session=)`, `clear()`. |
 | `tty_approver(show_args=True)` | Asks at `/dev/tty`; declines without a terminal. |
 | `bound_reason(text)` | The one-line, 512-byte form a reason is shown and bound in. |

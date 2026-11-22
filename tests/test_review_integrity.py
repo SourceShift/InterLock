@@ -8,6 +8,8 @@ expect a refusal, not a release.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import sqlite3
 import stat
@@ -17,7 +19,8 @@ import pytest
 from interlock import Decision
 from interlock.approval import make_request
 from interlock.event import SensorEvent
-from interlock.reviews import ReviewError, ReviewQueue, binding_hash, default_key_path
+from interlock.reviews import (_LEGACY_MAC_VERSION, _MAC_VERSION, ReviewError, ReviewQueue,
+                               _mac_payload, binding_hash, default_key_path)
 
 
 def request_for(cmd="npm publish", reason="publishing"):
@@ -144,3 +147,70 @@ def test_an_explicit_key_ignores_the_key_file(tmp_path):
 
     second = ReviewQueue(path, key=b"k" * 32)          # same key elsewhere
     assert second.claim(review_id, now=1002) is True
+
+
+# --- the payload upgrade (remediation joined the signed fields) ---------------------
+
+
+def sign_as_an_older_release(queue, review_id):
+    """Rewrite one row's signature the way a pre-remediation release did."""
+    db = sqlite3.connect(queue.path)
+    db.row_factory = sqlite3.Row
+    try:
+        row = db.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
+        approvers = [r[0] for r in db.execute(
+            "SELECT approver FROM approvals WHERE review_id = ? ORDER BY approver", (review_id,))]
+        mac = hmac.new(queue._key, _mac_payload(row, approvers, _LEGACY_MAC_VERSION),
+                       hashlib.sha256).hexdigest()
+        db.execute("UPDATE reviews SET mac = ? WHERE id = ?", (mac, review_id))
+        db.execute("UPDATE settings SET mac_version = ? WHERE id = 1", (_LEGACY_MAC_VERSION,))
+        db.commit()
+    finally:
+        db.close()
+
+
+def mac_version(path):
+    db = sqlite3.connect(path)
+    try:
+        return db.execute("SELECT mac_version FROM settings WHERE id = 1").fetchone()[0]
+    finally:
+        db.close()
+
+
+def test_an_older_signature_is_resealed_on_open(queue):
+    """A row an older release signed still verifies after the upgrade."""
+    review_id, _ = filed(queue)
+    queue.approve(review_id, "bob", now=1001)
+    sign_as_an_older_release(queue, review_id)
+
+    reopened = ReviewQueue(queue.path, pending_ttl=60, approval_ttl=30)
+    assert mac_version(queue.path) == _MAC_VERSION      # the pass ran, once
+    assert reopened.get(review_id, now=1002).status == "approved"
+    assert reopened.claim(review_id, now=1002) is True
+
+
+def test_an_older_signature_does_not_bless_a_tampered_row(queue):
+    """The upgrade re-signs only rows the old payload still vouches for."""
+    review_id, _ = filed(queue)
+    sign_as_an_older_release(queue, review_id)
+    edit(queue.path,
+         "UPDATE reviews SET status = 'approved', decided = 1001, decided_by = 'attacker', "
+         "approval_until = 2000 WHERE id = ?", (review_id,))
+
+    reopened = ReviewQueue(queue.path, pending_ttl=60, approval_ttl=30)
+    assert mac_version(queue.path) == _MAC_VERSION      # the pass ran and refused this row
+    with pytest.raises(ReviewError, match="does not match its signature"):
+        reopened.claim(review_id, now=1002)
+
+
+def test_editing_the_remediation_hint_is_refused(queue):
+    """The hint is what the reviewer reads, so it is signed like the reason."""
+    event = SensorEvent("run", {"cmd": "npm publish"}, principal="agent")
+    request = make_request(event, Decision.escalate(
+        "publishing", "publish", remediation="publish with --tag beta"), "epoch1")
+    review = queue.lookup_or_file(binding_hash(request), request, now=1000.0)
+    edit(queue.path, "UPDATE reviews SET remediation = 'nothing to see here' WHERE id = ?",
+         (review.id,))
+
+    with pytest.raises(ReviewError, match="does not match its signature"):
+        queue.approve(review.id, "bob", now=1001)

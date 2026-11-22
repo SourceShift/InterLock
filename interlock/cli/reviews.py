@@ -66,6 +66,8 @@ def _print(review, as_json: bool) -> None:
         return
     print("{}  {}  {}".format(review.id, review.status.upper(), review.action))
     print("  reason    {}".format(review.reason))
+    if review.remediation:
+        print("  instead   {}".format(review.remediation))
     print("  rule      {}   agent {}   filed by {}".format(review.policy_id, review.principal,
                                                           review.requester))
     print("  filed     {}   decide by {}".format(_when(review.created), _when(review.pending_until)))

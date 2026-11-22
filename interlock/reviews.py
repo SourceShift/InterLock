@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     min_approvals INTEGER NOT NULL DEFAULT 1,
     allow_self_approval INTEGER NOT NULL DEFAULT 1,
     approval_ttl REAL NOT NULL DEFAULT 900,
+    remediation TEXT,
     mac TEXT
 );
 CREATE INDEX IF NOT EXISTS reviews_binding ON reviews (binding, status);
@@ -104,7 +105,8 @@ CREATE TABLE IF NOT EXISTS settings (
     allow_self_approval INTEGER NOT NULL,
     min_approvals INTEGER NOT NULL,
     approval_ttl REAL NOT NULL,
-    seq INTEGER NOT NULL DEFAULT 0
+    seq INTEGER NOT NULL DEFAULT 0,
+    mac_version INTEGER NOT NULL DEFAULT 2
 );
 -- Forward migration for a remote decision (C3). Every open runs this same
 -- idempotent ``CREATE TABLE IF NOT EXISTS``, so a database created before C3
@@ -125,8 +127,15 @@ CREATE INDEX IF NOT EXISTS cloud_grants_review ON cloud_grants (review_id, appli
 _MIGRATED_COLUMNS = (
     ("allow_self_approval", "INTEGER NOT NULL DEFAULT 1"),
     ("approval_ttl", "REAL NOT NULL DEFAULT 900"),
+    ("remediation", "TEXT"),
     ("mac", "TEXT"),
 )
+
+#: The review signature's payload version. Bumped to 2 when ``remediation``
+#: joined the signed fields; :meth:`ReviewQueue._migrate` re-signs the rows
+#: that still verify under 1 and leaves the rest refused.
+_MAC_VERSION = 2
+_LEGACY_MAC_VERSION = 1
 
 #: Columns later added to ``cloud_grants``; NULL keeps an older database's
 #: rows readable - a grant applied before the ancestry link existed has none.
@@ -200,13 +209,19 @@ def _read_or_create_key(path: str) -> bytes:
     return key
 
 
-def _mac_payload(row: sqlite3.Row, approvers: List[str]) -> bytes:
+def _mac_payload(row: sqlite3.Row, approvers: List[str],
+                 version: int = _MAC_VERSION) -> bytes:
     """The canonical bytes a review's signature covers.
 
     Every field that can change a decision or what an approver was shown is in
     it, plus the approver list: adding a second approver to satisfy
     ``min_approvals`` is a write the signature must catch. Types are pinned so
     SQLite's int/float round-trip cannot make a legitimate row fail.
+
+    ``version`` selects the payload shape. Version 2 adds ``remediation`` (the
+    hint a reviewer reads) and keeps the approver list last; version 1 is the
+    pre-remediation payload, read only by :meth:`ReviewQueue._migrate` to
+    recognise rows an older release signed.
     """
     fields = [
         row["id"], row["binding"], row["status"], row["action"], row["phase"],
@@ -215,8 +230,11 @@ def _mac_payload(row: sqlite3.Row, approvers: List[str]) -> bytes:
         float(row["pending_until"]), row["decided"], row["approval_until"],
         row["executed"], row["decided_by"], row["rejection_reason"],
         int(row["min_approvals"]), int(row["allow_self_approval"]),
-        float(row["approval_ttl"]), list(approvers),
+        float(row["approval_ttl"]),
     ]
+    if version >= 2:
+        fields.append(row["remediation"])
+    fields.append(list(approvers))
     return json.dumps(fields, separators=(",", ":"), default=str).encode("utf-8")
 
 
@@ -245,6 +263,10 @@ class Review:
     #: stricter of this and the database's :class:`settings` row.
     allow_self_approval: bool = True
     approval_ttl: float = 900.0
+    #: The policy's one-line hint at what would be allowed instead, carried
+    #: from :attr:`interlock.approval.ApprovalRequest.remediation`. Signed,
+    #: because it is something the reviewer is shown.
+    remediation: Optional[str] = None
 
     @property
     def next(self) -> str:
@@ -340,25 +362,52 @@ class ReviewQueue:
         settings_columns = {row[1] for row in db.execute("PRAGMA table_info(settings)")}
         if "seq" not in settings_columns:
             db.execute("ALTER TABLE settings ADD COLUMN seq INTEGER NOT NULL DEFAULT 0")
+        if "mac_version" not in settings_columns:
+            db.execute("ALTER TABLE settings ADD COLUMN mac_version INTEGER NOT NULL DEFAULT 1")
         unsigned = [row[0] for row in db.execute("SELECT id FROM reviews WHERE mac IS NULL")]
         for review_id in unsigned:
             self._seal(db, review_id)
+        self._resign_legacy(db)
+
+    def _resign_legacy(self, db: sqlite3.Connection) -> None:
+        """Re-seal rows signed under an older payload, once.
+
+        A newer release adding a signed field changes the payload, so rows an
+        older release sealed no longer verify under the current one. Only the
+        rows that *do* still verify under the old payload are re-signed: a row
+        edited at rest verifies under neither and is left alone, so the
+        upgrade cannot bless a tampered decision. ``settings.mac_version``
+        records that the pass ran, so every open after it costs one read.
+        """
+        row = db.execute("SELECT mac_version FROM settings WHERE id = 1").fetchone()
+        if row is None or int(row[0]) >= _MAC_VERSION:
+            return
+        for record in db.execute("SELECT * FROM reviews WHERE mac IS NOT NULL").fetchall():
+            if self._signed(db, record, _LEGACY_MAC_VERSION):
+                self._seal(db, record["id"])
+        db.execute("UPDATE settings SET mac_version = ? WHERE id = 1", (_MAC_VERSION,))
+
+    def _expected(self, db: sqlite3.Connection, row: sqlite3.Row,
+                  version: int = _MAC_VERSION) -> str:
+        approvers = [r[0] for r in db.execute(
+            "SELECT approver FROM approvals WHERE review_id = ? ORDER BY approver", (row["id"],))]
+        return hmac.new(self._key, _mac_payload(row, approvers, version),
+                        hashlib.sha256).hexdigest()
+
+    def _signed(self, db: sqlite3.Connection, row: sqlite3.Row, version: int) -> bool:
+        """Whether ``row``'s stored signature matches the payload ``version``."""
+        return hmac.compare_digest(row["mac"] or "", self._expected(db, row, version))
 
     def _mac(self, db: sqlite3.Connection, review_id: str) -> str:
         row = db.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
-        approvers = [r[0] for r in db.execute(
-            "SELECT approver FROM approvals WHERE review_id = ? ORDER BY approver", (review_id,))]
-        return hmac.new(self._key, _mac_payload(row, approvers), hashlib.sha256).hexdigest()
+        return self._expected(db, row)
 
     def _seal(self, db: sqlite3.Connection, review_id: str) -> None:
         db.execute("UPDATE reviews SET mac = ? WHERE id = ?", (self._mac(db, review_id), review_id))
 
     def _verify(self, db: sqlite3.Connection, row: sqlite3.Row) -> None:
         """Refuse a row the queue did not write (or one edited behind its back)."""
-        approvers = [r[0] for r in db.execute(
-            "SELECT approver FROM approvals WHERE review_id = ? ORDER BY approver", (row["id"],))]
-        expected = hmac.new(self._key, _mac_payload(row, approvers), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(row["mac"] or "", expected):
+        if not self._signed(db, row, _MAC_VERSION):
             raise ReviewError(
                 "review {} does not match its signature: the review database was edited outside "
                 "`interlock reviews`; refusing to trust it".format(row["id"]))
@@ -549,13 +598,14 @@ class ReviewQueue:
                     review_id = "r-" + secrets.token_hex(4)
                     db.execute(
                         "INSERT INTO reviews (id, binding, status, action, phase, principal, "
-                        "requester, policy_id, reason, args_digest, preview, created, "
+                        "requester, policy_id, reason, remediation, args_digest, preview, created, "
                         "pending_until, min_approvals, allow_self_approval, approval_ttl) "
-                        "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (review_id, binding, request.action, request.phase, request.principal,
-                         _whoami(), request.policy_id, request.reason, request.args_digest,
-                         _preview(request), now, now + self.pending_ttl, self.min_approvals,
-                         1 if self.allow_self_approval else 0, self.approval_ttl))
+                         _whoami(), request.policy_id, request.reason, request.remediation,
+                         request.args_digest, _preview(request), now, now + self.pending_ttl,
+                         self.min_approvals, 1 if self.allow_self_approval else 0,
+                         self.approval_ttl))
                     self._seal(db, review_id)
                     row = db.execute("SELECT * FROM reviews WHERE id = ?", (review_id,)).fetchone()
                 seq = self._bump(db) if (created or expired) else None
@@ -993,9 +1043,15 @@ def queue_approver(queue: Optional[ReviewQueue] = None, *, wait: float = 0.0,
 
 def pending_message(review: Review) -> str:
     if review.status == "pending":
-        return ("review {0} is pending; a human must run `interlock reviews approve {0}`, "
+        text = ("review {0} is pending; a human must run `interlock reviews approve {0}`, "
                 "then retry this identical call".format(review.id))
-    if review.status == "approved":
-        return "review {} was approved but its approval was already used".format(review.id)
-    detail = ": {}".format(review.rejection_reason) if review.rejection_reason else ""
-    return "review {} is {}{}".format(review.id, review.status, detail)
+    elif review.status == "approved":
+        text = "review {} was approved but its approval was already used".format(review.id)
+    else:
+        detail = ": {}".format(review.rejection_reason) if review.rejection_reason else ""
+        text = "review {} is {}{}".format(review.id, review.status, detail)
+    # The hint the policy gave at the call site travels with the answer, so an
+    # agent told to come back later still knows what it could do instead.
+    if review.remediation:
+        text = "{} - {}".format(text, review.remediation)
+    return text

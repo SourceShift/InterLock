@@ -13,7 +13,8 @@ from interlock.event import SensorEvent
 from interlock.mcp_server import StdioServer
 from interlock.policy.declarative import load_policy
 from interlock.receipt import set_sink
-from interlock.reviews import ReviewError, ReviewQueue, binding_hash, queue_approver
+from interlock.reviews import (ReviewError, ReviewQueue, binding_hash, pending_message,
+                               queue_approver)
 from interlock.shell import analyze
 from interlock.sink import InMemorySink
 
@@ -56,6 +57,39 @@ def test_a_different_call_files_its_own_review(queue):
     one, _ = file(queue, "npm publish")
     two, _ = file(queue, "npm publish --tag beta")
     assert one.id != two.id
+
+
+def test_a_filed_review_keeps_the_policy_hint(queue):
+    """The hint a policy gave at the call site survives the queue, so the
+    reviewer and the agent told to wait both see the alternative."""
+    request = make_request(
+        SensorEvent("run", {"cmd": "npm publish"}, principal="agent"),
+        Decision.escalate("publishing", "publish", remediation="publish with --tag beta"),
+        "epoch1")
+    review = queue.lookup_or_file(binding_hash(request), request, now=1000.0)
+    assert review.remediation == "publish with --tag beta"
+    assert pending_message(review).endswith("- publish with --tag beta")
+    reopened = ReviewQueue(queue.path, pending_ttl=60, approval_ttl=30)
+    assert reopened.get(review.id, now=1001.0).remediation == "publish with --tag beta"
+    assert "remediation" in review.to_dict()
+
+
+def test_a_review_without_a_hint_says_nothing_extra(queue):
+    review, _ = file(queue)
+    assert review.remediation is None
+    assert " - " not in pending_message(review)
+
+
+def test_the_cli_show_surfaces_the_hint(queue, capsys):
+    request = make_request(
+        SensorEvent("run", {"cmd": "npm publish"}, principal="agent"),
+        Decision.escalate("publishing", "publish", remediation="publish with --tag beta"),
+        "epoch1")
+    review = queue.lookup_or_file(binding_hash(request), request, now=1000.0)
+    assert main(["reviews", "--db", queue.path, "--key", queue.key_path,
+                 "--head", queue.head_path, "show", review.id]) == 0
+    out = capsys.readouterr().out
+    assert "instead   publish with --tag beta" in out
 
 
 def test_rejection_is_the_answer_for_the_identical_retry(queue):

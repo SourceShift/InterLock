@@ -43,6 +43,13 @@ rule rewrites the call before it escalates, the preview shows the merged
 rewrite. If the agent's hooks cannot apply a rewrite, the retry is refused
 rather than running the original arguments.
 
+A rule's `remediation` hint travels with the review. It is what the policy said
+would be allowed instead, so the person deciding sees the alternative without
+reading the policy, and the agent told to come back later still gets it:
+"review r-1a2b3c4d is pending; ... - publish with --tag beta". It is not part of
+the binding - it changes what is shown, not what the approval covers - but it is
+signed with the rest of the row, because it is one of the things a reviewer reads.
+
 `queue_approver(queue, wait=60)` holds the call for up to 60 seconds first, for
 callers that can afford to wait.
 
@@ -59,7 +66,7 @@ queue.
 
 ```bash
 interlock reviews list                       # newest first; --status pending
-interlock reviews show r-1a2b3c4d            # reason, rule, agent, the call
+interlock reviews show r-1a2b3c4d            # reason, rule, agent, the call, the hint
 interlock reviews approve r-1a2b3c4d         # --as NAME (default: your login)
 interlock reviews reject r-1a2b3c4d --reason "use the staging table"
 interlock reviews revoke r-1a2b3c4d          # withdraw an approval not yet used
@@ -86,14 +93,15 @@ asked about again, and a rejected call retried unchanged, notify nobody.
 
 What leaves the machine is deliberately narrow: the review id, the tool, the
 one argument that says what the call acts on (command, file or URL), the
-principal, the rule, the reason and a console link - each passed through the
-guard's own secret redactor first, because a rule's reason can quote an
-argument. The call's full arguments never leave: they stay in the review
-database for the console and `interlock reviews show`.
+principal, the rule, the reason, the policy's `remediation` hint and a console
+link - each passed through the guard's own secret redactor first, because a
+rule's reason or hint can quote an argument. The call's full arguments never
+leave: they stay in the review database for the console and
+`interlock reviews show`.
 
 `slack` posts `{"text": ...}`. `json` posts
 `{"event": "interlock.review.filed", "review_id", "action", "target",
-"principal", "rule", "reason", "min_approvals", "pending_until",
+"principal", "rule", "reason", "remediation", "min_approvals", "pending_until",
 "console_url"}`. A slow, failing or redirecting receiver never blocks or
 changes a decision - you may simply get no ping. A malformed setting warns once
 and disables the ping; it does not fail the hook.
@@ -153,12 +161,12 @@ Statuses are `pending`, `approved`, `rejected`, `revoked`, `expired` and
 
 Every row is signed with an HMAC-SHA256 key that lives **beside** the database
 (`reviews.key`, mode 0600) and never inside it. The signature covers the
-binding, the preview, the status and decision, the approver names and the
-approval list. A writer who can edit `reviews.db` but cannot read the key can
-no longer promote a pending review, redirect an approval to a different call,
-edit the preview a human is shown, or add an approver to satisfy
-`min_approvals`; the queue refuses the row with "does not match its signature"
-and the call stays refused.
+binding, the preview, the reason and remediation hint, the status and decision,
+the approver names and the approval list. A writer who can edit `reviews.db` but
+cannot read the key can no longer promote a pending review, redirect an approval
+to a different call, edit the preview a human is shown, or add an approver to
+satisfy `min_approvals`; the queue refuses the row with "does not match its
+signature" and the call stays refused.
 
 The key is the boundary. A process that can read both files can forge, and one
 that can delete either can deny service. Keep the directory private (the queue
@@ -168,7 +176,11 @@ store; decisions made on another machine need the same key to verify. Deleting
 or replacing the key invalidates every decision signed with it.
 
 An upgrade from a database written before signing seals its existing rows on
-first open, in the reviewer's own process.
+first open, in the reviewer's own process. When a release adds a signed field,
+the upgrade re-signs the rows that still verify under the previous payload, once
+(`settings.mac_version` records that it ran); a row edited at rest verifies under
+neither payload and stays refused, so an upgrade cannot bless a tampered
+decision.
 
 A signature cannot see a **wholesale rollback**: an older copy of the database
 is a valid set of signed rows, so restoring it replays the decisions made since

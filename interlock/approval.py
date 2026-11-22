@@ -76,6 +76,12 @@ class ApprovalRequest:
 
     ``event`` is the full call, so an approver can show a human what they are
     approving. It never reaches a receipt; receipts carry ``args_digest``.
+
+    ``remediation`` is the policy's one-line hint at what would be allowed
+    instead. It is guidance, not authority, so it is *not* part of
+    :attr:`binding` - but it travels with the request because a human reading
+    the queue, or an agent told to come back later, should see the same
+    alternative the policy offered at the call site.
     """
 
     request_id: str
@@ -91,6 +97,9 @@ class ApprovalRequest:
     policy_epoch: Optional[str] = None
     cwd: Optional[str] = None
     created: float = 0.0
+    #: The policy's hint at a safer way to do this, one line, clipped like
+    #: ``reason``. Shown beside the request; never part of the binding.
+    remediation: Optional[str] = None
     event: Optional[SensorEvent] = field(default=None, repr=False, compare=False)
 
     @property
@@ -297,6 +306,7 @@ def make_request(event: SensorEvent, decision: Decision, epoch: Optional[str],
         policy_epoch=epoch,
         cwd=getattr(event, "cwd", None),
         created=time.time(),
+        remediation=bound_reason(decision.remediation or "") or None,
         event=shown,
     )
 
@@ -441,6 +451,8 @@ def tty_approver(*, show_args: bool = True, max_chars: int = 2000) -> Approver:
                                          "" if request.phase == "call" else " (result)"),
                 "  reason : {}".format(request.reason),
             ]
+            if request.remediation:
+                lines.append("  instead: {}".format(request.remediation))
             if request.attributed_to:
                 lines.append("  field  : {}".format(request.attributed_to))
             if request.principal:

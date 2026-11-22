@@ -471,8 +471,11 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                  approval=note, authority=authority,
                  policy_artifact=artifact)
             return adapter.render(call, HookOutcome(Verdict.ALLOW))
-        outcome = replace(outcome, verdict=Verdict.BLOCK, reason="{} - {}".format(
-            decision.reason, pending_message(review)))
+        # ``pending_message`` already carries the queue's copy of the policy
+        # hint, so drop this outcome's own copy to avoid showing it twice.
+        outcome = replace(outcome, verdict=Verdict.BLOCK,
+                          reason="{} - {}".format(decision.reason, pending_message(review)),
+                          remediation=None)
         approval = ("pending:" if review.status == "pending" else "declined:") + review.id
     elif policy == Verdict.ESCALATE:
         if call.can_ask:

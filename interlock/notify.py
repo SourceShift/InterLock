@@ -8,9 +8,9 @@ run outside the agent.
 
 What the message carries is deliberate. A review's ``preview`` holds the call's
 arguments, which may hold secrets, so it is never sent. Every field that does
-go out - action, principal, rule, reason - passes through the guard's own
-secret redactor first, because a rule's reason can quote an argument (a
-destination URL, a sensitive path).
+go out - action, principal, rule, reason, and the policy's remediation hint -
+passes through the guard's own secret redactor first, because a rule's reason
+or hint can quote an argument (a destination URL, a sensitive path).
 
 Fail-open by construction: a webhook that is slow, down, or answers 500 must
 never change a decision. :class:`ReviewNotifier` catches everything, logs one
@@ -129,7 +129,12 @@ def _iso(ts: float) -> str:
 
 @dataclass(frozen=True)
 class ReviewMessage:
-    """What one notification says. Never carries the call's arguments."""
+    """What one notification says. Never carries the call's arguments.
+
+    ``remediation`` is the policy's own hint at what would be allowed instead.
+    It is policy text, not a call argument, but it can still quote one, so it
+    is masked like ``reason``.
+    """
 
     review_id: str
     action: str
@@ -140,17 +145,20 @@ class ReviewMessage:
     pending_until: float
     min_approvals: int
     console_url: str
+    remediation: str = ""
 
 
 def message_for(review: Any, *, console_url: str = DEFAULT_CONSOLE_URL) -> ReviewMessage:
     """Build the message for a filed review, masking every free-text field."""
     base = (console_url or DEFAULT_CONSOLE_URL).rstrip("/")
+    instead = _masked(getattr(review, "remediation", None) or "")
     return ReviewMessage(
         review_id=str(review.id),
         action=_masked(review.action),
         principal=_masked(getattr(review, "principal", None) or "unknown"),
         rule=_masked(getattr(review, "policy_id", None) or ""),
         reason=_masked(getattr(review, "reason", None) or ""),
+        remediation=instead if len(instead) <= 200 else instead[:197] + "...",
         target=_target(getattr(review, "preview", None)),
         pending_until=float(review.pending_until),
         min_approvals=int(getattr(review, "min_approvals", 1) or 1),
@@ -173,6 +181,8 @@ def slack_text(message: ReviewMessage) -> str:
     if message.reason:
         reason = message.reason
         lines.append(reason if len(reason) <= 600 else reason[:597] + "...")
+    if message.remediation:
+        lines.append("instead: {}".format(message.remediation))
     lines.append("decide: {}".format(message.console_url))
     lines.append("expires {}".format(_iso(message.pending_until)))
     return "\n".join(lines)
@@ -189,6 +199,7 @@ def payload_for(message: ReviewMessage, fmt: str = "slack") -> Dict[str, Any]:
             "principal": message.principal,
             "rule": message.rule,
             "reason": message.reason,
+            "remediation": message.remediation,
             "target": message.target,
             "min_approvals": message.min_approvals,
             "pending_until": _iso(message.pending_until),

@@ -20,7 +20,9 @@ from interlock import (
     span,
 )
 from interlock import approval as approval_mod
-from interlock.approval import MAX_REASON_BYTES, ApprovalRequest, bound_reason, grants, tty_approver
+from interlock.approval import (MAX_REASON_BYTES, ApprovalRequest, bound_reason, grants,
+                                make_request, tty_approver)
+from interlock.event import SensorEvent
 from interlock.interceptors.mcp import enforce_tool_call, enforce_tool_result
 from interlock.receipt import set_sink
 from interlock.sink import InMemorySink
@@ -373,6 +375,45 @@ def test_request_is_frozen():
     with pytest.raises(Exception):
         request.reason = "something else"  # type: ignore[misc]
     assert isinstance(request, ApprovalRequest)
+
+
+def test_the_request_carries_the_policy_hint():
+    """The hint a policy gives at the call site travels with the request, so
+    whoever answers it - a person at a terminal, a reviewer in the queue, an
+    agent told to come back later - sees the same alternative."""
+    event = SensorEvent("run", {"cmd": "npm publish"})
+    hinted = Decision.escalate("publishing", "p", remediation="use\n--tag  beta\x07")
+    assert make_request(event, hinted, "e").remediation == "use --tag beta"
+    assert make_request(event, Decision.escalate("publishing", "p"), "e").remediation is None
+    clipped = make_request(
+        event, Decision.escalate("publishing", "p", remediation="x" * 600), "e")
+    assert len(clipped.remediation.encode("utf-8")) <= MAX_REASON_BYTES
+
+
+def test_a_tty_approver_is_shown_the_hint(monkeypatch):
+    written = []
+
+    class FakeTty:
+        def write(self, text):
+            written.append(text)
+
+        def flush(self):
+            pass
+
+        def readline(self):
+            return "n\n"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr("builtins.open", lambda *a, **k: FakeTty())
+    tty_approver()(make_request(
+        SensorEvent("run", {"cmd": "npm publish"}),
+        Decision.escalate("publishing", "p", remediation="use --tag beta"), "e"))
+    assert "instead: use --tag beta" in "".join(written)
 
 
 # --- other paths --------------------------------------------------------------

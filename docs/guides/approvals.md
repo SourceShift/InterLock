@@ -72,6 +72,14 @@ The reason is cut to one printable line of at most 512 bytes before the approver
 sees it, and that exact text is part of the binding. `ApprovalRequest` is
 frozen, so nothing can change what was approved after the fact.
 
+When the escalating rule carries a `remediation` hint - see
+[writing rules](writing-rules.md#say-what-would-be-allowed) - the request
+carries it too, in `request.remediation`, clipped the same way. It is guidance,
+not authority, so it is **not** part of the binding: it changes what the
+approver is shown, not what the approval covers. `tty_approver()` prints it as
+`instead: ...` beside the reason, and the [review queue](reviews.md) stores it
+with the review, so a human deciding later sees the same alternative.
+
 ## Precedence
 
 A **block from any rule beats an escalation**: the engine only returns ESCALATE

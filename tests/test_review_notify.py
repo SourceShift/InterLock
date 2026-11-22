@@ -159,6 +159,21 @@ def test_min_approvals_is_named_in_the_message():
     assert "2 distinct approvers" in text
 
 
+def test_the_policy_hint_rides_with_the_notification(tmp_path, receiver):
+    """The reviewer on Slack sees the same alternative the policy offered."""
+    request = make_request(
+        SensorEvent("run", {"cmd": "npm publish"}, principal="agent"),
+        Decision.escalate("publishing", "publish", remediation="publish with --tag beta"),
+        "epoch1")
+    queue = queue_with(tmp_path, ReviewNotifier(receiver.url))
+    file_review(queue, request)
+    assert "instead: publish with --tag beta" in receiver.bodies[0]["text"]
+
+    queue = queue_with(tmp_path / "json", ReviewNotifier(receiver.url, fmt="json"))
+    file_review(queue, request)
+    assert receiver.bodies[1]["remediation"] == "publish with --tag beta"
+
+
 # --- a broken receiver never blocks or fails a filing --------------------------------
 
 
