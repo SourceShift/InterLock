@@ -22,6 +22,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`reviews`](#interlock-reviews) | decide pending reviews; serve their status to agents |
 | [`drift`](#interlock-drift) | diff a live surface's tool listing against a recorded corpus |
 | [`anchor`](#interlock-anchor) | record a receipt log's head outside it, or check it still reaches it |
+| [`capsule`](#interlock-capsule) | seal a receipt log and its evidence into one file, or check it |
 | [`mesh`](#interlock-mesh) | subscribe to community policy packs, or publish a commons |
 | [`cloud`](#interlock-cloud) | Enroll hosts and run the cloud connector |
 | [`skills`](#interlock-skills) | pin a skill's content and check it before activation |
@@ -448,6 +449,41 @@ usage: interlock anchor [-h] --key-file FILE [--out FILE] [--check] [--json] fil
   --out                      where to keep the anchor (default: <log>.anchor). Put it on storage the log's writer cannot reach
   --check                    verify against the recorded anchor instead of writing a new one
   --json                     machine-readable output
+```
+
+## `interlock capsule`
+
+Package a receipt log, its policy and its anchor into one sealed file, or
+check such a file.
+
+```bash
+interlock capsule create audit.jsonl --key-file audit.key --out evidence.zip
+interlock capsule create audit.jsonl --key-file audit.key --out evidence.zip \
+    --policy policy.json --anchor audit.anchor
+interlock capsule verify evidence.zip --key-file audit.key
+interlock capsule verify evidence.zip --key-file audit.key --json
+```
+
+`create` verifies the chain first, then seals the log, the optional policy and
+the optional anchor behind a signed manifest: each member's sha256, the receipt
+count and head, the key id and a redaction attestation. `verify` checks the
+manifest seal, every member digest and the receipt chain (against the head the
+manifest names, so a removed tail is caught), then prints the adequacy answers
+and names each question the record cannot answer.
+
+A capsule proves integrity to a holder of the log's key; it does not prove who
+holds it. A capsule without an anchor cannot show its tail was not cut, and
+`verify` says so instead of implying coverage.
+
+Exit codes: 0 the capsule was built or verifies, 2 it was refused or failed,
+3 a file could not be read, 64 bad arguments.
+
+```text
+usage: interlock capsule [-h] MODE ...
+usage: interlock capsule create [-h] --key-file FILE --out FILE [--policy FILE] [--anchor FILE]
+                                [--json]
+                                file
+usage: interlock capsule verify [-h] --key-file FILE [--json] bundle
 ```
 
 ## `interlock mesh`

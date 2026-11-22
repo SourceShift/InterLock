@@ -89,6 +89,7 @@ jobs:
                   "reviews",
                   "drift",
                   "anchor",
+                  "capsule",
                   "mesh",
                   "cloud",
                   "skills"

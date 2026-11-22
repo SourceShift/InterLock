@@ -218,6 +218,44 @@ without writing and accepts a log that has grown since, reporting how many
 receipts arrived after the anchor. Exit codes: 0 it still reaches the anchor,
 2 the chain or the anchor is broken, 3 a file could not be read.
 
+## Hand the evidence to someone else
+
+`interlock report` and `interlock anchor` assume the reader can be given four
+things: the log, the key, the policy and the anchor. That is fine inside your
+own infrastructure and awkward for anyone else - an auditor, a customer, a
+regulator - who gets a folder and a paragraph of instructions. A capsule is one
+sealed file:
+
+```bash
+interlock capsule create /var/log/agent/audit.jsonl --key-file receipts.key \
+  --policy /etc/interlock/policy.json --anchor /mnt/worm/audit.anchor \
+  --out evidence-2026-11.zip
+# elsewhere, with only the bundle and the key:
+interlock capsule verify evidence-2026-11.zip --key-file receipts.key
+```
+
+`create` verifies the chain first, so it never seals a broken log. The bundle is
+a zip of `receipts.jsonl`, the policy and the anchor when you pass them, and a
+`manifest.json` that records each member's sha256, the receipt count and head,
+the key id and a redaction attestation ("N values masked, by kind"). The
+manifest is sealed with an HMAC under the same key. `verify` checks that seal,
+every member digest, and the receipt chain against the head the manifest names -
+so a line edited inside the bundle fails even when the attacker recomputed the
+digest, and a removed tail fails even when they re-signed the manifest.
+
+`verify` then prints the adequacy answers, one line per question: who acted,
+when, which policy decided, how an escalation was settled, whether the record is
+intact, whether the whole run is covered, what was redacted, and which build
+produced it. Each entry it cannot answer is printed as `UNANSWERED` with the
+reason - most commonly "no external anchor", which means a receipt removed from
+the tail cannot be detected. That is the point: the report says what the record
+can prove, not what you hope it proves.
+
+Two limits to state plainly. The MAC proves a holder of the log's key built the
+bundle; it does not prove which person. And adequacy answers are computed from
+what the log contains - an action the log never saw is not "clean", it is
+absent.
+
 ## Choose and keep a key
 
 The default key is random and generated fresh for each process. Without your

@@ -38,6 +38,7 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("drift", "diff a live surface's tool listing against a recorded corpus", "drift"),
     ("anchor", "record a receipt log's head outside it, or check it still reaches it",
      "anchor"),
+    ("capsule", "seal a receipt log and its evidence into one file, or check it", "capsule"),
     ("mesh", "subscribe to community policy packs, or publish a commons", "mesh"),
     ("cloud", "Enroll hosts and run the cloud connector", "cloud"),
     ("skills", "pin a skill's content and check it before activation", "skills"),

@@ -1440,6 +1440,22 @@ New receipt fields (`call_id`, `policy_epoch`, `policy_verdict`, `approval`,
 reported. `FileSink(path, *, signer=..., key=None, shared=False)`: `shared=True`
 locks the file per write so several processes keep one chain.
 
+### Evidence capsules (`interlock.capsule`)
+
+Guide: [hand the evidence to someone else](../guides/audit-log.md#hand-the-evidence-to-someone-else).
+One sealed file carrying the log, the optional policy and anchor, and a signed
+manifest, plus the evidentiary-adequacy answers `interlock capsule verify`
+prints.
+
+| Name | What it is |
+|---|---|
+| `create_capsule(log_path, *, key, out_path, policy_path=None, anchor_path=None, now=None) -> dict` | Verify the chain, then write the bundle and return its manifest. Raises `CapsuleError` on an unreadable, empty or broken log, or an anchor the log does not reach. |
+| `verify_capsule(bundle_path, *, key) -> dict` | `{"ok", "problems", "adequacy", "count", "key_id", "created"}`. `problems` names every failed check; `adequacy` has one entry per question with `answered` and the reason when it is not. |
+| `adequacy(receipts, manifest, problems) -> list` | The questions on their own: who acted, when, which policy decided, how an escalation was settled, whether the record is intact, whether the whole run is covered, what was redacted, which build produced it. |
+| `seal_manifest(key, manifest)`, `key_id(key)` | The manifest's HMAC (over everything but `signature`) and the non-secret short name for a key. |
+| `CapsuleError` | A capsule that cannot be built or read: wrong key, edited manifest or member, broken chain. |
+| `CAPSULE_VERSION`, `MANIFEST`, `RECEIPTS`, `POLICY`, `ANCHOR` | The schema version and the bundle's member names. |
+
 ### Shell commands (`interlock.shell`)
 
 Guide: [parsed shell commands](../guides/detectors.md#parsed-shell-commands).

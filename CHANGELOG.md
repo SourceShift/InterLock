@@ -11,6 +11,25 @@ breaking changes land.
 
 ### Added
 
+- **Evidence capsule** (`interlock capsule`). A receipt log proves its own
+  integrity only to someone holding four artefacts in four places: the log, the
+  key, the policy and the anchor. `interlock capsule create LOG --key-file KEY
+  --out evidence.zip [--policy FILE] [--anchor FILE]` verifies the chain and
+  seals the log, the optional policy and anchor, and a manifest recording each
+  member's sha256, the receipt count and head, the key id and a redaction
+  attestation - all behind an HMAC over the manifest. `interlock capsule verify
+  BUNDLE --key-file KEY` checks the seal, every member digest and the chain
+  against the head the manifest names (so an edited line fails even after the
+  digests are recomputed and the manifest re-signed, and a removed tail fails
+  too), then prints the evidentiary-adequacy answers: who acted, when, which
+  policy decided, how an escalation was settled, whether the record is intact,
+  whether the whole run is covered, what was redacted, which build produced it.
+  Every question the record cannot answer is printed `UNANSWERED` with the
+  reason - most often "no external anchor" - rather than implied. The MAC
+  proves a holder of the key built the bundle, not who they are; the adequacy
+  answers come from what the log contains, so an action it never saw is absent,
+  not clean.
+
 - **Result-phase taint** (`taint:injection`). Provenance named the tool, so a
   trusted page and a page that told the agent what to do were the same
   `tool:fetch_url` to a `flow` or `block_origins` selector. A guarded result
