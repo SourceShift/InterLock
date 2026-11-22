@@ -162,6 +162,41 @@ def test_find_skill_falls_back_to_a_plain_plugin_skill(tmp_path):
     assert skills.find_skill("my-plugin:reviewed", [str(root)]) == str(directory)
 
 
+def test_find_skill_resolves_the_flat_plugin_layout(tmp_path):
+    # Claude Code installs a marketplace plugin as <root>/<plugin>/<skill>;
+    # caveman:caveman-compress must resolve to <root>/caveman/caveman-compress.
+    root = tmp_path / "marketplaces"
+    directory = root / "caveman" / "caveman-compress"
+    directory.mkdir(parents=True)
+    assert skills.find_skill("caveman:caveman-compress", [str(root)]) == str(
+        directory)
+
+
+def test_find_skill_prefers_the_skills_layout_over_the_flat_one(tmp_path):
+    root = tmp_path / "marketplaces"
+    preferred = root / "my-plugin" / "skills" / "reviewed"
+    preferred.mkdir(parents=True)
+    flat = root / "my-plugin" / "reviewed"
+    flat.mkdir()
+    assert skills.find_skill("my-plugin:reviewed", [str(root)]) == str(preferred)
+
+
+def test_find_skill_resolves_the_root_level_plugin_fallback(tmp_path):
+    # A plugin checkout that is itself one skill is activated as
+    # kubernetes-skill:kubernetes-skill and lives at <root>/kubernetes-skill.
+    root = tmp_path / "marketplaces"
+    directory = root / "kubernetes-skill"
+    directory.mkdir(parents=True)
+    assert skills.find_skill(
+        "kubernetes-skill:kubernetes-skill", [str(root)]) == str(directory)
+
+
+def test_find_skill_returns_none_for_a_missing_flat_plugin_skill(tmp_path):
+    root = tmp_path / "marketplaces"
+    (root / "caveman").mkdir(parents=True)
+    assert skills.find_skill("caveman:absent", [str(root)]) is None
+
+
 def test_find_skill_expands_the_home_default_at_call_time(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     directory = tmp_path / ".claude" / "skills" / "reviewed"
@@ -195,6 +230,29 @@ def test_discover_skills_finds_the_plugin_layout(tmp_path):
     _write(directory, "SKILL.md", "reviewed\n")
     assert skills.discover_skills([str(root)]) == [
         ("my-plugin:reviewed", str(directory))]
+
+
+def test_discover_skills_finds_the_flat_plugin_layout(tmp_path):
+    root = tmp_path / "marketplaces"
+    directory = root / "caveman" / "caveman-compress"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "compressed instructions\n")
+    assert skills.discover_skills([str(root)]) == [
+        ("caveman:caveman-compress", str(directory))]
+
+
+def test_discover_skills_does_not_promote_a_skills_subdirectory(tmp_path):
+    # A directory that is itself a skill is a plain skill; its subdirectories
+    # are not a plugin's skills and must not be named plugin:skill.
+    root = tmp_path / "marketplaces"
+    outer = root / "kubernetes-skill"
+    outer.mkdir(parents=True)
+    _write(outer, "SKILL.md", "the skill itself\n")
+    nested = outer / "references"
+    nested.mkdir()
+    _write(nested, "SKILL.md", "not a plugin skill\n")
+    assert skills.discover_skills([str(root)]) == [
+        ("kubernetes-skill", str(outer))]
 
 
 def test_discover_skills_does_not_follow_a_symlinked_directory(tmp_path):

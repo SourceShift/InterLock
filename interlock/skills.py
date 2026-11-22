@@ -74,10 +74,10 @@ def find_skill(name: object, roots: Optional[Iterable[str]] = None) -> Optional[
     """Return the skill directory for ``name`` under ``roots``, or None.
 
     A plain name resolves to ``<root>/<name>``. A ``plugin:skill`` name first
-    tries ``<root>/<plugin>/skills/<skill>``, then ``<root>/<skill>``. A name is
-    accepted only when every component matches ``^[A-Za-z0-9._-]+$``, is not
-    ``.``/``..`` and the whole name is not absolute, so a name can never escape
-    a root.
+    tries ``<root>/<plugin>/skills/<skill>``, then ``<root>/<plugin>/<skill>``,
+    then ``<root>/<skill>``. A name is accepted only when every component
+    matches ``^[A-Za-z0-9._-]+$``, is not ``.``/``..`` and the whole name is not
+    absolute, so a name can never escape a root.
     """
     parsed = _parse_name(name)
     if parsed is None:
@@ -86,6 +86,9 @@ def find_skill(name: object, roots: Optional[Iterable[str]] = None) -> Optional[
     for root in _expand_roots(roots):
         if kind == "plugin":
             candidate = os.path.join(root, plugin, "skills", skill)
+            if os.path.isdir(candidate):
+                return candidate
+            candidate = os.path.join(root, plugin, skill)
             if os.path.isdir(candidate):
                 return candidate
             candidate = os.path.join(root, skill)
@@ -104,11 +107,14 @@ def discover_skills(
     """Return ``(name, directory)`` for every skill discoverable under ``roots``.
 
     A directory directly under a root is a plain skill when it contains a
-    regular ``SKILL.md``; a directory ``<root>/<plugin>/skills/<skill>`` is a
-    ``plugin:skill`` when ``<skill>`` contains one. Names the component rule
-    would reject are skipped, so every returned name is one :func:`find_skill`
-    accepts. Symlinked directories are never followed: they are not part of the
-    tree the operator reviewed.
+    regular ``SKILL.md``; a directory ``<root>/<plugin>/skills/<skill>`` or
+    ``<root>/<plugin>/<skill>`` is a ``plugin:skill`` when ``<skill>`` contains
+    one. A directory that is itself a skill is never a plugin: when it holds a
+    ``SKILL.md`` of its own it is reported as the plain skill and its
+    subdirectories are not promoted to ``plugin:skill``. Names the component
+    rule would reject are skipped, so every returned name is one
+    :func:`find_skill` accepts. Symlinked directories are never followed: they
+    are not part of the tree the operator reviewed.
 
     The result is sorted by name and deduplicated across roots (the first root
     that names a skill wins). Only directory entries and ``SKILL.md`` presence
@@ -131,12 +137,27 @@ def discover_skills(
             if not _safe_part(plugin):
                 continue
             plugin_dir = outer.path
-            if os.path.isfile(os.path.join(plugin_dir, "SKILL.md")):
+            plain = os.path.isfile(os.path.join(plugin_dir, "SKILL.md"))
+            if plain:
                 found.setdefault(plugin, plugin_dir)
             skills_dir = os.path.join(plugin_dir, "skills")
-            if os.path.islink(skills_dir) or not os.path.isdir(skills_dir):
+            if not os.path.islink(skills_dir) and os.path.isdir(skills_dir):
+                for inner in _entries(skills_dir):
+                    if (inner.is_symlink()
+                            or not inner.is_dir(follow_symlinks=False)):
+                        continue
+                    skill = inner.name
+                    if not _safe_part(skill):
+                        continue
+                    if not os.path.isfile(os.path.join(inner.path, "SKILL.md")):
+                        continue
+                    found.setdefault(
+                        "{}:{}".format(plugin, skill), inner.path)
+            # A directory that is its own skill is not a plugin: its children
+            # are never promoted to ``plugin:skill``.
+            if plain:
                 continue
-            for inner in _entries(skills_dir):
+            for inner in _entries(plugin_dir):
                 if inner.is_symlink() or not inner.is_dir(follow_symlinks=False):
                     continue
                 skill = inner.name

@@ -44,9 +44,42 @@ reviewed-skill                   bb13efcb75b55a6fe95d4ef0371e8af10daecde43731afd
 ```
 
 The default roots are `~/.claude/skills`; a plain name resolves to
-`<root>/<name>`, and a plugin layout resolves `<root>/<plugin>/skills/<skill>`
-under the name `plugin:skill`. A directory is discoverable when it holds a
-regular `SKILL.md`.
+`<root>/<name>`. A directory is discoverable when it holds a regular
+`SKILL.md`.
+
+### Plugin skills
+
+Claude Code activates a skill installed by a plugin as `plugin:skill`, and on
+disk that name can live in three layouts under a root. For `plugin:skill`,
+`find_skill` tries each in turn and takes the first that exists:
+
+| Layout | Example | Activated as |
+|---|---|---|
+| `<root>/<plugin>/skills/<skill>` | `marketplaces/fullstack-dev-skills/skills/python-pro` | `fullstack-dev-skills:python-pro` |
+| `<root>/<plugin>/<skill>` | `marketplaces/caveman/caveman-compress` | `caveman:caveman-compress` |
+| `<root>/<skill>` | `marketplaces/kubernetes-skill` | `kubernetes-skill:kubernetes-skill` |
+
+A directory that is itself a skill - one holding a regular `SKILL.md` - is a
+plain skill, not a plugin: its subdirectories are never promoted to
+`plugin:skill`. Only a plugin directory with no `SKILL.md` of its own
+contributes flat `<plugin>/<skill>` entries.
+
+`~/.claude/plugins/marketplaces` is **not** a default root. To audit and pin
+the plugin skills installed there, pass it explicitly:
+
+```bash
+interlock skills check --all --roots ~/.claude/skills ~/.claude/plugins/marketplaces
+```
+
+and give the detector the same list, so it resolves the same names:
+
+```json
+"with": {"roots": ["~/.claude/skills", "~/.claude/plugins/marketplaces"]}
+```
+
+The guard only sees the roots it is given. A plugin tree left out of `roots`
+stays invisible to the audit: its skills are never pinned, so an activation
+resolves to "unknown" and the default `on_unknown` policy allows it.
 
 The digest covers every regular file's relative POSIX path, byte size and
 sha256, folded in sorted path order. That makes it independent of directory

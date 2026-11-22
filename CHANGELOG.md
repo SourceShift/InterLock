@@ -27,7 +27,10 @@ breaking changes land.
   until a skill is pinned. `interlock skills check --all` audits every
   discoverable skill - plain and plugin layout - reporting each as ok, drift,
   unpinned or error, so a skill that appeared after the last pin is visible
-  before it is activated. See `docs/guides/skills.md` for the operator's
+  before it is activated, and both `find_skill` and the audit resolve the flat
+  `<root>/<plugin>/<skill>` plugin layout Claude Code activates as
+  `plugin:skill`, alongside the `<root>/<plugin>/skills/<skill>` and
+  `<root>/<skill>` forms. See `docs/guides/skills.md` for the operator's
   walk-through.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
