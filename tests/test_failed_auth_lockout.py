@@ -1,6 +1,7 @@
 """failed_auth_lockout: allow path (under limit), block path (over limit),
 per-principal keying, selective counting, state isolation, odd-input safety,
 and engine integration."""
+import pytest
 from typing import Any, cast
 
 from interlock import Decision, PolicyEngine, SensorEvent, Verdict
@@ -134,3 +135,42 @@ def test_engine_allows_first_then_blocks_second():
     second = engine.evaluate(_failed())
     assert second.verdict is Verdict.BLOCK
     assert second.policy_id == POLICY_ID
+
+
+# --- the durable counter ----------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "counters" / "lockout.db")
+
+
+def test_a_state_file_carries_the_lockout_to_the_next_process(tmp_path):
+    # The retry an attacker replays is a new process: without the file it would
+    # get a fresh allowance every time and never trip the limit.
+    failed_auth_lockout(limit=2, state=_state(tmp_path))(_failed())
+    failed_auth_lockout(limit=2, state=_state(tmp_path))(_failed())  # count is 2
+    third = failed_auth_lockout(limit=2, state=_state(tmp_path))
+    assert cast(Decision, third(_failed())).verdict is Verdict.BLOCK
+
+
+def test_a_state_file_still_ignores_a_successful_authentication(tmp_path):
+    successful = SensorEvent(action="auth", args={"ok": True}, principal="agent-1")
+    rule = failed_auth_lockout(limit=1, state=_state(tmp_path))
+    assert rule(successful) is None
+    later = failed_auth_lockout(limit=1, state=_state(tmp_path))
+    assert later(_failed()) is None   # the success spent no budget
+
+
+def test_no_state_file_is_written_until_a_failure_arrives(tmp_path):
+    path = tmp_path / "counters" / "lockout.db"
+    failed_auth_lockout(limit=2, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        failed_auth_lockout(limit=2, state=state)

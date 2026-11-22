@@ -14,17 +14,22 @@ left untouched, so ordinary traffic neither trips the lockout nor is blocked by
 it. The boundary is inclusive at the limit: with ``limit=2`` the second failure
 still passes and the third is blocked.
 
-The counter lives in the closure, so each factory call owns fresh state - two
-rules built from separate ``failed_auth_lockout()`` calls cannot trip each other.
-The key is the event's principal, falling back to ``"<anon>"`` when it is absent
-or not a string, so a caller with no identity is still locked out rather than
-escaping unnamed. The rule never raises on odd input: missing fields, non-dict
-args, and non-string principals are all handled without crashing.
+The counter lives in the closure by default, so each factory call owns fresh
+state - two rules built from separate ``failed_auth_lockout()`` calls cannot
+trip each other. A hook host starts a new process per call and so would reset
+the lockout on every retry, which is the one thing an attacker replays; point
+``state=`` at an absolute path and the count moves to
+:class:`~interlock.counter_ledger.CounterLedger`. The key is the event's
+principal, falling back to ``"<anon>"`` when it is absent or not a string, so a
+caller with no identity is still locked out rather than escaping unnamed. The
+rule never raises on odd input: missing fields, non-dict args, and non-string
+principals are all handled without crashing.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Optional
 
+from ..counter_ledger import Counters
 from ..enforce import Decision
 from ..event import SensorEvent
 from ..policy.engine import Rule
@@ -41,7 +46,8 @@ DEFAULT_LIMIT = 5
 AUTH_ACTION = "auth"
 
 
-def failed_auth_lockout(limit: int = DEFAULT_LIMIT) -> Rule:
+def failed_auth_lockout(limit: int = DEFAULT_LIMIT, *,
+                        state: Optional[str] = None) -> Rule:
     """Rule: block once one principal's failed-auth count exceeds *limit*.
 
     Only events with ``action == "auth"`` and a falsey ``args["ok"]`` are
@@ -50,8 +56,14 @@ def failed_auth_lockout(limit: int = DEFAULT_LIMIT) -> Rule:
     returns None; once it is strictly greater it returns a BLOCK Decision. Every
     non-failing event returns None without affecting any counter. Each call to
     this factory returns a Rule with its own fresh counter.
+
+    *state* is an absolute path to a SQLite file that makes the count survive
+    the process, so a hook host - one process per call - still locks a principal
+    out instead of granting each retry a fresh allowance. A relative path is
+    refused: the guard's state must not sit where the guarded process can move
+    it. The tally is cumulative; deleting the file clears the lockout.
     """
-    counts: Dict[str, int] = {}
+    counters = Counters("failed-auth counter", state)
 
     def rule(event: SensorEvent) -> Optional[Decision]:
         if getattr(event, "action", None) != AUTH_ACTION:
@@ -68,8 +80,7 @@ def failed_auth_lockout(limit: int = DEFAULT_LIMIT) -> Rule:
         if not isinstance(principal, str):
             principal = ANON
 
-        counts[principal] = counts.get(principal, 0) + 1
-        if counts[principal] > limit:
+        if counters.bump(principal) > limit:
             return Decision.block(
                 reason="failed_auth_lockout: limit {} exceeded".format(limit),
                 policy_id=POLICY_ID,

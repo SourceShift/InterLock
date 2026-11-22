@@ -11,6 +11,19 @@ breaking changes land.
 
 ### Added
 
+- **The principal counters survive the process.** `call_rate_limiter`,
+  `egress_rate_limiter` and `failed_auth_lockout` kept their counts in the
+  rule's closure, so a hook host - one process per tool call - handed every
+  call a fresh budget and the lockout reset on every retry. Each now takes an
+  absolute `state=` path (keyword-only, `limit` keeps its position) and counts
+  in `interlock/counter_ledger.py` instead: one `key`/`count` row per
+  principal, one `BEGIN IMMEDIATE` transaction per call, mode 0600, created on
+  the first event so `interlock policy check` writes nothing, at most 4096
+  principals with the oldest evicted. A relative path is refused, and a storage
+  fault warns once and falls back to the in-process counter. The count is
+  cumulative: a durable limiter reads "N calls since the state file was
+  created".
+
 - **A sequence journal can be seeded from the receipt log.** A durable
   `state=` file survives the process but not a restart or a fresh install: the
   first `http_post` of the day is judged against an empty journal. The new

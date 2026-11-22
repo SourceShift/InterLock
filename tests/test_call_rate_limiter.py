@@ -1,6 +1,7 @@
 """call_rate_limiter: allow path (within budget), block path (over budget),
 per-principal keying, per-rule state isolation, odd-input safety, and engine
 integration."""
+import pytest
 from typing import Any, cast
 
 from interlock import Decision, PolicyEngine, SensorEvent, Verdict
@@ -120,3 +121,49 @@ def test_engine_allows_first_then_blocks_second():
     second = engine.evaluate(_event())
     assert second.verdict is Verdict.BLOCK
     assert second.policy_id == POLICY_ID
+
+
+# --- the durable counter ----------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "counters" / "call_rate.db")
+
+
+def test_a_state_file_carries_the_budget_to_the_next_process(tmp_path):
+    call_rate_limiter(limit=2, state=_state(tmp_path))(_event())
+    call_rate_limiter(limit=2, state=_state(tmp_path))(_event())  # count is 2
+    third = call_rate_limiter(limit=2, state=_state(tmp_path))
+    assert cast(Decision, third(_event())).verdict is Verdict.BLOCK
+
+
+def test_a_state_file_keeps_principals_apart(tmp_path):
+    call_rate_limiter(limit=1, state=_state(tmp_path))(_event("agent-1"))
+    other = call_rate_limiter(limit=1, state=_state(tmp_path))
+    assert other(_event("agent-2")) is None
+
+    tripped = call_rate_limiter(limit=1, state=_state(tmp_path))
+    assert cast(Decision, tripped(_event("agent-1"))).verdict is Verdict.BLOCK
+
+
+def test_the_budget_is_cumulative_not_a_window(tmp_path):
+    # A durable limiter reads "N calls since the file was created"; nothing ages.
+    rule = call_rate_limiter(limit=1, state=_state(tmp_path))
+    rule(_event())
+    later = call_rate_limiter(limit=1, state=_state(tmp_path))
+    assert cast(Decision, later(_event())).verdict is Verdict.BLOCK
+
+
+def test_no_state_file_is_written_until_a_call_arrives(tmp_path):
+    path = tmp_path / "counters" / "call_rate.db"
+    call_rate_limiter(limit=2, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        call_rate_limiter(limit=2, state=state)

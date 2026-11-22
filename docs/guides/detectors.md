@@ -495,9 +495,15 @@ apply.
   rest), `tool_output_secret_redactor`, `data_masking_guard`,
   `http_status_guard` and `result_size_guard`. To scan output for anything
   else, write a [result rule](writing-rules.md#check-results).
-- **Stateful detectors count per process.** Rate limiters, budgets, and loop
-  guards keep their counts in memory. Each new process (or each new factory call)
-  starts from zero.
+- **Stateful detectors count per process by default.** Rate limiters, budgets,
+  and loop guards keep their counts in memory, so each new process (or each new
+  factory call) starts from zero. The three principal counters —
+  `call_rate_limiter`, `egress_rate_limiter` and `failed_auth_lockout` — plus
+  `sequence_guard` and `obligations` take an absolute `state` path that moves
+  the counter into a SQLite file, which a hook host (one process per tool call)
+  needs to enforce anything at all. The rest — budgets, loop guards, token
+  windows — are still process-local; see
+  [Across hook processes](policies.md#across-hook-processes).
 
 ## Next
 

@@ -337,6 +337,40 @@ Both instruments read the same receipt fields, so a run that passes the live
 guard still passes the check. The reverse is not promised: the check sees the
 whole history, and it is the one to trust.
 
+## Budget: how much
+
+A condition judges one call; a budget judges the run. Three detectors count per
+principal and refuse once the count passes a limit: `call_rate_limiter` on every
+call, `egress_rate_limiter` on outbound actions only, and
+`failed_auth_lockout` on an `auth` call that reported failure.
+
+```json
+{"id": "per-agent-budget", "detector": "call_rate_limiter",
+ "with": {"limit": 500}}
+```
+
+Each is inclusive at its limit — with `limit=2` the second call passes and the
+third is refused — and each keys on `principal`, falling back to `"<anon>"` for
+a caller with no identity, so an unnamed run is budgeted rather than exempt
+(`egress_rate_limiter` instead skips an event whose principal is not a string,
+because it has no stable key to count under).
+
+These three take the same `state` argument as the sequence and obligation
+ledgers, with the same guarantees: an absolute path to a small SQLite file,
+created on the first call, one transaction per call, and a storage fault that
+warns once and falls back to memory. What it stores is one key and one integer
+per principal.
+
+Two things read differently once the count is durable:
+
+- **A durable count is cumulative, not a window.** Nothing decays and nothing
+  ages out, so `limit` reads as "N calls since the state file was created" —
+  which is what a hook host needs, since a fresh process per call would
+  otherwise hand every call a fresh budget. Deleting the file resets the budget.
+- **The file is bounded.** At most 4096 principals are tracked, the oldest
+  dropped first, so an agent that mints a new identity per call cannot grow the
+  file without limit — and an evicted principal starts again at zero.
+
 ## Mistakes fail at load, not in production
 
 A rule that loads cleanly but can never fire is the worst kind. So:

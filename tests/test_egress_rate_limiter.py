@@ -2,6 +2,8 @@
 block path, per-principal and per-rule isolation, odd-input safety, and engine
 integration. Every test asserts on a return value; none is vacuous.
 """
+import pytest
+
 from interlock import PolicyEngine, SensorEvent, Verdict
 from interlock.detectors.egress_rate_limiter import (
     POLICY_ID,
@@ -139,3 +141,38 @@ def test_engine_allows_first_then_blocks_second():
     second = engine.evaluate(_event("http_post"))
     assert second.verdict is Verdict.BLOCK
     assert second.policy_id == POLICY_ID
+
+
+# --- the durable counter ----------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "counters" / "egress.db")
+
+
+def test_a_state_file_carries_the_budget_to_the_next_process(tmp_path):
+    egress_rate_limiter(limit=2, state=_state(tmp_path))(_event("http_post"))
+    egress_rate_limiter(limit=2, state=_state(tmp_path))(_event("fetch"))
+    third = egress_rate_limiter(limit=2, state=_state(tmp_path))
+    assert third(_event("send")).verdict is Verdict.BLOCK
+
+
+def test_a_state_file_keeps_principals_apart(tmp_path):
+    egress_rate_limiter(limit=1, state=_state(tmp_path))(_event("http_post", "agent-1"))
+    other = egress_rate_limiter(limit=1, state=_state(tmp_path))
+    assert other(_event("http_post", "agent-2")) is None
+
+
+def test_no_state_file_is_written_until_a_call_arrives(tmp_path):
+    path = tmp_path / "counters" / "egress.db"
+    egress_rate_limiter(limit=2, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        egress_rate_limiter(limit=2, state=state)
