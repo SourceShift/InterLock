@@ -528,3 +528,24 @@ def test_the_cli_exits_three_on_an_unusable_obligation_file(tmp_path, capsys):
 def test_the_cli_exits_sixty_four_on_a_bad_clock(tmp_path):
     code = _cli(tmp_path, [_receipt("deploy")], DEPLOY_APPROVE, "--now", "yesterday")
     assert code == 64
+
+
+def test_a_seeded_ledger_keeps_the_newest_openings_per_scope(tmp_path):
+    from interlock.obligation_ledger import FileLedger
+
+    ledger = FileLedger(_state(tmp_path))
+    entries = [("run-1", "deploy", "approve", 100.0 + i, 200.0 + i)
+               for i in range(4)]
+    assert ledger.seed(entries, max_scopes=8, max_open=2) == 4
+    # Only the two newest openings survive, and the ledger reports them open.
+    assert ledger.open_count() == 2
+
+
+def test_a_seeded_ledger_tracks_at_most_max_scopes(tmp_path):
+    from interlock.obligation_ledger import FileLedger
+
+    ledger = FileLedger(_state(tmp_path))
+    entries = [(scope, "deploy", "approve", 100.0, 200.0)
+               for scope in ("run-1", "run-2", "run-3")]
+    ledger.seed(entries, max_scopes=2, max_open=8)
+    assert ledger.scopes() == ["run-2", "run-3"]   # the stalest scope went

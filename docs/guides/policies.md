@@ -311,6 +311,23 @@ Two properties are worth knowing here too:
 Editing the policy does not resurrect a deadline it removed: rows whose
 `(when, then)` pair the policy no longer lists are dropped when next seen.
 
+A durable ledger still begins empty after a restart or a fresh install, so a
+`deploy` that opened its deadline yesterday is forgotten by the guard today.
+The log still holds it, so seed the ledger from it once:
+
+```bash
+interlock obligations hydrate --log /var/log/interlock/audit.jsonl \
+    --obligations obligations.json --state /var/lib/interlock/obligations.db
+```
+
+Every obligation the log still shows **open** is replayed under the guard's
+scope identity — not discharged, and not yet lapsed as of the newest receipt.
+A lapsed, never-discharged one is deliberately *not* re-armed: `interlock
+obligations check` already reports it, and refusing a run for a miss the
+operator can read in the log would be noise. The replay replaces the ledger, so
+running it twice over one log gives the same result; pass `--max-scopes` and
+`--max-open` when they differ from the rule's.
+
 ### Checking a log instead
 
 The receipt log carries actions, verdicts and timestamps, so the same model is

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from ._sqlite import BUSY_TIMEOUT, connect, immediate, prepare
 from .obligations import Obligation
@@ -127,6 +127,36 @@ class FileLedger:
             "SELECT scope FROM openings GROUP BY scope ORDER BY MIN(seq)").fetchall()]
         if len(scopes) >= max_scopes:
             db.execute("DELETE FROM openings WHERE scope = ?", (scopes[0],))
+
+    def seed(self, entries: Iterable[Tuple[str, str, str, float, float]], *,
+             max_scopes: int, max_open: int) -> int:
+        """Replace the openings with *entries*, replayed in the order given.
+
+        An entry is ``(scope, when, then, opened_at, required_by)`` - the shape
+        a replayed receipt log yields. The log is the older and more complete
+        record than the file, so a seed *replaces* rather than appends: running
+        it twice over one log gives the same ledger, and a fresh install after a
+        restart enforces the deadlines the receipts still show. Each scope keeps
+        its newest *max_open* openings and at most *max_scopes* scopes survive,
+        the stalest first - the same bounds :meth:`apply` keeps. Returns the
+        number of openings written.
+        """
+        written = 0
+        with immediate(self.path) as db:
+            db.execute("DELETE FROM openings")
+            for scope, when, then, opened_at, required_by in entries:
+                self._claim_scope(db, scope, max_scopes)
+                db.execute(
+                    "INSERT INTO openings (scope, when_, then_, opened_at, "
+                    "required_by) VALUES (?, ?, ?, ?, ?)",
+                    (scope, when, then, opened_at, required_by))
+                db.execute(
+                    "DELETE FROM openings WHERE scope = ? AND seq NOT IN "
+                    "(SELECT seq FROM openings WHERE scope = ? "
+                    "ORDER BY seq DESC LIMIT ?)",
+                    (scope, scope, max_open))
+                written += 1
+        return written
 
     def scopes(self) -> List[str]:
         """The scopes holding at least one open obligation, oldest first."""

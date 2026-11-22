@@ -24,6 +24,19 @@ breaking changes land.
   cumulative: a durable limiter reads "N calls since the state file was
   created".
 
+- **An obligation ledger can be seeded from the receipt log.** A durable
+  `state=` file makes the live detector's openings survive the process but not
+  a restart or a fresh install, so a `deploy` that opened a deadline yesterday
+  is forgotten by the guard today. The new
+  `interlock obligations hydrate --log audit.jsonl --obligations obligations.json
+  --state /abs/obligations.db` replays the log and seeds the ledger with every
+  obligation still open - not discharged, and not yet lapsed as of the newest
+  receipt, each scope keeping its newest `--max-open` openings and at most
+  `--max-scopes` scopes. It replaces the ledger, so a second run over one log
+  gives the same result, and a relative `--state` is refused. A lapsed,
+  never-discharged obligation is deliberately not re-armed: `obligations check`
+  already reports it.
+
 - **The token window survives the process.** `token_budget_guard` kept its
   per-principal rolling window in the closure, so a hook host - one process per
   call - met an empty window every time and the cap never bound. It now takes

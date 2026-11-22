@@ -351,6 +351,11 @@ interlock obligations check --log audit.jsonl --obligations obligations.json \
     --now now
 ```
 
+```bash
+interlock obligations hydrate --log audit.jsonl --obligations obligations.json \
+    --state /var/lib/interlock/obligations.db
+```
+
 Every other policy in interlock forbids an action. An obligation binds the
 other way: "after `deploy`, an `approve` must be referenced within 600s" is
 satisfied by doing nothing wrong and fails by *not* doing the follow-up. The
@@ -383,12 +388,24 @@ happened, and an escalation still pending or declined is not an approval.
 newest receipt's timestamp, so two checks over one log agree. Pass `--now now`
 to judge against the wall clock instead.
 
-Exit codes: 0 every obligation was kept or is still open, 1 at least one was
-breached, 3 the log or the obligation file could not be used, 64 the command
-line was wrong.
+`hydrate` is the cold-start repair for a durable ledger. A `state` file makes
+the live detector's openings survive the process but not a restart or a fresh
+install: it begins empty, so a `deploy` that opened a deadline yesterday is
+forgotten by the guard today. The log still holds it, so `hydrate` replays it
+and seeds the ledger with every obligation still **open** - not discharged, not
+yet lapsed as of the newest receipt. A lapsed, never-discharged one is left to
+`check` to report: re-arming it would escalate a miss the operator can already
+read in the log. The replay replaces the ledger, so running it twice over one
+log gives the same result.
+
+Exit codes: 0 every obligation was kept or is still open (or the ledger was
+seeded), 1 at least one was breached, 3 the log, the obligation file or the
+state path could not be used, 64 the command line was wrong.
 
 ```text
 usage: interlock obligations [-h] ACTION ...
+usage: interlock obligations hydrate [-h] --log FILE --obligations FILE --state FILE
+                                     [--max-scopes N] [--max-open N]
 usage: interlock obligations check [-h] --log FILE --obligations FILE [--json] [--now TIME]
 ```
 

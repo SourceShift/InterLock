@@ -6,6 +6,9 @@
   interlock obligations check --log audit.jsonl --obligations obligations.json \\
       --now now
 
+  interlock obligations hydrate --log audit.jsonl --obligations obligations.json \\
+      --state /var/lib/interlock/obligations.db
+
 Every other policy in interlock forbids an action. An obligation binds the
 other way: "after `deploy`, an `approve` must be referenced within 600s" is
 satisfied by doing nothing wrong and fails by *not* doing the follow-up. The
@@ -36,13 +39,24 @@ happened, and an escalation still pending or declined is not an approval.
 newest receipt's timestamp, so two checks over one log agree. Pass `--now now`
 to judge against the wall clock instead.
 
-Exit codes: 0 every obligation was kept or is still open, 1 at least one was
-breached, 3 the log or the obligation file could not be used, 64 the command
-line was wrong.
+`hydrate` is the cold-start repair for a durable ledger. A `state` file makes
+the live detector's openings survive the process but not a restart or a fresh
+install: it begins empty, so a `deploy` that opened a deadline yesterday is
+forgotten by the guard today. The log still holds it, so `hydrate` replays it
+and seeds the ledger with every obligation still **open** - not discharged, not
+yet lapsed as of the newest receipt. A lapsed, never-discharged one is left to
+`check` to report: re-arming it would escalate a miss the operator can already
+read in the log. The replay replaces the ledger, so running it twice over one
+log gives the same result.
+
+Exit codes: 0 every obligation was kept or is still open (or the ledger was
+seeded), 1 at least one was breached, 3 the log, the obligation file or the
+state path could not be used, 64 the command line was wrong.
 """
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 
 EXIT_OK = 0
@@ -54,6 +68,21 @@ EXIT_USAGE = 64
 def add_arguments(parser) -> None:
     commands = parser.add_subparsers(dest="obligations_command", metavar="ACTION")
     commands.required = True
+    hydrate = commands.add_parser(
+        "hydrate",
+        help="seed a durable ledger with the openings still in flight")
+    hydrate.add_argument("--log", required=True, metavar="FILE",
+                         help="a receipt log written by FileSink (required)")
+    hydrate.add_argument("--obligations", required=True, metavar="FILE",
+                         help="a JSON obligation list (required)")
+    hydrate.add_argument("--state", required=True, metavar="FILE",
+                         help="the absolute ledger path the rule's state= names "
+                              "(required)")
+    hydrate.add_argument("--max-scopes", type=int, default=1024, metavar="N",
+                         help="scopes tracked, matching the rule (default: 1024)")
+    hydrate.add_argument("--max-open", type=int, default=64, metavar="N",
+                         help="openings kept per scope, matching the rule "
+                              "(default: 64)")
     check = commands.add_parser(
         "check", help="replay a receipt log against obligations")
     check.add_argument("--log", required=True, metavar="FILE",
@@ -115,7 +144,79 @@ def _verdict(status) -> dict:
     return out
 
 
+def _positive(name, value):
+    if isinstance(value, bool) or value <= 0:
+        raise ValueError("{} must be a positive integer".format(name))
+    return value
+
+
+def _hydrate(args) -> int:
+    """Seed a durable ledger with the obligations the log still shows open."""
+    from .. import obligations as model
+    from .._sqlite import check_state_path
+    from ..obligation_ledger import FileLedger
+    from ..report import read_receipts
+
+    try:
+        max_scopes = _positive("--max-scopes", args.max_scopes)
+        max_open = _positive("--max-open", args.max_open)
+        # The same rule the detector applies: a relative path would resolve
+        # against whichever directory the seed was run from and leave the guard
+        # reading a different file.
+        state = check_state_path(args.state)
+        if state is None:
+            raise ValueError("--state is required")
+    except ValueError as exc:
+        sys.stderr.write("interlock obligations hydrate: {}\n".format(exc))
+        return EXIT_USAGE
+
+    try:
+        wanted = _load_obligations(args.obligations)
+    except OSError as exc:
+        sys.stderr.write("interlock obligations hydrate: cannot read {}: {}\n".format(
+            args.obligations, exc))
+        return EXIT_UNUSABLE
+    except ValueError as exc:
+        sys.stderr.write("interlock obligations hydrate: {}\n".format(exc))
+        return EXIT_UNUSABLE
+
+    try:
+        receipts, bad = read_receipts(args.log)
+    except OSError as exc:
+        sys.stderr.write("interlock obligations hydrate: cannot read {}: {}\n".format(
+            args.log, exc))
+        return EXIT_UNUSABLE
+
+    # The log's own clock: what was still in flight when it ended. A lapsed
+    # opening is reported by `check` and deliberately not re-armed here.
+    found = model.evaluate(receipts, wanted)
+    entries = [(status.scope, status.obligation.when, status.obligation.then,
+                status.opened_at, status.required_by)
+               for status in found if status.state == model.PENDING]
+
+    try:
+        ledger = FileLedger(state)
+        written = ledger.seed(entries, max_scopes=max_scopes, max_open=max_open)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        sys.stderr.write("interlock obligations hydrate: {}\n".format(exc))
+        return EXIT_UNUSABLE
+
+    scopes = {scope for scope, _when, _then, _opened, _by in entries}
+    if bad:
+        sys.stderr.write(
+            "interlock obligations hydrate: skipped {} unreadable line(s) in {}\n"
+            .format(len(bad), args.log))
+    sys.stdout.write(
+        "interlock obligations hydrate: {} opening(s) across {} scope(s) into {}\n"
+        .format(written, len(scopes), args.state))
+    return EXIT_OK
+
+
 def run(args) -> int:
+    action = getattr(args, "obligations_command", None)
+    if action == "hydrate":
+        return _hydrate(args)
+
     from .. import obligations as model
     from ..report import read_receipts
 
