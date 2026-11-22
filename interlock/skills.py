@@ -395,7 +395,10 @@ def pin_skill(
     search = explicit if explicit is not None else recorded
     directory = find_skill(name, search)
     if directory is None:
-        raise ValueError("skill not found: {}".format(name))
+        # Name the roots searched, as ``check`` does: the ones in force may be
+        # the file's recorded list, not the default, and that is the fix.
+        raise ValueError("skill not found: {} under {}".format(
+            name, ", ".join(search if search else DEFAULT_ROOTS)))
     digest = skill_digest(directory)
     pins[name] = digest
     save_pins(pins_file, pins,

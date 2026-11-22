@@ -25,6 +25,7 @@ names neither or both of NAME and ``--all``.
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 
@@ -170,8 +171,18 @@ def run(args) -> int:
         return 2
 
     if args.all:
+        # A root that was named - by the flag or by the pin file - but does not
+        # exist means the walk inspected nothing there, so the audit must not
+        # report "all clear" for it. The *default* root is exempt: a host with
+        # no skills tree is normal, and a pin pointing into it already shows up
+        # as ``missing``.
+        absent = [root for root in (roots or ())
+                  if not os.path.isdir(os.path.expanduser(str(root)))]
+        for root in absent:
+            sys.stderr.write(
+                "interlock skills: root not found: {}\n".format(root))
         results = []
-        failed = False
+        failed = bool(absent)
         for name, directory in discover_skills(roots):
             pinned = pins.get(name)
             try:

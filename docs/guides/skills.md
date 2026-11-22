@@ -173,6 +173,9 @@ interlock skills check moved-skill
 interlock skills: directory for moved-skill not found under /srv/agent-skills
 ```
 
+`pin` reports the same way when its name has no directory:
+`interlock skills: skill not found: NAME under ROOT, ROOT`.
+
 `check --all` audits every discoverable skill under the roots, plus every pin
 whose skill is not there. It is read-only: it never writes the pin file. Run
 against a tree with one skill in each state, it prints one line per skill and
@@ -202,7 +205,11 @@ otherwise - an `unpinned` skill is reported but does not by itself fail the
 audit, because pinning is an opt-in decision. `missing` is listed from the pin
 file rather than the directory walk, so a pin left behind by a moved or deleted
 skill is visible instead of silently absent; unpin it if the removal was
-intended. `check NAME` is stricter about missing input: an
+intended. A root that was named on the command line, or recorded in the pin
+file, but that does not exist also fails the audit: it prints
+`root not found: PATH` to stderr and exits `2`, so an audit that walked nothing
+does not read as "all clear". The default root is exempt - a host with no
+skills tree is normal. `check NAME` is stricter about missing input: an
 unpinned name, a name with no directory, and an unreadable directory each exit
 `2`. Usage errors - `check` given neither or both of `NAME` and `--all`, or no
 action at all - exit `64`; an unrecognized subcommand is rejected by the

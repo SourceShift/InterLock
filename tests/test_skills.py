@@ -372,6 +372,15 @@ def test_pin_skill_refuses_an_unknown_skill(tmp_path):
         skills.pin_skill("absent", roots=[str(tmp_path)], pins_path=str(tmp_path / "p.json"))
 
 
+def test_pin_skill_names_the_roots_it_searched(tmp_path):
+    root = tmp_path / "share"
+    root.mkdir()
+    with pytest.raises(ValueError) as info:
+        skills.pin_skill("absent", roots=[str(root)],
+                         pins_path=str(tmp_path / "p.json"))
+    assert str(root) in str(info.value)
+
+
 def test_pin_skill_records_the_roots_it_used(tmp_path):
     # The operator's roots are recorded as written, so a later check and the
     # guard can resolve the same skill without being told twice.
@@ -650,6 +659,47 @@ def test_cli_check_all_lists_a_missing_pin_in_json(tmp_path, capsys):
     assert entries["removed"]["digest"] is None
     assert entries["removed"]["pinned"] == "a" * 64
     assert entries["matched"]["status"] == "ok"
+
+
+def test_cli_check_all_fails_when_a_given_root_does_not_exist(
+        tmp_path, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+    absent = tmp_path / "gone"
+    assert main(["skills", "check", "--all", "--roots", str(root),
+                 str(absent), "--pins", str(pins)]) == 2
+    captured = capsys.readouterr()
+    assert "root not found: {}".format(absent) in captured.err
+    assert "matched" in captured.out
+
+
+def test_cli_check_all_is_quiet_about_a_missing_default_root(
+        tmp_path, monkeypatch, capsys):
+    from interlock.cli import main
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert main(["skills", "check", "--all"]) == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_cli_check_all_fails_when_a_recorded_root_is_gone(tmp_path, capsys):
+    from interlock.cli import main
+
+    share = tmp_path / "share"
+    root = share / "skills"
+    directory = root / "reviewed"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "reviewed instructions\n")
+    pins = tmp_path / "skills.json"
+    assert main(["skills", "pin", "reviewed", "--roots", str(root),
+                 "--pins", str(pins)]) == 0
+    capsys.readouterr()
+    root.rename(share / "moved")
+
+    assert main(["skills", "check", "--all", "--pins", str(pins)]) == 2
+    err = capsys.readouterr().err
+    assert "root not found: {}".format(root) in err
 
 
 def test_cli_check_all_stays_0_when_every_pin_resolves(tmp_path, capsys):
