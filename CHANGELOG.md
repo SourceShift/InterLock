@@ -11,6 +11,24 @@ breaking changes land.
 
 ### Added
 
+- **Sequence policies** (`sequence_guard`). Every rule so far judged one event
+  in isolation, so the incident shapes that only exist in order - read a
+  credential then open a network connection, install a dependency then run its
+  postinstall - were invisible. The new detector keeps a bounded journal of the
+  last `window` canonical actions per scope and blocks an `after` action while
+  a configured `[before, after]` pair's `before` is still in it. Scopes are the
+  event's `span_id` (one agent run), falling back to `principal`, then to
+  `"<anon>"`; both sides are matched with the same canonicalisation every other
+  detector uses, so a Node caller spelling `http.post` is covered by a
+  Python-shaped policy. Result-phase events are ignored, the journal is bounded
+  twice (`window` actions per scope, `max_scopes` scopes, oldest evicted first),
+  a blocked step stays blocked on retry while its `before` remains, and the
+  block reason names the two actions and the window only - never an argument
+  value - so it can go into a receipt. State is process-local: a restart begins
+  every scope with an empty journal. Declared as
+  `{"id": "...", "detector": "sequence_guard", "with": {"never": [[...]], "window": 50}}`;
+  invalid pairs or bounds are rejected at load and quarantine the rule.
+
 - **The skill-activation digest gate** (`skill_digest_guard`,
   `interlock skills pin|list|check`). A coding agent activates a skill by name,
   and the name is what a human reviewed - but nothing read the files behind it,

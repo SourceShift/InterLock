@@ -164,6 +164,31 @@ action: `{"detector": "data_egress.network_egress_guard", "with":
 {"allowed_hosts": ["api.acme.com"], "block_origins": ["tool:fetch_url"]}}`
 denies a payload carrying fetched data even to an allowlisted host.
 
+## Sequence: what came before
+
+A flat condition judges one call. Some of the worst shapes are about order:
+read a credential, then open a network connection; install a dependency, then
+run its postinstall. The `sequence_guard` detector keeps a bounded journal of
+the last `window` canonical actions per agent run and refuses an `after` step
+while a configured `before` is still in it:
+
+```json
+{"id": "no-egress-after-secret", "detector": "sequence_guard",
+ "with": {"never": [["env_secret_read", "http_post"]], "window": 50}}
+```
+
+Both sides are normalised like every other action name, so a Node caller that
+reports `http.post` is covered by the same rule. Scope is the event's
+`span_id` (one agent run), falling back to `principal`, then to `"<anon>"`.
+Result-phase events are ignored — a sequence is about what the agent did, not
+what a tool returned.
+
+Limits worth knowing: the journal is process-local, so a restart begins every
+run with an empty history; each run keeps at most `window` actions and at most
+`max_scopes` runs are tracked (the oldest is evicted first). A block's reason
+names the two actions and the window only — never an argument value — so it is
+safe to carry into a receipt.
+
 ## Mistakes fail at load, not in production
 
 A rule that loads cleanly but can never fire is the worst kind. So:

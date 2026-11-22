@@ -691,6 +691,7 @@ KNOWN_GAPS = {
     "prompt_injection": SCAN_BLOB,
     "provenance_origin_tag": ADDITIVE,
     "refusal_suppression_guard": SCAN_BLOB,
+    "sequence_guard": STATEFUL,
     "sequence_number_stamp": ADDITIVE,
     "social_engineering_framing_guard": SCAN_BLOB,
     "system_prompt_extraction": SCAN_BLOB,

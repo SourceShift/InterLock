@@ -116,6 +116,7 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
             "call_rate_limiter", "cost_budget_guard", "tool_budget_limiter", "result_size_guard",
             "write_action_limiter", "duplicate_call_loop_guard", "output_length_guard",
             "memory_write_size_guard", "failed_auth_lockout", "token_budget_guard",
+            "sequence_guard",
         ],
     ),
     (
@@ -165,6 +166,9 @@ SCOPE_NOTES: Dict[str, str] = {
                           "your high-risk tools",
     "cost_budget_guard": "calls with a numeric `args[\"cost\"]`",
     "call_rate_limiter": "any call, counted per principal",
+    "sequence_guard": "any call, journalled per span id (else principal); a "
+                      "configured `[before, after]` pair blocks when `before` "
+                      "is still within the last `window` actions",
     "token_budget_guard": "any call, estimated tokens counted per principal over a "
                           "rolling `window_s`",
     "tool_budget_limiter": "any call, counted per tool name",

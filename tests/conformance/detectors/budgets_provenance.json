@@ -1,5 +1,72 @@
 [
   {
+    "detector": "sequence_guard",
+    "factory": "sequence_guard",
+    "kwargs": {
+      "never": [["env_secret_read", "http_post"]],
+      "window": 4,
+      "max_scopes": 2
+    },
+    "cases": [
+      {
+        "name": "a run reads a secret; nothing follows yet",
+        "expect": "ALLOW",
+        "event": {
+          "action": "env_secret_read",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "an unrelated call in the same run is allowed",
+        "expect": "ALLOW",
+        "event": {
+          "action": "ls",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "another run posting to the network is unaffected",
+        "expect": "ALLOW",
+        "event": {
+          "action": "http_post",
+          "span_id": "run-2"
+        }
+      },
+      {
+        "name": "the same run posting after the secret read is blocked",
+        "expect": "BLOCK",
+        "event": {
+          "action": "http_post",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "retrying the blocked step is blocked again",
+        "expect": "BLOCK",
+        "event": {
+          "action": "http_post",
+          "span_id": "run-1"
+        }
+      },
+      {
+        "name": "a third run evicts the oldest scope",
+        "expect": "ALLOW",
+        "event": {
+          "action": "env_secret_read",
+          "span_id": "run-3"
+        }
+      },
+      {
+        "name": "run-1 starts over with an empty journal",
+        "expect": "ALLOW",
+        "event": {
+          "action": "http_post",
+          "span_id": "run-1"
+        }
+      }
+    ]
+  },
+  {
     "detector": "call_rate_limiter",
     "factory": "call_rate_limiter",
     "kwargs": {

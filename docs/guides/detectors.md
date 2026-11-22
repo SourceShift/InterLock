@@ -1,6 +1,6 @@
 # Using detectors
 
-Detectors are ready-made rules, one per kind of attack. interlock ships 123 detectors:
+Detectors are ready-made rules, one per kind of attack. interlock ships 124 detectors:
 prompt-injection signatures, SQL injection, secret and PII redaction,
 egress allowlists, SSRF checks, loop and budget limits, MCP trust checks, and
 more. This guide shows how to pick them, how to avoid the one mistake that makes
@@ -501,7 +501,7 @@ apply.
 
 ## Next
 
-- [Detector catalog](../reference/detectors.md): all 123 detectors, grouped, with scope
+- [Detector catalog](../reference/detectors.md): all 124 detectors, grouped, with scope
   and parameters.
 - [Writing rules](writing-rules.md): for anything a detector doesn't cover.
 - [Adding a detector](https://github.com/SourceShift/InterLock/blob/main/CONTRIBUTING.md#adding-a-detector): contributing a
