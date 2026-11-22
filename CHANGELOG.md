@@ -24,7 +24,10 @@ breaking changes land.
   `~/.interlock/skills.json`; `interlock skills check` exits 2 on drift or an
   unknown skill, so a hook can refuse the activation. The built-in
   `coding-agent` pack now runs the rule for every `Skill` activation, inert
-  until a skill is pinned.
+  until a skill is pinned. `interlock skills check --all` audits every
+  discoverable skill - plain and plugin layout - reporting each as ok, drift,
+  unpinned or error, so a skill that appeared after the last pin is visible
+  before it is activated.
 - **The patch gate** (`interlock patch gate`, `interlock patch status`,
   `--patch-gate block|monitor` on the hook, `$INTERLOCK_PATCH_GATE`). An agent's
   patch is judged by evidence it did not produce: every test file it touches
