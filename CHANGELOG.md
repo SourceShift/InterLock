@@ -24,6 +24,18 @@ breaking changes land.
   cumulative: a durable limiter reads "N calls since the state file was
   created".
 
+- **The token window survives the process.** `token_budget_guard` kept its
+  per-principal rolling window in the closure, so a hook host - one process per
+  call - met an empty window every time and the cap never bound. It now takes
+  `state=` (and `max_scopes`, default 1024) and keeps the charges in
+  `interlock/token_ledger.py`: one row per call holding the principal, the
+  timestamp and the token *count* - never the text - trimmed to the half-open
+  `(now - window_s, now]` in the same transaction. The window still ages out by
+  wall clock, so a durable guard behaves exactly like the in-process one.
+  `refill` cannot be combined with `state=` and is refused at construction: the
+  callback would run while the ledger holds a cross-process write lock, and a
+  shorter `window_s` earns the same allowance back.
+
 - **The loop guard survives the process.** `duplicate_call_loop_guard` kept
   the previous signature and its run length in the closure, so a hook host -
   one process per call - saw every call as the first of its run and the guard

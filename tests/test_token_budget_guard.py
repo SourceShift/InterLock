@@ -1,6 +1,7 @@
 """token_budget_guard: allow path (within budget), block path (past the ceiling),
 per-principal keying over a rolling window, window expiry, refill, odd-input
 safety, the event token stamp, receipt plumbing, and engine integration."""
+import pytest
 from typing import Any, cast
 
 from interlock import Blocked, Decision, PolicyEngine, SensorEvent, Verdict, guard, install
@@ -226,3 +227,104 @@ def test_guard_raises_blocked_at_the_ceiling():
         assert exc.decision.policy_id == POLICY_ID
     else:  # pragma: no cover - the guard must trip by now
         raise AssertionError("guard never tripped")
+
+
+# --- the durable window -----------------------------------------------------
+#
+# A hook host runs one process per tool call, so every test here builds a FRESH
+# rule object over the same state file: that is what the next invocation sees.
+
+
+def _state(tmp_path):
+    return str(tmp_path / "tokens" / "tokens.db")
+
+
+def test_a_state_file_carries_the_window_to_the_next_process(tmp_path):
+    # Two charges of 13 tokens each against a limit of 20: no single process
+    # sees both, so only the ledger can refuse the second.
+    path = _state(tmp_path)
+    token_budget_guard(limit=20, window_s=3600, state=path)(_event(ts=1_000.0))
+    second = token_budget_guard(limit=20, window_s=3600, state=path)
+    assert cast(Decision, second(_event(ts=2_000.0))).verdict is Verdict.BLOCK
+
+
+def test_a_durable_charge_ages_out_of_the_window(tmp_path):
+    path = _state(tmp_path)
+    token_budget_guard(limit=20, window_s=100, state=path)(_event(ts=1_000.0))
+    # 200s later the charge is outside (now - 100, now]: allowance is back.
+    later = token_budget_guard(limit=20, window_s=100, state=path)
+    assert later(_event(ts=1_200.0)) is None
+
+
+def test_the_window_boundary_is_half_open(tmp_path):
+    path = _state(tmp_path)
+    token_budget_guard(limit=20, window_s=100, state=path)(_event(ts=1_000.0))
+    # Exactly window_s old: the charge has left the half-open window.
+    boundary = token_budget_guard(limit=20, window_s=100, state=path)
+    assert boundary(_event(ts=1_100.0)) is None
+
+
+def test_a_state_file_keeps_principals_apart(tmp_path):
+    path = _state(tmp_path)
+    token_budget_guard(limit=20, window_s=3600, state=path)(_event(ts=1_000.0))
+    other = token_budget_guard(limit=20, window_s=3600, state=path)
+    assert other(_event(principal="agent-2", ts=1_000.0)) is None
+
+
+def test_a_durable_window_ends_up_blocking_until_the_charges_age_out(tmp_path):
+    path = _state(tmp_path)
+    token_budget_guard(limit=20, window_s=100, state=path)(_event(ts=1_000.0))
+    blocked = token_budget_guard(limit=20, window_s=100, state=path)
+    assert cast(Decision, blocked(_event(ts=1_050.0))).verdict is Verdict.BLOCK
+    freed = token_budget_guard(limit=20, window_s=100, state=path)
+    assert freed(_event(ts=1_500.0)) is None
+
+
+def test_the_state_file_stores_counts_not_text(tmp_path):
+    path = _state(tmp_path)
+    token_budget_guard(limit=20, window_s=3600, state=path)(
+        _event(text="the quick brown fox jumps", ts=1_000.0))
+    assert b"the quick brown fox" not in open(path, "rb").read()
+
+
+def test_a_state_file_bounds_the_scopes(tmp_path):
+    path = _state(tmp_path)
+    token_budget_guard(limit=20, window_s=3600, state=path, max_scopes=1)(
+        _event(principal="agent-1", ts=1_000.0))
+    nxt = token_budget_guard(limit=20, window_s=3600, state=path, max_scopes=1)
+    nxt(_event(principal="agent-2", ts=1_000.0))       # evicts agent-1
+    back = token_budget_guard(limit=20, window_s=3600, state=path, max_scopes=1)
+    assert back(_event(principal="agent-1", ts=1_000.0)) is None
+
+
+def test_no_state_file_is_written_until_a_call_arrives(tmp_path):
+    path = tmp_path / "tokens" / "tokens.db"
+    token_budget_guard(limit=20, state=str(path))
+    assert not path.exists()          # `interlock policy check` must not write
+
+
+def test_a_corrupt_state_file_falls_back_instead_of_raising(tmp_path):
+    path = tmp_path / "tokens" / "tokens.db"
+    path.parent.mkdir()
+    path.write_bytes(b"this is not a sqlite database\n" * 64)
+    rule = token_budget_guard(limit=20, window_s=3600, state=str(path))
+    assert rule(_event(ts=1_000.0)) is None            # warned, then in memory
+    assert cast(Decision, rule(_event(ts=1_000.0))).verdict is Verdict.BLOCK
+
+
+def test_refill_and_state_are_refused_together(tmp_path):
+    with pytest.raises(ValueError):
+        token_budget_guard(limit=20, refill=lambda principal, elapsed: 5,
+                           state=_state(tmp_path))
+
+
+@pytest.mark.parametrize("state", ["relative.db", "", "   "])
+def test_the_rule_refuses_a_state_path_it_cannot_trust(state):
+    with pytest.raises(ValueError):
+        token_budget_guard(limit=20, state=state)
+
+
+@pytest.mark.parametrize("max_scopes", [0, -1, True])
+def test_the_rule_refuses_a_max_scopes_it_cannot_use(max_scopes):
+    with pytest.raises(ValueError):
+        token_budget_guard(limit=20, max_scopes=max_scopes)

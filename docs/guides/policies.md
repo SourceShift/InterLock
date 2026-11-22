@@ -364,22 +364,35 @@ Two more budgets count the same way, on a different axis:
 another's budget, and `cost_budget_guard` sums the numeric `args["cost"]` of
 every call into a single total rather than keeping a tally per key.
 
-These five take the same `state` argument as the sequence and obligation
-ledgers, with the same guarantees: an absolute path to a small SQLite file,
-created on the first call, one transaction per call, and a storage fault that
-warns once and falls back to memory. What it stores is one key and one number
-per principal or tool name (`cost_budget_guard` keeps the same file with a
-single total under one key, charged in fractional amounts).
+`token_budget_guard` bounds the resource a model-driven agent actually spends:
+it estimates the tokens in each call's text and keeps the per-principal total
+over a rolling `window_s`, so allowance comes back purely by time passing. That
+window takes `state` too — with one exception, `refill`: a refill callback is
+invoked while the rule holds its lock, and a durable ledger would hold a
+*process-wide* write lock while calling it, blocking every other hook, so the
+pair is refused at construction. Reach for a shorter `window_s` instead.
+
+All six take the same `state` argument as the sequence and obligation ledgers,
+with the same guarantees: an absolute path to a small SQLite file, created on
+the first call, one transaction per call, and a storage fault that warns once
+and falls back to memory. What it stores is one key and one number per
+principal or tool name (`cost_budget_guard` keeps the same file with a single
+total under one key, charged in fractional amounts; `token_budget_guard` keeps
+one timed charge per call — the count and the timestamp, never the text).
 
 Two things read differently once the count is durable:
 
-- **A durable count is cumulative, not a window.** Nothing decays and nothing
-  ages out, so `limit` reads as "N calls since the state file was created" —
-  which is what a hook host needs, since a fresh process per call would
-  otherwise hand every call a fresh budget. Deleting the file resets the budget.
+- **The five counters and the cost total are cumulative, not a window.**
+  Nothing decays and nothing ages out, so `limit` reads as "N calls since the
+  state file was created" — which is what a hook host needs, since a fresh
+  process per call would otherwise hand every call a fresh budget. Deleting the
+  file resets the budget. `token_budget_guard` is the exception: its charges
+  carry timestamps and age out of `window_s` by wall clock, so a durable window
+  behaves exactly like the in-process one.
 - **The file is bounded.** At most 4096 keys are tracked, the oldest dropped
   first, so an agent that mints a new identity per call cannot grow the file
-  without limit — and an evicted key starts again at zero.
+  without limit — and an evicted key starts again at zero. The token window
+  additionally keeps at most 4096 charges per principal, the oldest dropped.
 
 ## Mistakes fail at load, not in production
 

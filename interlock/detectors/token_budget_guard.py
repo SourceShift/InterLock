@@ -20,9 +20,10 @@ principal that slows down earns allowance back without any explicit reset.
 The boundary is inclusive at the limit, matching the other budget rules: with
 ``limit=200`` a window may hold exactly 200 tokens, and the call that takes it
 past 200 is the one refused. The
-tally lives in the closure, so each factory call owns fresh state - two rules
-built from separate ``token_budget_guard()`` calls never share a window and
-cannot trip each other. The key is the event's principal, falling back to
+tally lives in the closure by default, so each factory call owns fresh state -
+two rules built from separate ``token_budget_guard()`` calls never share a
+window and cannot trip each other; a hook host starts a new process per call,
+so ``state=`` is what makes the window span the run. The key is the event's principal, falling back to
 ``"<anon>"`` when it is absent or not a string, so a caller with no identity is
 still budgeted rather than escaping unnamed.
 
@@ -45,19 +46,28 @@ instead of waiting for old charges to age out of the window. A negative,
 non-numeric, or raising refill is ignored rather than trusted - a broken
 callback must not silently disable the cap. It is invoked while the rule holds
 its lock, so a charge and its credit are one atomic step; a refill callback must
-therefore not call back into this same rule, or it will deadlock.
+therefore not call back into this same rule, or it will deadlock. It cannot be
+combined with ``state``: the durable ledger ages charges out by wall clock, and
+running a callback while it holds a cross-process write lock would block every
+other hook, so that pair is refused at construction.
 """
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
+from .._sqlite import LazyFile, check_state_path
 from ..enforce import Decision
 from ..event import SensorEvent
+from ..obligations import subject_of
 from ..policy.engine import Rule
+from ..token_ledger import TokenLedger
 from ..tokens import estimate_tokens
+
+_log = logging.getLogger(__name__)
 
 POLICY_ID = "token_budget"
 
@@ -65,6 +75,10 @@ POLICY_ID = "token_budget"
 # over an hour, so only a genuine runaway trips it. Deployments set their own.
 DEFAULT_LIMIT = 100_000
 DEFAULT_WINDOW_S = 3600.0
+
+#: How many principals one durable state file tracks before the stalest is
+#: evicted.
+DEFAULT_MAX_SCOPES = 1024
 
 # Identity used when an event carries no usable principal. A subject we cannot
 # name is still budgeted, so it cannot escape the cap by staying anonymous.
@@ -149,6 +163,18 @@ def _stamp(event: SensorEvent, tokens: int) -> None:
         pass
 
 
+def _verdict(used: float, limit: float, window_s: float) -> Optional[Decision]:
+    """The decision for a window holding *used* tokens: block only over the limit."""
+    if used > limit:
+        return Decision.block(
+            reason="token_budget: limit {} tokens per {}s exceeded".format(
+                limit, window_s
+            ),
+            policy_id=POLICY_ID,
+        )
+    return None
+
+
 def _credit(refill: Callable[[str, float], float], principal: str, elapsed: float) -> float:
     """Tokens to give back, or 0.0 when the refill is unusable."""
     try:
@@ -166,6 +192,9 @@ def token_budget_guard(
     limit: float = DEFAULT_LIMIT,
     window_s: float = DEFAULT_WINDOW_S,
     refill: Optional[Callable[[str, float], float]] = None,
+    *,
+    state: Optional[str] = None,
+    max_scopes: int = DEFAULT_MAX_SCOPES,
 ) -> Rule:
     """Rule: block once a principal's estimated tokens reach *limit* in *window_s*.
 
@@ -183,9 +212,28 @@ def token_budget_guard(
     ``ValueError`` at construction. The per-principal map and every window are
     updated under one per-rule lock, and a future event timestamp is clamped to
     now so it cannot rewind a principal's window.
+
+    *state* is an absolute path to a SQLite file that makes the window survive
+    the process, so a hook host - one process per call - still spends one
+    budget across the run. What it stores is the principal, the charge's
+    timestamp and the token count - never the text. A relative path is refused,
+    *refill* cannot be combined with it, and at most *max_scopes* principals
+    are tracked, the stalest evicted first.
     """
     _positive_limit("limit", limit)
     window = _positive_limit("window_s", window_s)
+    if (isinstance(max_scopes, bool) or not isinstance(max_scopes, int)
+            or max_scopes <= 0):
+        raise ValueError("max_scopes must be a positive integer")
+    checked = check_state_path(state)
+    if checked is not None and refill is not None:
+        raise ValueError(
+            "refill cannot be combined with state: the ledger ages charges "
+            "out of the window by wall clock, and running a callback while it "
+            "holds a cross-process lock would block every other hook. Use a "
+            "shorter window_s instead.")
+    durable = (LazyFile(checked, TokenLedger, "token ledger", _log)
+               if checked is not None else None)
     spent: Dict[str, List[Tuple[float, int]]] = {}
     lock = threading.Lock()
 
@@ -196,6 +244,17 @@ def token_budget_guard(
         now = _event_time(event)
         charged = estimate_event_tokens(getattr(event, "args", None))
         _stamp(event, charged)
+
+        if durable is not None:
+            ledger = durable.get()
+            if ledger is not None:
+                try:
+                    used = ledger.charge(subject_of(event), now, charged,
+                                         window_s=window, max_scopes=max_scopes)
+                except Exception as exc:  # locked, full disk, a corrupted file
+                    durable.fail(exc)
+                else:
+                    return _verdict(used, limit, window_s)
 
         with lock:
             entries = spent.get(principal)
@@ -223,15 +282,7 @@ def token_budget_guard(
             if entries or charged:
                 entries.append((now, charged))
                 spent[principal] = entries
-            over_limit = used > limit
 
-        if over_limit:
-            return Decision.block(
-                reason="token_budget: limit {} tokens per {}s exceeded".format(
-                    limit, window_s
-                ),
-                policy_id=POLICY_ID,
-            )
-        return None
+        return _verdict(used, limit, window_s)
 
     return rule

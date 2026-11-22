@@ -497,13 +497,13 @@ apply.
   else, write a [result rule](writing-rules.md#check-results).
 - **Stateful detectors count per process by default.** Rate limiters, budgets,
   and loop guards keep their counts in memory, so each new process (or each new
-  factory call) starts from zero. The five counters — `call_rate_limiter`,
-  `egress_rate_limiter`, `failed_auth_lockout`, `tool_budget_limiter` and
-  `cost_budget_guard` — plus `sequence_guard`, `obligations` and
-  `duplicate_call_loop_guard` take an absolute `state` path that moves the state
-  into a SQLite file, which a hook host (one process per tool call) needs to
-  enforce anything at all. `token_budget_guard`'s rolling window is still
-  process-local; see
+  factory call) starts from zero. Every one of them — the five counters
+  (`call_rate_limiter`, `egress_rate_limiter`, `failed_auth_lockout`,
+  `tool_budget_limiter`, `cost_budget_guard`), `token_budget_guard`'s rolling
+  window, plus `sequence_guard`, `obligations` and
+  `duplicate_call_loop_guard` — takes an absolute `state` path that moves the
+  state into a SQLite file, which a hook host (one process per tool call) needs
+  to enforce anything at all. See
   [Across hook processes](policies.md#across-hook-processes) and
   [Budget: how much](policies.md#budget-how-much).
 
