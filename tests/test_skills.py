@@ -511,6 +511,64 @@ def test_cli_check_explicit_roots_override_the_file(tmp_path, monkeypatch, capsy
     assert "not found" in capsys.readouterr().err
 
 
+def test_cli_list_shows_the_roots_the_pin_file_records(tmp_path, capsys):
+    from interlock.cli import main
+
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"reviewed": "a" * 64}, roots=["~/work/skills"])
+    assert main(["skills", "list", "--pins", str(pins)]) == 0
+    assert "roots: ~/work/skills" in capsys.readouterr().out
+
+
+def test_cli_list_json_carries_the_recorded_roots(tmp_path, capsys):
+    from interlock.cli import main
+
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"reviewed": "a" * 64}, roots=["~/work/skills"])
+    assert main(["skills", "list", "--pins", str(pins), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["roots"] == ["~/work/skills"]
+    assert payload["skills"] == {"reviewed": "a" * 64}
+
+
+def test_cli_list_reports_no_roots_for_a_version_1_file(tmp_path, capsys):
+    from interlock.cli import main
+
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"reviewed": "a" * 64})
+    assert main(["skills", "list", "--pins", str(pins), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["roots"] is None
+    assert main(["skills", "list", "--pins", str(pins)]) == 0
+    assert "roots:" not in capsys.readouterr().out
+
+
+def test_cli_check_not_found_names_the_recorded_roots(tmp_path, capsys):
+    from interlock.cli import main
+
+    share = tmp_path / "share"
+    root = share / "skills"
+    directory = root / "reviewed"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "reviewed instructions\n")
+    pins = tmp_path / "skills.json"
+    assert main(["skills", "pin", "reviewed", "--roots", str(root),
+                 "--pins", str(pins)]) == 0
+    capsys.readouterr()
+    root.rename(share / "moved")
+
+    assert main(["skills", "check", "reviewed", "--pins", str(pins)]) == 2
+    assert str(root) in capsys.readouterr().err
+
+
+def test_cli_check_not_found_names_the_default_roots(tmp_path, capsys):
+    from interlock.cli import main
+
+    pins = tmp_path / "skills.json"
+    skills.save_pins(str(pins), {"reviewed": "a" * 64})
+    assert main(["skills", "check", "reviewed", "--pins", str(pins)]) == 2
+    assert "~/.claude/skills" in capsys.readouterr().err
+
+
 def _audit_tree(tmp_path):
     """A skills root with one pinned-and-matching skill and one unpinned one."""
     root = tmp_path / "skills"

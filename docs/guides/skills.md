@@ -43,6 +43,21 @@ interlock skills list
 reviewed-skill                   bb13efcb75b55a6fe95d4ef0371e8af10daecde43731afda2a45ecbe8da37a37
 ```
 
+A plain `pin` searches the default root and records none, so a version-1 file -
+and its list - says nothing about roots. Pin with `--roots` once and the file
+records them; `list` then says where every name resolves:
+
+```bash
+interlock skills pin second-skill --roots ~/.claude/skills ~/work/skills
+interlock skills list
+```
+
+```
+reviewed-skill                   bb13efcb75b55a6fe95d4ef0371e8af10daecde43731afda2a45ecbe8da37a37
+second-skill                     c4e0c6f53f4a7d2e1b0f9a8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e
+roots: ~/.claude/skills, ~/work/skills
+```
+
 The default roots are `~/.claude/skills`; a plain name resolves to
 `<root>/<name>`. A directory is discoverable when it holds a regular
 `SKILL.md`.
@@ -145,6 +160,17 @@ interlock skills check drifted-skill
 
 ```
 interlock skills: drifted-skill changed since it was pinned
+```
+
+A name with no directory says where it looked, so a pin taken under a
+non-default root is diagnosable without reading the pin file:
+
+```bash
+interlock skills check moved-skill
+```
+
+```
+interlock skills: directory for moved-skill not found under /srv/agent-skills
 ```
 
 `check --all` audits every discoverable skill under the roots, plus every pin

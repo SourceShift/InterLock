@@ -76,6 +76,7 @@ def _audit_line(name, status, digest, pinned, detail) -> str:
 def run(args) -> int:
     from ..skills import (
         DEFAULT_PINS_PATH,
+        DEFAULT_ROOTS,
         discover_skills,
         find_skill,
         load_pin_roots,
@@ -138,13 +139,19 @@ def run(args) -> int:
             sys.stderr.write("interlock skills: {}\n".format(exc))
             return 2
         if args.json:
-            print(json.dumps({"pins": pins_file, "skills": pins},
+            print(json.dumps({"pins": pins_file, "skills": pins,
+                              "roots": roots},
                              indent=2, sort_keys=True))
         elif not pins:
             print("no skills pinned in {}".format(pins_file))
         else:
             for name in sorted(pins):
                 print("{:<32} {}".format(name, pins[name]))
+            if roots:
+                # The file records where its pins resolve (version 2), so show
+                # it: otherwise a name this list reports may be unfindable to
+                # `check` with no visible reason.
+                print("roots: {}".format(", ".join(roots)))
         return 0
 
     # action == "check"
@@ -209,8 +216,11 @@ def run(args) -> int:
         return 2
     directory = find_skill(args.name, roots)
     if directory is None:
-        sys.stderr.write(
-            "interlock skills: directory for {} not found\n".format(args.name))
+        # Name the roots that were searched: with a recorded list they may not
+        # be the default ones, and "not found" alone hides that.
+        searched = roots if roots else DEFAULT_ROOTS
+        sys.stderr.write("interlock skills: directory for {} not found under {}\n".format(
+            args.name, ", ".join(searched)))
         return 2
     try:
         digest = skill_digest(directory)
