@@ -65,7 +65,7 @@ and want one review queue and audit trail across them? Read
 |---|---|
 | [Python API](reference/python-api.md) | Every public class and function, with signatures |
 | [Detector catalog](reference/detectors.md) | All 124 detectors: what they catch, which calls they see, how to build them |
-| [Command line](reference/cli.md) | Every subcommand: `doctor`, `report`, `hook`, `install-hook`, `patch`, `attach`, `policy`, `learn`, `trust`, `mcp`, `reviews`, `drift`, `anchor`, `capsule`, `mesh` (including `mesh dap task\|submit\|collect` and `serve --role dap-leader\|dap-helper`), `cloud`, `skills` |
+| [Command line](reference/cli.md) | Every subcommand: `doctor`, `report`, `hook`, `install-hook`, `patch`, `attach`, `policy`, `learn`, `scope`, `trust`, `mcp`, `reviews`, `drift`, `anchor`, `capsule`, `mesh` (including `mesh dap task\|submit\|collect` and `serve --role dap-leader\|dap-helper`), `cloud`, `skills` |
 | [Sidecar](reference/sidecar.md) | The `interlock-sidecar` daemon for Node.js agents, and its wire protocol |
 | [Policy artifact](reference/cloud-artifact.md) | Every field of the signed artifact a host enforces, canonical JSON, the epoch, the C ABI, and the parity and budget contract |
 | [Cloud runbook](reference/cloud-runbook.md) | Key rotation, host freeze, chain fork, org deletion, restore and the version floor, manifest expiry, kill switch, evaluator rollback, and webhook triage |

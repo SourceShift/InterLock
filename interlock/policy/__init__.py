@@ -8,6 +8,7 @@ from .scopes import (
     ScopeTree,
     Template,
     delegation_chain,
+    principal_path,
     principal_scope,
 )
 
@@ -23,6 +24,7 @@ __all__ = [
     "PyScopeTree",
     "SCOPE_BACKEND",
     "Template",
+    "principal_path",
     "principal_scope",
     "delegation_chain",
 ]

@@ -979,6 +979,10 @@ principal_scope(event) -> Tuple[str, ...]
 Splits `event.principal` on `/`, dropping empty parts: `"root/acme/agent42"`
 becomes `("root", "acme", "agent42")`. No principal gives `()`.
 
+`principal_path(principal)` applies the same split to a bare principal string,
+so a tool that holds only a principal - `interlock scope suggest` reading
+receipts - derives the same scope the guard consults at decision time.
+
 ### `delegation_chain`
 
 ```python
@@ -1006,6 +1010,33 @@ template id isn't registered: a binding that silently vanished would be a rule
 that never exists. `ScopedEngine.evaluate` catches all three and returns a BLOCK
 with policy id `scoped_engine.resolution`, so a call never sees them as raw
 exceptions.
+
+### Derived capability scopes (`interlock.scope_suggest`)
+
+Guide: [give each tenant or agent its own rules](../guides/scopes.md#derive-a-scope-from-what-actually-ran).
+
+| Name | What it does |
+|---|---|
+| `count_receipts(receipts, *, since_seconds=None, now=None)` | Reduce receipts to an `Envelope`: `{scope path: {action: ALLOW count}}` plus what was excluded and why. The scope key is `principal_path(receipt.principal)`. |
+| `Envelope` | The observations. `.scopes`, `.total`, `.empty`, `.actions_at(scope, min_count=1)`. |
+| `suggested_document(envelope, *, min_count=1)` | The scope document alone: one `action_envelope` binding per observed scope, each carrying `observed: {action: count}`. Raises `ValueError` on an empty envelope. |
+| `merge(derived, existing, *, allow_widen=False)` | Fold a derived document into an existing one. Existing bindings are kept, counts are per window (never summed), and `(None, problems)` comes back when a derived entry would grant an action the existing scope does not allow - unless `allow_widen`. |
+| `read_document(path)` | Read a plain scope document or the signed envelope the sidecar publishes. Does not check the signature: verify with `interlock.wire.verify_scope_envelope` first when provenance matters. |
+| `suggest(source, *, since_seconds=None, now=None, min_count=1, existing=None, allow_widen=False)` | `(document, envelope, problems)` from a receipt-log path or an iterable of `Receipt`. `document` is `None` when nothing was observed or a widening was refused. |
+| `render(document)` | The deterministic JSON text (`sort_keys=True`, trailing newline) every draft is written with. |
+
+### `action_envelope` (`interlock.policy.capability`)
+
+| Name | What it does |
+|---|---|
+| `action_envelope(allow=(), *, on_unseen="escalate")` | Rule: permit the actions in `allow` (canonicalised, so `http.post` matches `http_post`); anything else escalates, or blocks with `on_unseen="block"`. An empty `allow` permits nothing. |
+| `templates` | `{TEMPLATE_ID: Template(...)}` for `build_scoped_engine`; `allow` is an **override** param, so a leaf binding describes that leaf's own envelope. |
+| `rules` | The base rule list: an envelope with nothing observed, so serving the module without `--scope-document` escalates every call. |
+| `TEMPLATE_ID`, `POLICY_ID` | `"action_envelope"`, on every binding and every receipt the template decides. |
+
+Receipts hold `args_digest`, never argument values, so a derived scope is an
+*action* envelope. A paths / hosts / program-name set cannot be derived from a
+log, and nothing here pretends to try.
 
 ---
 

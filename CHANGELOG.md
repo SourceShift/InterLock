@@ -11,6 +11,24 @@ breaking changes land.
 
 ### Added
 
+- **Derived capability scopes** (`interlock scope suggest`). An agent cannot be
+  trusted to say which capabilities it needs, so derive them:
+  `interlock scope suggest --from-receipts LOG --since 30d --out scope.json`
+  clusters each receipt by its principal's scope path - the very path
+  `ScopedEngine` consults - and writes a scope document binding the new
+  `action_envelope` template (`interlock.policy.capability`) to the actions that
+  scope was **allowed** to take, with the receipt count behind each one. Serve
+  it with `interlock sidecar --rules interlock.policy.capability:rules
+  --scope-document scope.json --key-file KEY`. The draft is deterministic, only
+  `ALLOW` receipts count (a refused action can never become an entry), the
+  envelope escalates the unseen rather than blocking it, and `--existing` refuses
+  (exit 2) any entry that would grant an action the document you already serve
+  does not allow until you pass `--allow-widen`; existing bindings are carried
+  through so a scope the window never saw keeps working. Design delta from the
+  proposal: the derivation is an *action* envelope only. Receipts store
+  `args_digest`, never argument values, so no log can yield a set of paths,
+  hosts or program names - those stay hand-authored.
+
 - **Evidence capsule** (`interlock capsule`). A receipt log proves its own
   integrity only to someone holding four artefacts in four places: the log, the
   key, the policy and the anchor. `interlock capsule create LOG --key-file KEY

@@ -397,6 +397,73 @@ per node by roughly ten times. It's used automatically once built. Check which
 one is active with `interlock.policy.SCOPE_BACKEND` (`"python"` or `"rust"`).
 See [`rust/README.md`](https://github.com/SourceShift/InterLock/blob/main/rust/README.md).
 
+## Derive a scope from what actually ran
+
+An agent cannot be trusted to say which capabilities it needs - a sandbox the
+agent authors is a sandbox the agent may widen. Derive it instead from the
+receipts your guard already wrote:
+
+```bash
+interlock scope suggest --from-receipts audit.jsonl --since 30d --out scope.json
+interlock sidecar --rules interlock.policy.capability:rules \
+    --scope-document scope.json --key-file audit.key
+```
+
+Each receipt is clustered by `principal` split on `/` - the same scope path
+`ScopedEngine` consults at decision time - and every action that principal was
+**allowed** to take becomes an entry in an `action_envelope` binding, with the
+number of receipts behind it:
+
+```json
+{
+  "bindings": {
+    "acme/agent1": [
+      {
+        "template": "action_envelope",
+        "params": {"allow": ["ls", "pwd"]},
+        "observed": {"ls": 12, "pwd": 3}
+      }
+    ]
+  },
+  "default_scope": [],
+  "allow_unscoped": false,
+  "version": 1
+}
+```
+
+`action_envelope` **escalates** anything outside its list rather than blocking -
+an action nobody has seen may be a new, legitimate task, so a human decides and
+the decision is recorded. Bind `"on_unseen": "block"` once you have reviewed the
+envelope and want a refusal.
+
+Three properties make the draft safe to review:
+
+- **Deterministic.** Two runs over the same log are byte-identical, so a diff
+  between two drafts is the change worth reading.
+- **Nothing refused is laundered in.** Only `ALLOW` receipts count; blocks,
+  escalations and monitor findings are reported separately and never become an
+  entry.
+- **It never widens without a flag.** `--existing scope.json` compares the draft
+  against a document you already serve and refuses (exit 2) when a derived entry
+  would grant an action that document does not allow. Everything the existing
+  document binds is carried through, so a scope the window never saw keeps
+  working instead of vanishing. Pass `--allow-widen` when the widening is
+  intended - the merged document is then written and the widening is printed.
+
+Two consequences of the template worth knowing:
+
+- **Each scope describes itself.** A leaf binding *overrides* its ancestor's
+  envelope, so `acme/agent1` observed running only `ls` stays `ls` even though
+  `acme` may run `pwd`. That is the precise reading of an observation; if you
+  want inheritance, bind a union param instead.
+- **The evidence counts are per window.** Merging never sums two documents'
+  counts - an action the window saw carries the window's count, an action only
+  the existing document recorded keeps its own.
+
+**What a receipt log cannot tell you:** paths, hosts and program names. Receipts
+store `args_digest`, never argument values, so a derived document is an *action*
+envelope. Capability values belong in bindings you author by hand - and review.
+
 ## Limits
 
 - **Calls with no principal are blocked** unless you set `default_scope` or

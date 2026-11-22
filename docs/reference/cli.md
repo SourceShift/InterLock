@@ -17,6 +17,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`attach`](#interlock-attach) | check the import seams attach() patches (compatibility contract) |
 | [`policy`](#interlock-policy) | check a declarative policy file, or show a built-in pack |
 | [`learn`](#interlock-learn) | draft a reviewable policy from observed receipts |
+| [`scope`](#interlock-scope) | derive a capability scope document from observed receipts |
 | [`trust`](#interlock-trust) | trust a project's policy overlay |
 | [`mcp`](#interlock-mcp) | inventory the MCP servers configured on this machine |
 | [`reviews`](#interlock-reviews) | decide pending reviews; serve their status to agents |
@@ -292,6 +293,48 @@ usage: interlock learn [-h] [--receipts FILE] [--out FILE] [--name NAME]
   --receipts                 a receipt log written by FileSink (required)
   --out                      where to write the draft policy (required)
   --name                     the policy 'name' field (default: learned-behavioural-baseline)
+```
+
+## `interlock scope`
+
+Derive a capability scope from the receipts your guard already wrote.
+
+```bash
+interlock scope suggest --from-receipts audit.jsonl --out scope.json
+interlock scope suggest --from-receipts audit.jsonl --since 30d \
+    --out scope.json --key-file audit.key
+interlock scope suggest --from-receipts audit.jsonl --existing scope.json \
+    --out scope.json
+```
+
+Reads a receipt log written by FileSink, keeps what each principal (its scope
+path, split on '/') was allowed to do, and writes a scope document binding the
+`action_envelope` template to exactly those actions, with the receipt count
+behind each one. Serve it with:
+
+```bash
+interlock sidecar --rules interlock.policy.capability:rules \
+    --scope-document scope.json --key-file audit.key
+```
+
+The draft is deterministic - two runs over the same log are byte-identical - and
+never wide by accident: `--existing` compares the draft against a scope document
+you already serve and refuses (exit 2) when it would grant an action that
+document does not allow; pass --allow-widen to accept a widening you meant.
+
+The derived capability is an *action* envelope. Receipts store argument digests,
+never values, so a log cannot yield a set of paths, hosts or program names - it
+cannot know them. Those belong in bindings you write by hand.
+
+Exit codes: 0 wrote the document, 2 the draft was refused (it would widen the
+existing scope) or the existing document is not a scope document, 3 the log
+could not be read, held no scoped ALLOW receipt, or the output was not written,
+64 the command line was wrong.
+
+```text
+usage: interlock scope [-h] ACTION ...
+usage: interlock scope suggest [-h] --from-receipts FILE --out FILE [--since WINDOW]
+                               [--min-count N] [--existing FILE] [--allow-widen] [--key-file FILE]
 ```
 
 ## `interlock trust`

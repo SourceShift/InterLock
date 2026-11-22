@@ -391,8 +391,14 @@ class ScopeRegistry:
         self._cache.pop(leaf, None)
 
 
-def _split_principal(principal: Optional[str]) -> Scope:
-    """Split ``"acme/payments/agent42"`` into ``("acme", "payments", "agent42")``."""
+def principal_path(principal: Optional[str]) -> Scope:
+    """Split ``"acme/payments/agent42"`` into ``("acme", "payments", "agent42")``.
+
+    The mapping ``principal_scope`` applies to an event, exposed on its own so a
+    tool that only holds a principal string - ``interlock scope suggest``
+    reading receipts - derives exactly the scope the guard will consult at
+    decision time, instead of a parallel notion of "who".
+    """
     if not principal:
         return ()
     return tuple(part for part in principal.split("/") if part)
@@ -405,7 +411,7 @@ def principal_scope(event: SensorEvent) -> Scope:
     ``("acme", "payments", "agent42")``. No principal yields the empty scope.
     Supply your own deriver to key on tenant, span, or anything else.
     """
-    return _split_principal(event.principal)
+    return principal_path(event.principal)
 
 
 def delegation_chain(event: SensorEvent) -> Tuple[Scope, ...]:
@@ -418,10 +424,10 @@ def delegation_chain(event: SensorEvent) -> Tuple[Scope, ...]:
     shape. Empty entries are dropped.
     """
     chain = []
-    parent = _split_principal(event.parent_principal)
+    parent = principal_path(event.parent_principal)
     if parent:
         chain.append(parent)
-    own = _split_principal(event.principal)
+    own = principal_path(event.principal)
     if own:
         chain.append(own)
     return tuple(chain)
