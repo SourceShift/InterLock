@@ -25,7 +25,7 @@ and want one review queue and audit trail across them? Read
 |---|---|
 | [Console](guides/console.md) | Build and launch the local web UI over your running policy engine |
 | [Writing rules](guides/writing-rules.md) | Block, rewrite, check results, scope rules to tools, and test your policy |
-| [Using detectors](guides/detectors.md) | Pick from the 124 built-in detectors, make sure they see your tools, and start from a tested set |
+| [Using detectors](guides/detectors.md) | Pick from the 125 built-in detectors, make sure they see your tools, and start from a tested set |
 | [Declarative policies](guides/policies.md) | Write rules as JSON/YAML, lock the ones that must stay on, and accept project overlays safely |
 | [Approvals](guides/approvals.md) | Hold a call for a human with `ESCALATE`, and write an approver |
 | [Coding agents](guides/coding-agents.md) | Guard Claude Code, Codex and Cursor with one command |
@@ -64,7 +64,7 @@ and want one review queue and audit trail across them? Read
 | Page | Covers |
 |---|---|
 | [Python API](reference/python-api.md) | Every public class and function, with signatures |
-| [Detector catalog](reference/detectors.md) | All 124 detectors: what they catch, which calls they see, how to build them |
+| [Detector catalog](reference/detectors.md) | All 125 detectors: what they catch, which calls they see, how to build them |
 | [Command line](reference/cli.md) | Every subcommand: `doctor`, `report`, `hook`, `install-hook`, `patch`, `attach`, `policy`, `learn`, `scope`, `trust`, `mcp`, `reviews`, `drift`, `anchor`, `capsule`, `mesh` (including `mesh dap task\|submit\|collect` and `serve --role dap-leader\|dap-helper`), `cloud`, `skills` |
 | [Sidecar](reference/sidecar.md) | The `interlock-sidecar` daemon for Node.js agents, and its wire protocol |
 | [Policy artifact](reference/cloud-artifact.md) | Every field of the signed artifact a host enforces, canonical JSON, the epoch, the C ABI, and the parity and budget contract |

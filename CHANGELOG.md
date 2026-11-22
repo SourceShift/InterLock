@@ -11,6 +11,22 @@ breaking changes land.
 
 ### Added
 
+- **Obligations with a deadline.** Every other rule forbids an action; an
+  obligation binds what must happen *after* one. The new `obligations` detector
+  opens a deadline when a configured `when` action is allowed and closes it when
+  the matching `then` action arrives in the same run (`span_id`, else
+  `principal`, else `<anon>`); if the deadline passes with it still open, the
+  run's next call is escalated (or blocked, with `"on_breach": "block"`). A
+  breach fires once so a run is corrected rather than bricked, and a late
+  follow-up is let through because it is the compensating step. The same model
+  is decidable from the receipt log: `interlock obligations check --log
+  audit.jsonl --obligations obligations.json` reports every opening as
+  discharged, pending or breached (`--json`, `--now`), exiting 1 on a breach.
+  Only the log check can enforce `"approvals_only": true` - an unreviewed call
+  must not discharge an obligation - because an event does not yet carry the
+  approval; the detector refuses such a rule at construction instead of
+  silently weakening it.
+
 - **Delegated authority on grants and receipts.** A cloud grant may name the
   grant that authorised it, as `parent_grant`, and a host now walks that link:
   each ancestor must be an envelope the host applied itself, verify under the

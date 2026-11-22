@@ -18,6 +18,7 @@ command) turns off color; color is also off when output isn't a terminal or
 | [`policy`](#interlock-policy) | check a declarative policy file, or show a built-in pack |
 | [`learn`](#interlock-learn) | draft a reviewable policy from observed receipts |
 | [`scope`](#interlock-scope) | derive a capability scope document from observed receipts |
+| [`obligations`](#interlock-obligations) | check a receipt log against obligations that had a deadline |
 | [`trust`](#interlock-trust) | trust a project's policy overlay |
 | [`mcp`](#interlock-mcp) | inventory the MCP servers configured on this machine |
 | [`reviews`](#interlock-reviews) | decide pending reviews; serve their status to agents |
@@ -335,6 +336,59 @@ could not be read, held no scoped ALLOW receipt, or the output was not written,
 usage: interlock scope [-h] ACTION ...
 usage: interlock scope suggest [-h] --from-receipts FILE --out FILE [--since WINDOW]
                                [--min-count N] [--existing FILE] [--allow-widen] [--key-file FILE]
+```
+
+## `interlock obligations`
+
+Check a receipt log against obligations: what had to happen, by when.
+
+```bash
+interlock obligations check --log audit.jsonl --obligations obligations.json
+interlock obligations check --log audit.jsonl --obligations obligations.json \
+    --json
+interlock obligations check --log audit.jsonl --obligations obligations.json \
+    --now now
+```
+
+Every other policy in interlock forbids an action. An obligation binds the
+other way: "after `deploy`, an `approve` must be referenced within 600s" is
+satisfied by doing nothing wrong and fails by *not* doing the follow-up. The
+receipt log is enough to judge it - each receipt carries an action, a verdict
+and a timestamp - so this command replays the log and reports each opening:
+
+* `discharged` - the follow-up arrived inside the deadline;
+* `breached` - it never arrived, or arrived late (a late one says so);
+* `pending` - the deadline has not passed yet.
+
+Obligations are a JSON list (or `{"obligations": [...]}`):
+
+```bash
+[{"when": "deploy", "then": "approve", "within": 600},
+ {"when": "env_secret_read", "then": "secret_rotate", "within": 3600,
+  "approvals_only": true, "policy_id": "rotation"}]
+```
+
+`approvals_only` requires the follow-up receipt to carry an `approval`, so an
+unreviewed call does not discharge it. Action names are canonicalised, so
+`http.post` and `http_post` are the same step.
+
+Receipts are grouped by the same scope the live guard uses - `span_id`, else
+`principal`, else `<anon>` - so one run's deploy cannot be discharged by
+another run's approval. Only receipts whose verdict means the call ran
+(`ALLOW`/`MODIFY`) count: a `BLOCK` receipt records an action that never
+happened, and an escalation still pending or declined is not an approval.
+
+*--now* decides whether an open obligation has lapsed; it defaults to the
+newest receipt's timestamp, so two checks over one log agree. Pass `--now now`
+to judge against the wall clock instead.
+
+Exit codes: 0 every obligation was kept or is still open, 1 at least one was
+breached, 3 the log or the obligation file could not be used, 64 the command
+line was wrong.
+
+```text
+usage: interlock obligations [-h] ACTION ...
+usage: interlock obligations check [-h] --log FILE --obligations FILE [--json] [--now TIME]
 ```
 
 ## `interlock trust`

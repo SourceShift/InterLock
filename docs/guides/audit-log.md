@@ -146,6 +146,12 @@ interlock report audit.jsonl --json
 The report verifies the chain first when given the key, and always says whether
 it did. Exit code 2 means the chain is broken.
 
+A log also remembers what *should* have happened: `interlock obligations check
+--log audit.jsonl --obligations obligations.json` replays it against deadlines
+("after a deploy, an approval within ten minutes") and names every opening as
+discharged, pending or breached. See
+[Obligation: what must happen next](policies.md#obligation-what-must-happen-next).
+
 ## Verify the log
 
 `verify()` walks the chain. It returns `None` when the log is intact, or a

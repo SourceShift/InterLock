@@ -138,6 +138,11 @@ CATEGORIES: List[Tuple[str, str, List[str]]] = [
         ["mesh_indicator_guard", "mesh_similarity_guard"],
     ),
     (
+        "Promises with a deadline",
+        "Bind what must happen next: after one call, another must arrive inside a time limit.",
+        ["obligations"],
+    ),
+    (
         "Agent control surfaces",
         "Whether the files an agent loads under a trusted name are the files that name was pinned to.",
         ["skill_digest_guard"],
@@ -169,6 +174,9 @@ SCOPE_NOTES: Dict[str, str] = {
     "sequence_guard": "any call, journalled per span id (else principal); a "
                       "configured `[before, after]` pair blocks when `before` "
                       "is still within the last `window` actions",
+    "obligations": "any call, tracked per span id (else principal); a `when` action "
+                   "opens a deadline and the matching `then` action must arrive "
+                   "within `within` seconds, or the next call is refused",
     "token_budget_guard": "any call, estimated tokens counted per principal over a "
                           "rolling `window_s`",
     "tool_budget_limiter": "any call, counted per tool name",

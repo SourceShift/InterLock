@@ -85,6 +85,7 @@ jobs:
                   "policy",
                   "learn",
                   "scope",
+                  "obligations",
                   "trust",
                   "mcp",
                   "reviews",

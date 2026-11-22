@@ -32,9 +32,9 @@ hide:
   Two numbers here are load-bearing and are worth re-checking when the code
   moves:
 
-    * 124 detectors. That is the row count of docs/reference/detectors.md,
+    * 125 detectors. That is the row count of docs/reference/detectors.md,
       which scripts/gen_detector_catalog.py generates and whose check mode CI
-      runs. Grep for 119 in this file if the catalog ever changes.
+      runs. Grep for 125 in this file if the catalog ever changes.
 
     * The fifth limit describes what Verdict.ESCALATE actually does today. It
       is not a "someday" item any more -- the verb ships, so what a reader needs
@@ -87,9 +87,9 @@ hide:
 </div>
 
 <div class="il-card il-card--wide il-card__row" data-il-spot data-il-reveal>
-<span class="il-card__num">124</span>
+<span class="il-card__num">125</span>
 <div class="il-card__numwrap">
-<h3 class="il-card__h">124 detectors, ready-made</h3>
+<h3 class="il-card__h">125 detectors, ready-made</h3>
 <p class="il-card__p">Prompt injection, SQL and shell injection, secret and PII redaction, SSRF, egress allowlists, MCP server trust, budgets, and runaway loops.</p>
 </div>
 </div>
@@ -278,7 +278,7 @@ hide:
 
 <div class="il-doc il-doc--plain" data-il-spot data-il-reveal>
 <h3 class="il-doc__h"><span></span>Pick your defence</h3>
-<p><a href="docs/guides/detectors/">Using detectors</a> &mdash; choose from 124 built-in rules, and make sure they see your tools.</p>
+<p><a href="docs/guides/detectors/">Using detectors</a> &mdash; choose from 125 built-in rules, and make sure they see your tools.</p>
 <p><a href="docs/guides/writing-rules/">Writing rules</a> &mdash; from one-liners to result-phase rules and tests.</p>
 </div>
 
@@ -297,7 +297,7 @@ hide:
 <div class="il-doc il-doc--plain" data-il-spot data-il-reveal>
 <h3 class="il-doc__h"><span></span>Look it up</h3>
 <p><a href="docs/reference/python-api/">Python API</a> &mdash; every public class and function, with signatures.</p>
-<p><a href="docs/reference/detectors/">Detector catalog</a> &mdash; all 124 detectors: what each catches, and which calls it sees.</p>
+<p><a href="docs/reference/detectors/">Detector catalog</a> &mdash; all 125 detectors: what each catches, and which calls it sees.</p>
 </div>
 
 </div>

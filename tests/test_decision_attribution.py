@@ -686,6 +686,7 @@ KNOWN_GAPS = {
     "mcp_prompt_arg_injection": SCAN_BLOB,
     "mcp_tool_description_scan": SCAN_BLOB,
     "memory_write_injection_guard": SCAN_BLOB,
+    "obligations": STATEFUL,  # trigger is an earlier call's open deadline, not this call's argument
     "output_length_guard": AGGREGATE,
     "payload_splitting_guard": SCAN_BLOB,
     "prompt_injection": SCAN_BLOB,

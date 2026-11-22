@@ -7,8 +7,9 @@ guard do?), ``hook`` and ``install-hook`` (coding-agent adapters), ``patch``
 inventory), ``policy`` (declarative policy files), ``trust`` (project-overlay
 trust), ``drift`` (diff a live surface against a corpus), ``learn`` (draft a
 policy from observed receipts), ``scope`` (derive a capability scope from those
-receipts), ``anchor`` (record a receipt log's head outside it, to catch a cut
-tail) and ``skills`` (pin a skill's content and check it before activation).
+receipts), ``obligations`` (check what had to happen after an action, by when),
+``anchor`` (record a receipt log's head outside it, to catch a cut tail) and
+``skills`` (pin a skill's content and check it before activation).
 
 Exit codes are per command and documented in each one's ``--help``; 64 means
 the command line itself was wrong.
@@ -33,6 +34,8 @@ COMMANDS: List[Tuple[str, str, str]] = [
     ("policy", "check a declarative policy file, or show a built-in pack", "policy"),
     ("learn", "draft a reviewable policy from observed receipts", "learn"),
     ("scope", "derive a capability scope document from observed receipts", "scope"),
+    ("obligations", "check a receipt log against obligations that had a deadline",
+     "obligations"),
     ("trust", "trust a project's policy overlay", "trust"),
     ("mcp", "inventory the MCP servers configured on this machine", "mcp"),
     ("reviews", "decide pending reviews; serve their status to agents", "reviews"),

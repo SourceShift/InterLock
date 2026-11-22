@@ -211,6 +211,63 @@ run with an empty history; each run keeps at most `window` actions and at most
 names the two actions and the window only — never an argument value — so it is
 safe to carry into a receipt.
 
+## Obligation: what must happen next
+
+Every rule above forbids something. An obligation binds the other way: *after*
+this call, *that* call must arrive within a deadline. "After a deploy, an
+approval must be referenced within ten minutes" is a rule a well-behaved run
+satisfies by doing nothing wrong — and fails by forgetting the follow-up, which
+no single event can show.
+
+```json
+{"id": "deploy-needs-approval", "detector": "obligations",
+ "with": {"require": [{"when": "deploy", "then": "approve", "within": 600}]}}
+```
+
+The `obligations` detector opens the obligation when a `when` action is allowed,
+and closes it when the matching `then` action arrives in the same run. If the
+deadline passes with it still open, the run's **next** call is refused —
+escalated by default, so a human decides whether the deficient run continues, or
+blocked with `"on_breach": "block"`.
+
+Three properties are deliberate:
+
+- **A breach fires once.** The obligation is dropped when it is refused, so a
+  run is corrected, not bricked — every later call sees an empty ledger.
+- **A late follow-up is let through.** The `then` action is the compensating
+  step; blocking it would make the run worse. The receipt log still records it
+  as a breach.
+- **Scope is the run.** `span_id`, else `principal`, else `"<anon>"` — one run's
+  deploy cannot be discharged by another run's approval.
+
+### Checking a log instead
+
+The receipt log carries actions, verdicts and timestamps, so the same model is
+decidable after the fact — every opening, with no deadline left to guess:
+
+```bash
+interlock obligations check --log audit.jsonl --obligations obligations.json
+```
+
+Each opening is reported as `discharged`, `pending`, or `breached` (a late
+discharge says so). `--json` prints the same as machine-readable output, and
+`--now now` judges open obligations against the wall clock instead of the newest
+receipt. Exit codes: 0 every obligation was kept or is still open, 1 something
+was breached, 3 the log or obligation file could not be used, 64 the command
+line was wrong.
+
+Two things only the log check can do:
+
+- `"approvals_only": true` requires the follow-up receipt to carry an `approval`,
+  so an unreviewed call does not discharge it. The live detector refuses such a
+  rule at construction, because an event does not yet carry the approval.
+- An obligation whose trigger ran before the process started. The detector's
+  ledger is in memory and begins empty after a restart; the log does not.
+
+Both instruments read the same receipt fields, so a run that passes the live
+guard still passes the check. The reverse is not promised: the check sees the
+whole history, and it is the one to trust.
+
 ## Mistakes fail at load, not in production
 
 A rule that loads cleanly but can never fire is the worst kind. So:
