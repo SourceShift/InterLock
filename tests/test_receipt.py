@@ -196,3 +196,54 @@ def test_policy_artifact_is_optional_covered_by_the_mac_and_chain_safe():
     # Editing the field breaks the mac like every other covered field.
     artifact.policy_artifact = "b" * 64
     assert verify_chain(sink.receipts, hmac_sha256, KEY).startswith("receipt 1:")
+
+
+def test_remediation_is_optional_covered_by_the_mac_and_chain_safe():
+    from interlock.enforce import MAX_REMEDIATION, Decision
+    from interlock.event import SensorEvent
+    from interlock.receipt import emit_receipt, set_sink
+    from interlock.sink import InMemorySink
+
+    sink = InMemorySink(key=KEY)
+    set_sink(sink)
+    try:
+        event = SensorEvent("run_shell", {"cmd": "ls"}, principal="agent")
+        emit_receipt(event, Decision.allow(), policy_epoch="epoch-1")
+        emit_receipt(event, Decision.block(
+            "no", "p-1", remediation="run it with --dry-run"), policy_epoch="epoch-2")
+        emit_receipt(event, Decision.block(
+            "no", "p-1", remediation="  a\tb\n" + "x" * (MAX_REMEDIATION + 50)),
+            policy_epoch="epoch-3")
+    finally:
+        set_sink(None)
+
+    plain, hinted, clipped = sink.receipts
+    assert "remediation" not in plain.fields()  # absent, so older chains match
+    assert hinted.fields()["remediation"] == "run it with --dry-run"
+    # One printable line, bounded like the text the agent is shown.
+    assert clipped.fields()["remediation"] == ("a b " + "x" * (MAX_REMEDIATION - 4))[:MAX_REMEDIATION]
+    assert verify_chain(sink.receipts, hmac_sha256, KEY) is None
+
+    # Editing the hint breaks the mac like every other covered field.
+    hinted.remediation = "run it without --dry-run"
+    assert verify_chain(sink.receipts, hmac_sha256, KEY).startswith("receipt 1:")
+
+
+def test_remediation_reaches_a_review_block_receipt():
+    from interlock.enforce import Decision
+    from interlock.event import SensorEvent
+    from interlock.receipt import emit_receipt, set_sink
+    from interlock.sink import InMemorySink
+
+    sink = InMemorySink(key=KEY)
+    set_sink(sink)
+    try:
+        event = SensorEvent("npm_publish", {"tag": "latest"}, principal="agent")
+        emit_receipt(event, Decision.block(
+            "publishing needs a human", "publish",
+            remediation="publish with --tag beta first"))
+    finally:
+        set_sink(None)
+
+    assert sink.receipts[0].remediation == "publish with --tag beta first"
+    assert sink.receipts[0].reason == "publishing needs a human"

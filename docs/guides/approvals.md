@@ -77,8 +77,10 @@ When the escalating rule carries a `remediation` hint - see
 carries it too, in `request.remediation`, clipped the same way. It is guidance,
 not authority, so it is **not** part of the binding: it changes what the
 approver is shown, not what the approval covers. `tty_approver()` prints it as
-`instead: ...` beside the reason, and the [review queue](reviews.md) stores it
-with the review, so a human deciding later sees the same alternative.
+`instead: ...` beside the reason, the [review queue](reviews.md) stores it
+with the review, so a human deciding later sees the same alternative, and the
+[receipt](audit-log.md#what-a-receipt-records) records it beside the reason -
+so the log says what the run was told to do differently.
 
 ## Precedence
 

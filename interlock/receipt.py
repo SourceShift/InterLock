@@ -94,6 +94,11 @@ empty, the same rule ``observed`` follows, so older chains verify unchanged:
   one, which is how an auditor later asks "was the delegated authority valid
   at the moment of use" without reading any argument. Omitted for a local
   decision and for a grant signed directly by the plane.
+- ``remediation`` is the rule's one-line hint at what would be allowed instead,
+  as the agent was shown it (see :data:`interlock.enforce.MAX_REMEDIATION`).
+  It is guidance, never authority: it cannot change a verdict. Recorded beside
+  ``reason`` so the auditor can answer "was the run told what to do
+  differently". Cut to one printable line, like the reason an approver sees.
 
 A sink that fails to write is not allowed to turn into a silent gap: the
 failed write raises :class:`~interlock.enforce.Blocked` (fail closed), and the
@@ -114,7 +119,7 @@ from typing import Any, Callable, Dict, Optional
 
 _log = logging.getLogger("interlock")
 
-from .enforce import Blocked, Decision
+from .enforce import MAX_REMEDIATION, Blocked, Decision
 from .event import SensorEvent
 
 # A signer maps (key, message) -> tag. hmac_sha256 below is the default; an
@@ -242,6 +247,11 @@ class Receipt:
     # whose authority was this settled" without storing an argument, and
     # declares last so older receipts stay byte-identical.
     authority: Optional[str] = None
+    # The rule's one-line hint at what would be allowed instead, as the agent
+    # was shown it. Policy-authored guidance, never authority - it cannot change
+    # a verdict - clipped to one printable line. Declared last so older
+    # receipts stay byte-identical and their MACs unchanged.
+    remediation: Optional[str] = None
 
     def fields(self, *, include_mac: bool = True) -> dict:
         """The receipt as a dict, in its canonical (serialized) shape.
@@ -278,8 +288,21 @@ _FIELD_NAMES = tuple(f.name for f in dataclasses.fields(Receipt))
 _OPTIONAL_FIELDS = (
     "call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
     "enforcer", "elapsed_us", "masked", "tokens", "scope_document", "catalog",
-    "policy_artifact", "coverage_gap", "authority",
+    "policy_artifact", "coverage_gap", "authority", "remediation",
 )
+
+
+def _remediation_line(text: object) -> Optional[str]:
+    """*text* as one printable line of at most MAX_REMEDIATION characters.
+
+    The hint is model input rendered to the agent, so the receipt stores the
+    same bound: collapsed whitespace, no control characters, and None for
+    anything that is not a non-empty string.
+    """
+    if not isinstance(text, str):
+        return None
+    line = "".join(ch for ch in " ".join(text.split()) if ch.isprintable())
+    return line[:MAX_REMEDIATION] or None
 
 # The catalog id receipts carry, once a mesh component has set it. None (the
 # default) leaves receipts byte-for-byte as they were before the field existed.
@@ -490,6 +513,7 @@ def emit_receipt(
         policy_artifact=policy_artifact,
         coverage_gap=coverage_gap,
         authority=authority,
+        remediation=_remediation_line(getattr(decision, "remediation", None)),
     )
     if sink is not None:
         _write(sink, receipt, event.action)

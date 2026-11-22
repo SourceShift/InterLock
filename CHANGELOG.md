@@ -11,6 +11,14 @@ breaking changes land.
 
 ### Added
 
+- **A receipt records what the rule said to do instead.** The `remediation`
+  hint was rendered to the agent, stored with an escalated review, and stopped
+  there: the audit log could show what was refused but not what the policy
+  offered as the way through. It is now an optional receipt field, cut the same
+  way the agent's copy is (one printable line, at most `MAX_REMEDIATION`
+  characters), covered by the MAC like every other field and omitted when a
+  rule gave none - so older chains stay byte-identical and verify unchanged.
+
 - **An obligation survives the process.** The `obligations` detector kept its
   open deadlines in memory, which a daemon can live with but a hook host cannot:
   it runs one process per tool call, so the `deploy` in one invocation was

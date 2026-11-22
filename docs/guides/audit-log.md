@@ -70,6 +70,7 @@ forge one or quietly skip one. Allowed calls get receipts too.
 | `authority` | the delegation chain behind a remote approval, oldest first: `cloud:<grant_id>` names joined by `<`, e.g. `cloud:g-operator<cloud:g-review`. `approval` names the grant that released the call; this names the grants that authorised *that* one. Absent for a local decision and for a grant the plane signed directly |
 | `outcome`, `enforcer` | on `phase="outcome"` receipts for an allowed tool that then failed: `failed`, and `os` (a permission error, which under the sandbox is the sandbox refusing), `policy` (a guard inside the tool) or `tool` |
 | `elapsed_us` | how long the policy evaluation took, in microseconds |
+| `remediation` | the rule's one-line hint at what would be allowed instead, as the agent was shown it (at most 200 printable characters). Guidance, not authority: it never changes the verdict |
 
 Every field below `observed` is optional and left out while empty, so logs
 written before it existed verify unchanged. `verdict` never overstates

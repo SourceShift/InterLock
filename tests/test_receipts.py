@@ -570,7 +570,7 @@ def test_fields_is_a_shallow_copy_with_the_canonical_shape_of_asdict():
             del body["observed"]
         for name in ("call_id", "policy_epoch", "policy_verdict", "approval", "outcome",
                      "enforcer", "elapsed_us", "masked", "tokens", "scope_document", "catalog",
-                     "policy_artifact", "coverage_gap", "authority"):
+                     "policy_artifact", "coverage_gap", "authority", "remediation"):
             if body[name] is None:
                 del body[name]
         if not include_mac:
@@ -580,7 +580,8 @@ def test_fields_is_a_shallow_copy_with_the_canonical_shape_of_asdict():
     cases = [
         Receipt(ts=1.5, action="a", verdict="ALLOW"),
         Receipt(ts=2.0, action="b", verdict="MODIFY", reason="r", policy_id="p", observed=True,
-                masked={"CREDIT_CARD": 2, "EMAIL": 1}, tokens=12, elapsed_us=7, call_id="c1"),
+                masked={"CREDIT_CARD": 2, "EMAIL": 1}, tokens=12, elapsed_us=7, call_id="c1",
+                remediation="try the batch form"),
     ]
     for r in cases:
         for include_mac in (True, False):

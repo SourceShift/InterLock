@@ -583,7 +583,7 @@ A dataclass describing what to do with one event.
 | `modified_args` | `dict` or `None` | For a call-side modify: the arguments to merge into the call. |
 | `attributed_to` | `str` or `None` | The **name** of the argument that triggered the decision (`"path"`), never its value. |
 | `modified_result` | any or `None` | For a result-side modify: the value that replaces the tool's result. |
-| `remediation` | `str` or `None` | One line saying what *would* be allowed instead, shown to the agent beside a non-ALLOW verdict. Name the alternative, never an argument value or a path; it is clipped to `MAX_REMEDIATION` (200) characters when rendered and is not stored in a receipt. |
+| `remediation` | `str` or `None` | One line saying what *would* be allowed instead, shown to the agent beside a non-ALLOW verdict. Name the alternative, never an argument value or a path; it is clipped to `MAX_REMEDIATION` (200) characters when rendered, and the receipt stores that same one-line text so an auditor can see what the run was told. |
 
 Build decisions with the class methods:
 
@@ -1185,6 +1185,7 @@ A dataclass. One per enforced decision.
 | `prev` | The previous receipt's `mac`, or 64 zeros (`GENESIS`) for the first. |
 | `mac` | The signer's tag over every other field, hex-encoded. |
 | `observed` | `True` when monitor mode recorded a decision without enforcing it. The call went through even though `verdict` may say `BLOCK`. |
+| `remediation` | The decision's one-line hint at what would be allowed instead, cut to one printable line of at most `MAX_REMEDIATION` characters. Absent when the rule gave none. |
 
 `to_json()` and `Receipt.from_json(line)` convert to and from the canonical
 one-line form. `fields(include_mac=True)` returns that canonical shape as a dict.
