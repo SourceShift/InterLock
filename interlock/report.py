@@ -13,6 +13,14 @@ Receipts hold digests, not argument values, so nothing here can print one.
 
 The aggregation (:func:`summarize`) is a pure function over receipts, shared by
 ``python -m interlock report`` and any UI, so the two cannot disagree.
+
+:func:`containment` answers the question a verdict count cannot: once an
+instruction-override signature arrived inside a tool result, what did the span
+do next? It reads the same receipts - the result-phase verdicts the injection
+detectors left, and the call-phase verdicts that followed - and sorts every
+exposed span into contained, partial, open or quiet. Receipts carry no
+argument values, so it can say a call ran, never that it carried the poison;
+"allowed after exposure" is exposure, not proof of leakage.
 """
 from __future__ import annotations
 
@@ -28,6 +36,16 @@ from .receipt import Receipt, Verifier, hmac_sha256, verify_chain
 _DURATION = re.compile(r"^(\d+(?:\.\d+)?)([smhdw])$")
 _UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 _DECISION_PHASES = ("call", "result")
+
+#: The built-in detectors whose verdict says an instruction-override signature
+#: arrived inside delivered content. A detector keeps its own ``policy_id`` on
+#: the decision (a declarative rule's id is only filled in when the detector
+#: left it empty), so these two strings are what a receipt carries.
+POISON_DETECTORS: Tuple[str, ...] = ("tool_result_injection",
+                                    "tool_result_injection_sanitizer")
+
+#: Exposure statuses, worst first - the order rows are reported in.
+_STATUS_ORDER = ("open", "partial", "contained", "quiet")
 
 
 def parse_since(text: Optional[str]) -> Optional[float]:
@@ -78,6 +96,7 @@ def summarize(
     since_seconds: Optional[float] = None,
     now: Optional[float] = None,
     top: int = 10,
+    exposure_ids: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     """Aggregate receipts into a JSON-ready report."""
     now = time.time() if now is None else now
@@ -169,6 +188,122 @@ def summarize(
         "masked": dict(masked.most_common()),
         "tokens": {"total": sum(token_values), "calls": len(token_values)},
         "latency_us": _percentiles(latencies),
+        # Already windowed, so no second filter and the same ``now`` agrees.
+        "containment": containment(window, top=top, exposure_ids=exposure_ids),
+    }
+
+
+def containment(
+    receipts: Iterable[Receipt],
+    *,
+    since_seconds: Optional[float] = None,
+    now: Optional[float] = None,
+    top: int = 10,
+    exposure_ids: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    """What each exposed span did after the injection, not just the verdict.
+
+    A *exposure* is a result-phase receipt the injection detectors wrote: the
+    tool returned content carrying an instruction-override signature. Three
+    deliveries are distinguished. ``withheld`` (verdict BLOCK) never reached
+    the model. ``rewritten`` (verdict MODIFY, from the sanitizer) removed the
+    offending lines and delivered the rest. ``delivered`` (``observed``) is
+    monitor mode - the policy verdict was recorded, nothing was enforced, and
+    the model read the whole payload.
+
+    The window for what followed is the span's *first* exposure: every
+    call-phase receipt after it counts, because a call that ran after content
+    was poisoned may have carried it. A span is ``contained`` when at least one
+    of those calls was blocked and none ran, ``partial`` when some ran anyway,
+    ``open`` when nothing was stopped, and ``quiet`` when nothing followed.
+
+    This is trace evaluation, not taint tracking: receipts store verdicts and
+    digests, not arguments, so an allowed call is **not** evidence that poison
+    crossed the boundary. Read ``open`` as "the guard did not act", never as
+    "the agent leaked".
+    """
+    now = time.time() if now is None else now
+    cutoff = now - since_seconds if since_seconds is not None else None
+    ids = set(POISON_DETECTORS)
+    if exposure_ids is not None:
+        ids.update(e for e in exposure_ids if isinstance(e, str) and e)
+
+    spans: Dict[str, List[Receipt]] = {}
+    for receipt in receipts:
+        if receipt.action == "receipts.dropped":
+            continue
+        if cutoff is not None and receipt.ts < cutoff:
+            continue
+        spans.setdefault(receipt.span_id or "(no span)", []).append(receipt)
+
+    rows: List[Dict[str, Any]] = []
+    statuses: Counter = Counter()
+    detectors: Counter = Counter()
+    blocked_actions: Counter = Counter()
+    totals = Counter()
+    for span_id, events in spans.items():
+        marks = [i for i, r in enumerate(events)
+                 if r.phase == "result" and r.policy_id in ids]
+        if not marks:
+            continue
+        first = marks[0]
+        following = [r for r in events[first + 1:] if r.phase == "call"]
+        blocked = [r for r in following if r.verdict == "BLOCK"]
+        escalated = [r for r in following if r.verdict == "ESCALATE"]
+        allowed = [r for r in following if r.verdict in ("ALLOW", "MODIFY")]
+        if not following:
+            status = "quiet"
+        elif not blocked:
+            status = "open"
+        elif allowed or escalated:
+            status = "partial"
+        else:
+            status = "contained"
+        delivery: Counter = Counter()
+        for index in marks:
+            receipt = events[index]
+            detectors[receipt.policy_id or "?"] += 1
+            delivery["delivered" if receipt.observed
+                     else "withheld" if receipt.verdict == "BLOCK"
+                     else "rewritten"] += 1
+        for receipt in blocked:
+            blocked_actions[receipt.action] += 1
+        statuses[status] += 1
+        totals["calls_after"] += len(following)
+        totals["blocked_after"] += len(blocked)
+        totals["escalated_after"] += len(escalated)
+        totals["allowed_after"] += len(allowed)
+        rows.append({
+            "span_id": span_id,
+            "status": status,
+            "exposures": len(marks),
+            "first_ts": events[first].ts,
+            "action": events[first].action,
+            "attributed_to": events[first].attributed_to,
+            "delivery": dict(sorted(delivery.items())),
+            "calls_after": len(following),
+            "blocked_after": len(blocked),
+            "escalated_after": len(escalated),
+            "allowed_after": len(allowed),
+            "blocked_actions": [action for action, _ in
+                                Counter(r.action for r in blocked).most_common(5)],
+        })
+
+    rows.sort(key=lambda row: (_STATUS_ORDER.index(row["status"]), row["first_ts"]))
+    return {
+        "exposures": sum(row["exposures"] for row in rows),
+        "spans": rows[:top],
+        "totals": {
+            "exposed_spans": len(rows),
+            **{status: statuses.get(status, 0) for status in _STATUS_ORDER},
+            **{key: totals.get(key, 0) for key in
+               ("calls_after", "blocked_after", "escalated_after", "allowed_after")},
+        },
+        "detectors": dict(sorted(detectors.items())),
+        "blocked_actions": [
+            {"action": action, "count": count}
+            for action, count in blocked_actions.most_common(top)
+        ],
     }
 
 
@@ -185,7 +320,8 @@ def _percentiles(values: List[int]) -> Optional[Dict[str, int]]:
 
 
 def render(summary: Dict[str, Any], verified: Dict[str, Optional[str]], *,
-           monitor: bool = False, color: bool = False) -> str:
+           monitor: bool = False, color: bool = False,
+           containment_only: bool = False) -> str:
     """The human-readable report."""
 
     def paint(code: str, text: str) -> str:
@@ -203,6 +339,10 @@ def render(summary: Dict[str, Any], verified: Dict[str, Optional[str]], *,
         _human_duration(window["since_seconds"]))
     lines.append("interlock activity ({}) - {}".format(span, status_line))
     lines.append("=" * 64)
+
+    if containment_only:
+        lines.extend(_containment_lines(summary["containment"], paint))
+        return "\n".join(lines)
 
     if monitor:
         would = summary["would_have"]
@@ -270,7 +410,49 @@ def render(summary: Dict[str, Any], verified: Dict[str, Optional[str]], *,
             share = row["count"] / width if width else 0
             lines.append("{:>3}  {:<32} {:>6}  {}".format(
                 index, row["policy_id"][:32], row["count"], "#" * max(1, int(share * 10))))
+    if summary.get("containment", {}).get("totals", {}).get("exposed_spans"):
+        lines.append("")
+        lines.extend(_containment_lines(summary["containment"], paint))
     return "\n".join(lines)
+
+
+def _containment_lines(containment: Dict[str, Any], paint) -> List[str]:
+    """The post-exposure section: per-span status and what followed."""
+    totals = containment["totals"]
+    if not totals["exposed_spans"]:
+        return ["No injection signature reached a tool result: nothing to contain."]
+    lines = ["Containment (what each exposed span did next)"]
+    lines.append("-" * 64)
+    lines.append("Exposures:  {} in {} span(s) - {} open, {} partial, "
+                 "{} contained, {} quiet".format(
+                     containment["exposures"], totals["exposed_spans"], totals["open"],
+                     totals["partial"], totals["contained"], totals["quiet"]))
+    lines.append("After:      {} call(s) - {} blocked, {} escalated, {} allowed".format(
+        totals["calls_after"], totals["blocked_after"],
+        totals["escalated_after"], totals["allowed_after"]))
+    if containment["blocked_actions"]:
+        lines.append("Stopped:    " + ", ".join(
+            "{} x{}".format(row["action"], row["count"])
+            for row in containment["blocked_actions"]))
+    for row in containment["spans"]:
+        status = paint("31", "OPEN") if row["status"] == "open" else {
+            "partial": paint("33", "PARTIAL"),
+            "contained": paint("32", "CONTAINED"),
+            "quiet": "QUIET",
+        }[row["status"]]
+        delivery = ", ".join("{} {}".format(v, k) for k, v in row["delivery"].items())
+        lines.append("")
+        lines.append("  {} - {} ({} exposure(s): {})".format(
+            row["span_id"], row["action"], row["exposures"], delivery))
+        lines.append("    after exposure: {} call(s) - {} blocked, {} escalated, {} allowed  {}"
+                     .format(row["calls_after"], row["blocked_after"],
+                             row["escalated_after"], row["allowed_after"], status))
+        if row["blocked_actions"]:
+            lines.append("    blocked: " + ", ".join(row["blocked_actions"]))
+    lines.append("")
+    lines.append("An allowed call after exposure is not proof poison crossed: receipts "
+                 "hold verdicts and digests, not arguments.")
+    return lines
 
 
 def _human_duration(seconds: float) -> str:

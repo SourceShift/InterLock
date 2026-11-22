@@ -11,6 +11,21 @@ breaking changes land.
 
 ### Added
 
+- **`interlock report` says what happened after an injection.** A verdict count
+  shows the guard withheld a poisoned result; it does not show whether the span
+  kept working. The new `containment` section reads the same receipts: an
+  exposure is a result-phase receipt from `tool_result_injection` or
+  `tool_result_injection_sanitizer`, delivered as `withheld` (BLOCK),
+  `rewritten` (MODIFY) or `delivered` (monitor mode's `observed`). Every call the
+  span logged after its first exposure is counted, and the span is sorted
+  `contained` (something was blocked and nothing ran), `partial` (both), `open`
+  (nothing stopped) or `quiet` (nothing followed). `--containment` prints only
+  that section, `--fail-on-open` exits 4 for CI, and `--exposure POLICY_ID`
+  names a custom detector whose result verdict also counts. The JSON report
+  carries the same block. Receipts keep verdicts and argument digests, never
+  arguments, so an allowed call proves the guard did not act - not that data
+  left; the report says so rather than implying leakage.
+
 - **`interlock policy lint` finds rules that can never work.** Load-time checks
   are per rule; the new pass in `interlock/policy/lint.py` reads them together
   and reports three structural shapes: an `unsatisfiable` condition (two

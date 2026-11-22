@@ -153,6 +153,46 @@ A log also remembers what *should* have happened: `interlock obligations check
 discharged, pending or breached. See
 [Obligation: what must happen next](policies.md#obligation-what-must-happen-next).
 
+### What happened after an injection
+
+A verdict count says the guard withheld a poisoned result; it does not say
+whether the agent then went ahead anyway. The report answers that from the same
+receipts. An *exposure* is a result-phase receipt the injection detectors wrote
+(`tool_result_injection`, `tool_result_injection_sanitizer`) - the tool returned
+content carrying an instruction-override signature - and it is delivered in one
+of three ways:
+
+| Delivery | Receipt | The model saw |
+|---|---|---|
+| `withheld` | verdict `BLOCK` | nothing: the payload was never handed over |
+| `rewritten` | verdict `MODIFY` | the document, with the offending lines replaced |
+| `delivered` | `"observed": true` | all of it: monitor mode recorded, nothing enforced |
+
+From the span's first exposure onward, every call the log records is counted,
+and the span is sorted into what it did next:
+
+- **contained** - at least one later call was blocked and none ran.
+- **partial** - something was blocked, something else ran.
+- **open** - no later call was stopped at all.
+- **quiet** - nothing followed the exposure.
+
+```bash
+interlock report audit.jsonl --containment            # just this section
+interlock report audit.jsonl --fail-on-open           # exit 4 if any span is open
+interlock report audit.jsonl --exposure my_scan_rule  # name a custom detector
+```
+
+The last two pair up as a post-incident gate: `--exposure` adds a detector's
+`policy_id` to the ones the report treats as exposures (a rule of your own that
+blocks injected content emits its own id), and `--fail-on-open` turns an
+unstopped span into a non-zero exit for CI.
+
+Read **open** as "no rule acted", not "the agent leaked". Receipts store
+verdicts and argument digests, never arguments, so an allowed call after
+exposure may have carried the poison or may have been an unrelated file read -
+the log cannot tell them apart, and a report that implied otherwise would be
+inventing evidence.
+
 ## Verify the log
 
 `verify()` walks the chain. It returns `None` when the log is intact, or a

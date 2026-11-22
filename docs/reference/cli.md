@@ -62,26 +62,32 @@ usage: interlock doctor [-h] [--rules MODULE:ATTR] [--policy FILE] [--sidecar PA
 ## `interlock report`
 
 Summarize a receipt log: what interlock blocked, rewrote and escalated, what
-monitor mode would have done, how long evaluation took, and whether any
-receipts were lost.
+monitor mode would have done, how long evaluation took, whether any receipts
+were lost, and what each span did after an injection reached a tool result.
 
 ```bash
 interlock report audit.jsonl --key-file audit.key
 interlock report audit.jsonl --since 24h --monitor     # "would have blocked"
+interlock report audit.jsonl --containment             # post-exposure only
 interlock report audit.jsonl --json
 ```
 
 The chain is verified first when --key-file is given; the report always says
 whether it was. Receipts hold argument digests, never values.
 
-Exit codes: 0 ok, 2 the chain is broken, 3 the log could not be read.
+Exit codes: 0 ok, 2 the chain is broken, 3 the log could not be read,
+4 an exposed span ran calls no rule stopped (only with --fail-on-open).
 
 ```text
-usage: interlock report [-h] [--since DURATION] [--monitor] [--top N] [--key-file FILE] [--json]
+usage: interlock report [-h] [--since DURATION] [--monitor] [--containment] [--exposure POLICY_ID]
+                        [--fail-on-open] [--top N] [--key-file FILE] [--json]
                         file
   file                       a receipt log written by FileSink
   --since                    only receipts newer than this: 30m, 24h, 7d (default: all)
   --monitor                  show what monitor mode would have blocked or rewritten
+  --containment              show only what each span did after an injection reached a result
+  --exposure                 an extra detector id whose result-phase verdict means an injection was delivered (repeatable)
+  --fail-on-open             exit 4 when an exposed span ran calls no rule stopped
   --top                      rows per table
   --key-file                 the MAC key, to verify the chain
   --json                     machine-readable output
