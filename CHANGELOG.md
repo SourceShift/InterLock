@@ -11,6 +11,18 @@ breaking changes land.
 
 ### Added
 
+- **`interlock policy lint` finds rules that can never work.** Load-time checks
+  are per rule; the new pass in `interlock/policy/lint.py` reads them together
+  and reports three structural shapes: an `unsatisfiable` condition (two
+  different `action` constraints `all`-ed together), a `shadowed` rule (an
+  earlier plain `block` with the identical condition and phase decides first, so
+  the engine never evaluates it), and a `contradicts-requirement` set (an
+  `obligations` rule whose `then` action an unconditional `block` refuses for
+  every call, so the deadline can never be discharged). Exit 1 on a finding, 2
+  when the file does not load, `--json` for machine use. Quarantined rules take
+  part in neither shadowing nor blocking. The pass reads the file's own rules:
+  `extends`, `disable` and overlays are not folded in.
+
 - **The taint label survives the process.** The flow tracker's memory is per
   process, so a hook host - one process per tool call - forgot a poisoned
   result before the call that copied its text arrived. `interlock hook

@@ -5,6 +5,7 @@
   interlock policy show builtin:coding-agent        # print a built-in pack
   interlock policy verify --artifact policy.json    # a distributed artifact
   interlock policy doctor                           # the native evaluator
+  interlock policy lint policy.json                 # rules that can never work
 
 `check` loads the file the way the guard will: it lists the rules, the locked
 ones, any rule quarantined as invalid (with why), and each overlay's status.
@@ -12,8 +13,9 @@ ones, any rule quarantined as invalid (with why), and each overlay's status.
 and which backend decides which part. `doctor` reports whether the optional
 native accelerator is importable and which ABI it implements.
 
-Exit codes: 0 valid / available, 1 an invalid artifact or a file with
-quarantined rules, 2 does not load / unavailable, 64 bad action.
+Exit codes: 0 valid / available / nothing to report, 1 an invalid artifact, a
+file with quarantined rules, or a lint finding, 2 does not load / unavailable,
+64 bad action.
 """
 from __future__ import annotations
 
@@ -28,6 +30,9 @@ def add_arguments(parser) -> None:
     check.add_argument("--overlay", action="append", default=[], metavar="FILE",
                        help="also apply this overlay (if trusted)")
     check.add_argument("--json", action="store_true")
+    lint = sub.add_parser("lint", help="find rules that can never work")
+    lint.add_argument("file")
+    lint.add_argument("--json", action="store_true")
     show = sub.add_parser("show", help="print a built-in policy pack")
     show.add_argument("name", help="e.g. builtin:coding-agent")
     verify = sub.add_parser("verify", help="validate a distributed policy artifact")
@@ -56,9 +61,26 @@ def run(args) -> int:
         return _verify(args)
     if args.policy_command == "doctor":
         return _doctor(args)
+    if args.policy_command == "lint":
+        from ..policy.lint import lint_file
+        try:
+            findings = lint_file(args.file)
+        except PolicyError as exc:
+            sys.stderr.write("interlock policy: {}\n".format(exc))
+            return 2
+        if args.json:
+            sys.stdout.write(json.dumps([finding.as_dict() for finding in findings],
+                                        indent=2) + "\n")
+        elif findings:
+            for finding in findings:
+                print("{}: {} {} - {}".format(
+                    args.file, finding.code, finding.rule, finding.message))
+        else:
+            print("{}: no structural findings".format(args.file))
+        return 1 if findings else 0
     if args.policy_command != "check":
         sys.stderr.write(
-            "interlock policy: choose an action: check, show, verify, doctor\n")
+            "interlock policy: choose an action: check, lint, show, verify, doctor\n")
         return 64
     try:
         report = check_policy_file(args.file, overlays=args.overlay, trust=TrustStore())

@@ -270,4 +270,4 @@ def test_an_unknown_action_is_a_usage_error(capsys):
 def test_no_action_is_a_usage_error(capsys):
     code = policy_cli.run(argparse.Namespace(policy_command=None))
     assert code == 64
-    assert "check, show, verify, doctor" in capsys.readouterr().err
+    assert "check, lint, show, verify, doctor" in capsys.readouterr().err

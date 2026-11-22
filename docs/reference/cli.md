@@ -248,6 +248,7 @@ interlock policy check ~/.interlock/policy.json --overlay .interlock/policy.json
 interlock policy show builtin:coding-agent        # print a built-in pack
 interlock policy verify --artifact policy.json    # a distributed artifact
 interlock policy doctor                           # the native evaluator
+interlock policy lint policy.json                 # rules that can never work
 ```
 
 `check` loads the file the way the guard will: it lists the rules, the locked
@@ -256,12 +257,14 @@ ones, any rule quarantined as invalid (with why), and each overlay's status.
 and which backend decides which part. `doctor` reports whether the optional
 native accelerator is importable and which ABI it implements.
 
-Exit codes: 0 valid / available, 1 an invalid artifact or a file with
-quarantined rules, 2 does not load / unavailable, 64 bad action.
+Exit codes: 0 valid / available / nothing to report, 1 an invalid artifact, a
+file with quarantined rules, or a lint finding, 2 does not load / unavailable,
+64 bad action.
 
 ```text
 usage: interlock policy [-h] ACTION ...
 usage: interlock policy check [-h] [--overlay FILE] [--json] file
+usage: interlock policy lint [-h] [--json] file
 usage: interlock policy show [-h] name
 usage: interlock policy verify [-h] --artifact PATH [--json]
 usage: interlock policy doctor [-h] [--json]

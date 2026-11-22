@@ -448,6 +448,31 @@ interlock policy check policy.json
 prints the rules, the locked ones and anything quarantined, and exits 1 if any
 rule was skipped, so you can run it in CI.
 
+Load-time checks are per rule. A rule set can still be self-defeating as a
+whole, so a second pass reads the rules together:
+
+```bash
+interlock policy lint policy.json
+```
+
+It reports three shapes, each with a reason you can check by hand:
+
+- **`unsatisfiable`** — the condition can never match, e.g. `{"all":
+  [{"action": "deploy"}, {"action": "approve"}]}` asks one call to be two
+  actions. A glob (`{"action": {"glob": "ap*"}}`) is not guessed at, so it
+  never produces this finding.
+- **`shadowed`** — an earlier plain `block` rule has the identical condition
+  and phase, so the engine returns before this rule is ever evaluated. Not
+  automatically a bug, but a rule that can never fire should be a known one.
+- **`contradicts-requirement`** — a rule set that requires an action and
+  blocks it. An `obligations` rule whose `then` action is refused for every
+  call by an unconditional `block` can never be discharged, so every run that
+  opens the obligation is eventually refused.
+
+It exits 1 on any finding and 2 when the file does not load. The pass reads the
+file's own rules: `extends`, `disable` and overlays are not folded in — lint an
+overlay on its own to check it.
+
 ## Building on another policy
 
 ```json
