@@ -266,13 +266,15 @@ takes `engine=`, `enforcement="monitor"`, and `principal=` for this check.
 | Backend | Runs on | `enforced` tokens | Reads confined | CPU/memory limits | `workdir` |
 |---|---|---|---|---|---|
 | `bubblewrap` | Linux with `bwrap` | `fs-ro`, `fs-rw`, `env`, `pid`, `net`* | yes | applied (not reported) | yes |
-| `landlock` | Linux 5.13+, no `bwrap` needed | `fs-ro`, `fs-rw`, `env`, `net`*, `rlimit`** | yes | yes | yes |
+| `landlock` | Linux 5.13+, no `bwrap` needed | `fs-ro`, `fs-rw`, `env`, `net`*, `rlimit`**, `syscalls`*** | yes | yes | yes |
 | `sandbox-exec` | macOS | `fs-rw`, `env`, `net`* | no | CPU applied (not reported); memory refused | yes |
 | `soft` | anywhere | `env`, `rlimit`** | no | yes (memory refused on macOS) | yes |
 
 \* only when the profile grants no network; landlock can only claim it on
 kernels whose ABI handles TCP (ABI 4, Linux 6.7+).
 \*\* only when the profile sets a limit.
+\*\*\* only where the kernel exposes a seccomp denylist for the machine
+(`/proc/sys/kernel/seccomp/actions_avail`, Linux 4.14+, on x86_64 or aarch64).
 
 What each token means:
 
@@ -288,6 +290,12 @@ What each token means:
 - `pid`: the child can't see or signal host processes.
 - `net`: the child has no network.
 - `rlimit`: the CPU and memory ceilings are applied.
+- `syscalls`: a seccomp denylist answers `EPERM` to the privileged calls a
+  sandboxed agent never needs — `mount`, `pivot_root`, `ptrace`,
+  `process_vm_readv`/`process_vm_writev`, `bpf`, `perf_event_open`,
+  `userfaultfd`, module and `kexec` loading, key management, and
+  clock/swap/reboot. It is a denylist, not an allowlist: a syscall it does not
+  name is allowed.
 
 Each token is a tested claim, not a description. For every backend and token,
 `tests/integration/test_brace_token_matrix.py` runs the attack that token exists
@@ -320,9 +328,15 @@ A backend missing from the host is skipped with a reason (`pytest -rs`).
   refuses a landlock run). Sockets below TCP are untouched, and a profile that
   grants network gets all of it — there is no host allowlist, exactly as with
   bubblewrap. The TCP deny needs ABI 4 (Linux 6.7+); older kernels simply do not
-  claim `net`. The kernel itself is the wrapper: the run is
+  claim `net`. Where the kernel exposes one it also installs a seccomp denylist
+  (`syscalls`), which stops the privileged calls Landlock does not reason about;
+  it is a denylist, so a syscall outside it is allowed, and it is installed
+  after `no_new_privs` — the kernel refuses it otherwise. A process that
+  reports a different audit architecture (a 32-bit binary, for example) is
+  killed rather than judged, because this machine's syscall numbers do not
+  describe it. The kernel itself is the wrapper: the run is
   `python -I _landlock_launcher.py <spec> -- <argv>`, and a launch that cannot
-  build its ruleset exits without running the command.
+  build its ruleset (or its filter) exits without running the command.
 
 ## Next
 

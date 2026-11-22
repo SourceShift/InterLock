@@ -9,13 +9,22 @@ Landlock is applied by the process itself: the kernel offers no wrapper
 program. That makes this file a security boundary in the same sense ``bwrap``
 is, so every failure path exits **without** running the command - a launcher
 that could not restrict must never fall through to ``exec``.
+
+The second half is seccomp: the same self-applied model, one layer lower. A
+classic-BPF program compares the syscall number against a denylist and answers
+``EPERM`` for it, so a process that is already filesystem-confined cannot reach
+the privileged calls (``mount``, ``ptrace``, ``bpf``, module loading, ...) that
+landlock does not reason about. The program is built by
+:func:`filter_program`, which is pure and unit tested; the kernel validates
+and installs it here.
 """
 import ctypes
+import errno
 import json
 import os
 import stat
 import sys
-from typing import NoReturn
+from typing import List, NoReturn, Tuple
 
 # landlock_* are arch-uniform syscall numbers (444-446) on every architecture
 # Python targets in practice (x86_64, aarch64, arm, riscv64).
@@ -34,6 +43,87 @@ _REFUSED = 126
 # The kernel's ACCESS_FILE mask (security/landlock/fs.c): the only rights a
 # rule may carry when its parent is not a directory. Anything else is EINVAL.
 _ACCESS_FILE = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 14)
+
+# --- seccomp -----------------------------------------------------------------
+# Classic BPF opcodes (linux/filter.h) and the seccomp_data field offsets the
+# program loads. Only three load/jump shapes are used: absolute word load,
+# equality jump, greater-or-equal jump.
+OP_LD_ABS = 0x20        # BPF_LD | BPF_W | BPF_ABS
+OP_JEQ = 0x15           # BPF_JMP | BPF_JEQ | BPF_K
+OP_JGE = 0x35           # BPF_JMP | BPF_JGE | BPF_K
+OP_RET = 0x06           # BPF_RET | BPF_K
+_OFFSET_NR = 0          # struct seccomp_data.nr
+_OFFSET_ARCH = 4        # struct seccomp_data.arch
+_X32_BIT = 1 << 30      # x86_64 syscall numbers above this are the x32 ABI
+_AUDIT_ARCH_X86_64 = 0xC000003E
+
+# seccomp(2) return values (linux/seccomp.h). ERRNO|EPERM is the same answer the
+# kernel gives an unprivileged caller, so a blocked call looks like a policy
+# denial to the program rather than a crash.
+RET_KILL = 0x80000000
+RET_ERRNO = 0x00050000
+RET_ALLOW = 0x7FFF0000
+RET_EPERM = RET_ERRNO | errno.EPERM
+
+_PR_SET_SECCOMP = 22
+_SECCOMP_MODE_FILTER = 2
+
+
+def filter_program(arch, denied) -> List[Tuple[int, int, int, int]]:
+    """The classic-BPF denylist, as ``(code, jt, jf, k)`` instructions.
+
+    Layout: load the audit arch and jump to the kill instruction when it is
+    not *arch* (the syscall numbers below only mean anything on the
+    architecture they came from); load the syscall number; on x86_64 reject
+    the whole x32 range, because ``0x40000000 | nr`` is a different number
+    space a per-number denylist would silently miss; then one equality pair
+    per denied number; then allow; then the kill target.
+
+    Pure and order-stable, so a host without Linux can still prove the
+    answers by interpreting it - see ``tests/test_brace_landlock.py``.
+    """
+    numbers = sorted({int(nr) for nr in denied})
+    program: List[Tuple[int, int, int, int]] = [
+        (OP_LD_ABS, 0, 0, _OFFSET_ARCH),
+        (OP_JEQ, 0, 0, int(arch)),          # jf patched to the kill below
+        (OP_LD_ABS, 0, 0, _OFFSET_NR),
+    ]
+    if int(arch) == _AUDIT_ARCH_X86_64:
+        program.append((OP_JGE, 0, 1, _X32_BIT))
+        program.append((OP_RET, 0, 0, RET_EPERM))
+    for nr in numbers:
+        program.append((OP_JEQ, 0, 1, nr))
+        program.append((OP_RET, 0, 0, RET_EPERM))
+    program.append((OP_RET, 0, 0, RET_ALLOW))
+    program.append((OP_RET, 0, 0, RET_KILL))
+    # Jump offsets count from the *next* instruction: from index 2 the kill
+    # target sits at kill - 2.
+    kill = len(program) - 1
+    code, jt, _jf, k = program[1]
+    program[1] = (code, jt, kill - 2, k)
+    return program
+
+
+class _SockFilter(ctypes.Structure):
+    _fields_ = [("code", ctypes.c_uint16), ("jt", ctypes.c_uint8),
+                ("jf", ctypes.c_uint8), ("k", ctypes.c_uint32)]
+
+
+class _SockFprog(ctypes.Structure):
+    _fields_ = [("len", ctypes.c_ushort),
+                ("filter", ctypes.POINTER(_SockFilter))]
+
+
+def install_filter(lib, arch, denied):
+    """Install the denylist on this process. Caller has already set
+    ``no_new_privs``, without which the kernel refuses the filter."""
+    program = filter_program(arch, denied)
+    filters = (_SockFilter * len(program))(
+        *[_SockFilter(code, jt, jf, k) for code, jt, jf, k in program])
+    prog = _SockFprog(len(program), filters)
+    if lib.prctl(_PR_SET_SECCOMP, _SECCOMP_MODE_FILTER,
+                 ctypes.byref(prog), 0, 0) != 0:
+        _die("prctl(PR_SET_SECCOMP) failed (errno {})".format(ctypes.get_errno()))
 
 
 def usable_access(access, handled, is_dir):
@@ -139,6 +229,13 @@ def apply(spec):
     if lib.syscall(_SYS_RESTRICT_SELF, fd, 0) != 0:
         _die("landlock_restrict_self failed (errno {})".format(ctypes.get_errno()))
     os.close(fd)
+
+    # seccomp is the same self-applied model one layer down, and it needs the
+    # no_new_privs already set above. It is a separate spec key because a host
+    # can have Landlock without exposing a seccomp denylist for its machine.
+    seccomp = spec.get("syscalls")
+    if seccomp:
+        install_filter(lib, int(seccomp["arch"]), seccomp["deny"])
 
 
 def main(argv):

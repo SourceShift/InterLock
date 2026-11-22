@@ -21,6 +21,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import textwrap
 
 import pytest
@@ -32,19 +33,22 @@ from interlock.brace import (
     compile_profile,
     select_backend,
 )
-from interlock.brace.backends.landlock import landlock_abi
+from interlock.brace.backends.landlock import landlock_abi, syscall_filter
 
 
 def _landlock_tokens():
     """Landlock's row, which depends on the kernel rather than the binary.
 
-    ``net`` is only handleable from ABI 4 (Linux 6.7+); on an older kernel the
-    backend honestly reports no ``net`` and this table must expect that, not
+    ``net`` is only handleable from ABI 4 (Linux 6.7+), and ``syscalls`` only
+    where the kernel exposes a seccomp denylist for this machine; below those
+    the backend honestly reports nothing and this table must expect that, not
     the newest row, or the drift test would fail on an older host.
     """
     tokens = ["env", "fs-ro", "fs-rw", "rlimit"]
     if (landlock_abi() or 0) >= 4:
         tokens.append("net")
+    if syscall_filter() is not None:
+        tokens.append("syscalls")
     return tuple(tokens)
 
 
@@ -333,6 +337,55 @@ def test_rlimit_control_no_ceiling_means_no_kill(backend):
     thing that ends it — proving the SIGXCPU above came from the rlimit."""
     with pytest.raises(subprocess.TimeoutExpired):
         _run(backend, compile_profile({}), ["python3", "-c", "while True: pass"], timeout=3)
+
+
+# --- syscalls: a privileged call must come back EPERM (landlock only) ---------
+
+# PTRACE_TRACEME succeeds for any unprivileged process, so the control is a
+# real answer rather than a capability check wearing a sandbox result.
+_PTRACE_PROBE = textwrap.dedent(
+    """
+    import ctypes
+    lib = ctypes.CDLL(None, use_errno=True)
+    rc = lib.ptrace(0, 0, 0, 0)
+    print("%d %d" % (rc, ctypes.get_errno()))
+    """
+)
+
+
+def _interpreter_profile():
+    """This interpreter's prefix, read-only: enough to start python."""
+    return SandboxProfile().with_paths(read=[sys.prefix])
+
+
+def _needs_seccomp(backend):
+    """Skip the syscall row where the backend cannot claim the token."""
+    if backend == "landlock" and syscall_filter() is None:
+        pytest.skip("landlock claims the syscall denylist only where the kernel "
+                    "exposes one")
+
+
+@pytest.mark.parametrize("backend", _backends("landlock"))
+def test_syscalls_escape_privileged_call_fails(backend):
+    """The agent calls ptrace(2) - the call that would let it read or steer
+    another process. The filter answers EPERM and the call does nothing."""
+    _needs_seccomp(backend)
+    result = _run(backend, _interpreter_profile(),
+                  [sys.executable, "-I", "-c", _PTRACE_PROBE])
+
+    assert "syscalls" in result.enforced
+    assert result.stdout.strip() == "-1 1", result.stderr  # rc -1, errno EPERM
+
+
+@pytest.mark.parametrize("backend", _backends("soft"))
+def test_syscalls_control_same_call_lands_without_the_filter(backend):
+    """Control: the identical probe on a backend that claims no syscall layer.
+    It succeeds, which proves the EPERM above was the filter."""
+    result = _run(backend, _interpreter_profile(),
+                  [sys.executable, "-I", "-c", _PTRACE_PROBE])
+
+    assert "syscalls" not in result.enforced
+    assert result.stdout.strip() == "0 0", result.stderr
 
 
 # --- the contract itself: reported tokens must equal the table ----------------

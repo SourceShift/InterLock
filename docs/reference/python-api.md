@@ -1349,7 +1349,7 @@ Builds a profile from the `{template_id: params}` dict that
 | `argv` | The command as executed (after any policy rewrite), without the wrapper. |
 | `returncode` | The exit status. |
 | `stdout`, `stderr` | Captured output, or `""` when not captured. |
-| `enforced` | The guarantees that actually held, as tokens: `pid`, `net`, `fs-ro`, `fs-rw`, `rlimit`, `env`. `soft` and `landlock` report `rlimit` when the profile sets a limit; bubblewrap and sandbox-exec apply the same limits but don't claim the token. |
+| `enforced` | The guarantees that actually held, as tokens: `pid`, `net`, `fs-ro`, `fs-rw`, `rlimit`, `env`, `syscalls`. `soft` and `landlock` report `rlimit` when the profile sets a limit; bubblewrap and sandbox-exec apply the same limits but don't claim the token. `syscalls` is landlock-only, and only where the kernel exposes a seccomp denylist (Linux 4.14+, x86_64/aarch64). |
 | `ok` | Property: `returncode == 0`. |
 
 ### `available_backends` and `select_backend`
@@ -1384,8 +1384,8 @@ The check itself is `interlock.brace.limits.check_limits(profile, platform=None)
 ### `KNOWN_TOKENS`
 
 The frozenset of every token a backend can report:
-`{"env", "rlimit", "fs-ro", "fs-rw", "pid", "net"}`. `require` is checked against
-it.
+`{"env", "rlimit", "fs-ro", "fs-rw", "pid", "net", "syscalls"}`. `require` is
+checked against it.
 
 ---
 

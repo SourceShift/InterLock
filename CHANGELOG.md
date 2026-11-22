@@ -11,6 +11,23 @@ breaking changes land.
 
 ### Added
 
+- **A seccomp syscall denylist on the Landlock backend (`syscalls`).** Landlock
+  reasons about paths, not syscalls, so the launcher now installs a classic-BPF
+  filter after the ruleset and `no_new_privs`: `mount`, `pivot_root`, `chroot`,
+  namespace moves, `ptrace`, `process_vm_readv`/`process_vm_writev`, `kcmp`,
+  module and `kexec` loading, `bpf`, `perf_event_open`, `userfaultfd`, key
+  management, clock/swap/reboot, handle-based opens and (x86_64 only) port I/O
+  come back `EPERM`. Numbers are pinned per architecture from the kernel's own
+  tables (x86_64, aarch64), the x32 range is refused wholesale rather than
+  missed per number, and a foreign audit architecture is killed instead of
+  judged. The token is claimed only where the kernel exposes the denylist
+  (`/proc/sys/kernel/seccomp/actions_avail`, Linux 4.14+) on a pinned machine;
+  it is a denylist, so a syscall outside it still runs. The program is a pure
+  function and interpreted by a tiny BPF evaluator in the tests, so its answers
+  are proved on any host; the kernel answering `EPERM` is Linux-gated, with the
+  soft backend as the control, in `tests/test_brace_landlock.py` and the token
+  matrix.
+
 - **A Landlock backend, for Linux hosts where bubblewrap cannot run.** A
   per-process LSM needs no user namespaces and no helper binary: the process
   restricts itself, then execs the command (`python -I

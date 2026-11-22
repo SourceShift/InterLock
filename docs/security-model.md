@@ -305,6 +305,17 @@ listed earlier on this page, and the plane does not compensate for them.
   read-confined sandbox. Landlock confines reads but is an LSM, not a namespace:
   the child still sees and can signal host processes, so it never reports
   `pid` either.
+- **The seccomp layer is a denylist, not an allowlist.** Where the kernel
+  exposes one, a landlock run also installs a classic-BPF filter that answers
+  `EPERM` to the calls an agent never needs — `mount`, `pivot_root`, `ptrace`,
+  `process_vm_*`, `bpf`, `perf_event_open`, `userfaultfd`, module and `kexec`
+  loading, key management, clock/swap/reboot. A syscall not on the list runs;
+  the filter narrows the privileged surface, it does not enumerate the safe
+  one. A process reporting a different audit architecture (a 32-bit binary, for
+  example) is killed rather than judged, because this machine's numbers do not
+  describe it. **Accepted:** an allowlist needs the exact syscall set of every
+  program the profile will run, which a general-purpose shell-out sandbox
+  cannot know.
 - **A sandbox timeout kills the process group; `setsid()` leaves it.** BRACE
   starts each sandbox in its own session so `timeout=` can kill the child and
   its descendants together, but a descendant that calls `setsid()` itself

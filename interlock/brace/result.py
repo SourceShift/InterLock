@@ -14,7 +14,8 @@ class SandboxResult:
     returncode: the child's exit status, or None if it was never started.
     stdout/stderr: captured child output (empty when not captured).
     enforced:  the containment guarantees the backend claims it applied, as
-               short tokens ("pid", "net", "fs-ro", "fs-rw", "rlimit", "env").
+               short tokens ("pid", "net", "fs-ro", "fs-rw", "rlimit", "env",
+               "syscalls").
                A caller can assert on this to fail closed when a backend
                silently degraded to weaker isolation than the profile asked for.
     """

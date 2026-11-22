@@ -47,7 +47,8 @@ from .trace import check_spawn, record_exit
 # Every token a backend can report in ``enforced``. ``require=`` is checked
 # against this set so a typo ("netw") fails when the Sandbox is built instead of
 # refusing every run with a token no backend could ever claim.
-KNOWN_TOKENS: FrozenSet[str] = frozenset({"env", "rlimit", "fs-ro", "fs-rw", "pid", "net"})
+KNOWN_TOKENS: FrozenSet[str] = frozenset(
+    {"env", "rlimit", "fs-ro", "fs-rw", "pid", "net", "syscalls"})
 
 
 class IsolationUnavailable(RuntimeError):

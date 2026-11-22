@@ -58,6 +58,9 @@ landlock      fs-rw    same write attack / control as bubblewrap same as bubblew
 landlock      net      same exfil attack / control as bubblewrap same as bubblewrap,
                                                                ABI 4+ only
 landlock      rlimit   same CPU burn / control as soft          same as soft
+landlock      syscalls ``ptrace(PTRACE_TRACEME)`` / the same    kernel answers
+                       probe on the soft backend               EPERM; the control
+                                                               succeeds
 sandbox-exec  env      same sentinel attack / control as soft    same as soft
 sandbox-exec  fs-rw    same write attack / control as bubblewrap same as bubblewrap
 sandbox-exec  net      same exfil attack / control as bubblewrap same as bubblewrap
@@ -67,9 +70,12 @@ sandbox-exec  rlimit   same CPU burn / control as soft          same as soft
 Tokens no backend may claim on these hosts: ``fs-ro`` and ``pid`` are never
 reported by sandbox-exec (macOS cannot confine reads, and has no PID
 namespaces), ``landlock`` never reports ``pid`` either (an LSM, not a namespace,
-so host pids stay visible) and claims ``net`` only where the kernel's ABI
-handles TCP (ABI 4, Linux 6.7+), and ``soft`` reports only ``env`` and
-``rlimit`` — it is not a security boundary and does not pretend to be one.
+so host pids stay visible), claims ``net`` only where the kernel's ABI handles
+TCP (ABI 4, Linux 6.7+) and ``syscalls`` only where the kernel exposes a seccomp
+denylist for the machine (``/proc/sys/kernel/seccomp/actions_avail``, Linux
+4.14+, x86_64/aarch64 — a denylist, so a syscall outside it still runs), and
+``soft`` reports only ``env`` and ``rlimit`` — it is not a security boundary and
+does not pretend to be one.
 
 Resource ceilings (``cpu_seconds``, ``memory_mb``) are applied on every
 backend: the rlimits are set on the wrapper before it execs and are inherited by

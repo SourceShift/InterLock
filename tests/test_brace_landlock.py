@@ -1,16 +1,35 @@
 """The Landlock backend: the spec is pure and unit-tested anywhere; the real
-kernel restriction is proved only where Landlock exists (Linux 5.13+)."""
+kernel restriction is proved only where Landlock exists (Linux 5.13+).
+
+The syscall denylist is proved the same way in two halves. Its program is a
+pure function, so a small classic-BPF interpreter here runs it for synthetic
+``(arch, nr)`` pairs on any host. The kernel actually answering EPERM is only
+observable on Linux, and only there is the ``syscalls`` token claimed.
+"""
 import json
 import shutil
 import sys
+import textwrap
 
 import pytest
 
 from interlock.brace import IsolationUnavailable, Sandbox, SandboxProfile
 from interlock.brace.backends import select_backend
-from interlock.brace.backends._landlock_launcher import usable_access
+from interlock.brace.backends._landlock_launcher import (
+    OP_JEQ,
+    OP_JGE,
+    OP_LD_ABS,
+    OP_RET,
+    RET_ALLOW,
+    RET_EPERM,
+    RET_KILL,
+    filter_program,
+    usable_access,
+)
 from interlock.brace.backends.bubblewrap import BubblewrapBackend
 from interlock.brace.backends.landlock import (
+    AUDIT_ARCH_AARCH64,
+    AUDIT_ARCH_X86_64,
     FS_EXECUTE,
     FS_MAKE_REG,
     FS_READ_DIR,
@@ -22,13 +41,18 @@ from interlock.brace.backends.landlock import (
     READ,
     LandlockBackend,
     build_spec,
+    denied_numbers,
     landlock_abi,
+    syscall_filter,
 )
 
 _ABI = landlock_abi()
 _SH = shutil.which("sh") or "/bin/sh"
 _NEEDS_LANDLOCK = pytest.mark.skipif(
     _ABI is None, reason="needs Linux with Landlock (kernel 5.13+)")
+_NEEDS_SECCOMP = pytest.mark.skipif(
+    syscall_filter() is None,
+    reason="needs Linux with a seccomp denylist (4.14+, x86_64/aarch64)")
 
 
 @pytest.fixture
@@ -37,6 +61,15 @@ def fake_abi(monkeypatch):
     def pin(value):
         monkeypatch.setattr(
             "interlock.brace.backends.landlock.landlock_abi", lambda: value)
+    return pin
+
+
+@pytest.fixture
+def fake_filter(monkeypatch):
+    """Pin the seccomp availability probe so wrap() is host-independent."""
+    def pin(value):
+        monkeypatch.setattr(
+            "interlock.brace.backends.landlock.syscall_filter", lambda: value)
     return pin
 
 
@@ -124,6 +157,94 @@ def test_network_is_denied_only_where_the_abi_can_deny_it():
     assert build_spec(SandboxProfile(allow_network=True), abi=4)["handled_net"] == 0
 
 
+# --- the seccomp program is pure, so interpret it anywhere --------------------
+def _evaluate(program, nr, arch):
+    """Run a classic-BPF program the way the kernel would for one syscall.
+
+    Only the three opcodes ``filter_program`` emits are implemented; anything
+    else fails loudly, because a program the kernel cannot run is exactly the
+    defect this interpreter exists to catch.
+    """
+    data = {0: nr, 4: arch}  # struct seccomp_data: nr at 0, arch at 4
+    accumulator = 0
+    pc = 0
+    while True:
+        code, jt, jf, k = program[pc]
+        if code == OP_LD_ABS:
+            accumulator = data[k]
+            pc += 1
+        elif code == OP_JEQ:
+            pc += 1 + (jt if accumulator == k else jf)
+        elif code == OP_JGE:
+            pc += 1 + (jt if accumulator >= k else jf)
+        elif code == OP_RET:
+            return k
+        else:
+            raise AssertionError("unknown opcode %#x" % code)
+
+
+def _x86_64_program():
+    return filter_program(AUDIT_ARCH_X86_64, denied_numbers(AUDIT_ARCH_X86_64))
+
+
+def test_a_denied_syscall_is_answered_with_eperm():
+    # 165 is mount(2) on x86_64: the call a sandboxed agent must never land.
+    assert _evaluate(_x86_64_program(), 165, AUDIT_ARCH_X86_64) == RET_EPERM
+    # 101 is ptrace(2).
+    assert _evaluate(_x86_64_program(), 101, AUDIT_ARCH_X86_64) == RET_EPERM
+
+
+def test_a_syscall_off_the_list_is_allowed():
+    # read(2) and write(2) are how every useful program does its work.
+    assert _evaluate(_x86_64_program(), 0, AUDIT_ARCH_X86_64) == RET_ALLOW
+    assert _evaluate(_x86_64_program(), 1, AUDIT_ARCH_X86_64) == RET_ALLOW
+    assert _evaluate(_x86_64_program(), 59, AUDIT_ARCH_X86_64) == RET_ALLOW  # execve
+
+
+def test_a_foreign_architecture_is_killed_rather_than_judged():
+    """The numbers in the program mean something else on another ABI, so the
+    filter kills instead of answering a denial it cannot justify."""
+    assert _evaluate(_x86_64_program(), 165, AUDIT_ARCH_AARCH64) == RET_KILL
+
+
+def test_the_x32_number_space_is_answered_too():
+    """x86_64 syscalls above bit 30 are the x32 ABI: ``0x40000000 | 165`` is a
+    different call a per-number denylist would silently let through."""
+    assert _evaluate(_x86_64_program(), (1 << 30) | 165,
+                     AUDIT_ARCH_X86_64) == RET_EPERM
+
+
+def test_each_architecture_is_judged_by_its_own_number_table():
+    """mount(2) is 165 on x86_64 and 40 on aarch64; a program built for one
+    must not answer for the other."""
+    arm = filter_program(AUDIT_ARCH_AARCH64, denied_numbers(AUDIT_ARCH_AARCH64))
+    assert _evaluate(arm, 40, AUDIT_ARCH_AARCH64) == RET_EPERM
+    assert _evaluate(arm, 165, AUDIT_ARCH_AARCH64) == RET_ALLOW
+
+
+def test_the_denylist_names_privileged_calls_only():
+    assert 165 in denied_numbers(AUDIT_ARCH_X86_64)       # mount
+    assert 101 in denied_numbers(AUDIT_ARCH_X86_64)       # ptrace
+    assert 321 in denied_numbers(AUDIT_ARCH_X86_64)       # bpf
+    # Port I/O does not exist on aarch64, so it is not on that list.
+    assert 172 in denied_numbers(AUDIT_ARCH_X86_64)
+    assert 172 not in denied_numbers(AUDIT_ARCH_AARCH64)
+    # An ordinary syscall is never denied by number.
+    for table in (AUDIT_ARCH_X86_64, AUDIT_ARCH_AARCH64):
+        numbers = denied_numbers(table)
+        assert len(numbers) == len(set(numbers))
+        assert all(nr > 0 for nr in numbers)
+        assert 0 not in numbers and 1 not in numbers  # read / write
+
+
+def test_the_filter_is_reported_only_where_the_kernel_exposes_one():
+    if not sys.platform.startswith("linux"):
+        assert syscall_filter() is None
+    else:
+        assert syscall_filter() is None or syscall_filter()[0] in (
+            AUDIT_ARCH_X86_64, AUDIT_ARCH_AARCH64)
+
+
 # --- the wrap ----------------------------------------------------------------
 def test_wrap_launches_the_restricting_child_then_the_command(fake_abi, tmp_path):
     fake_abi(3)
@@ -151,6 +272,25 @@ def test_wrap_refuses_without_a_kernel_to_restrict_on(fake_abi):
     with pytest.raises(RuntimeError):
         LandlockBackend().wrap(SandboxProfile(), ["/bin/true"])
     assert LandlockBackend.is_available() is False
+
+
+def test_wrap_carries_the_syscall_denylist_into_the_spec(fake_abi, fake_filter):
+    fake_abi(3)
+    fake_filter((AUDIT_ARCH_X86_64, (101, 165)))
+    plan = LandlockBackend().wrap(SandboxProfile(), ["/bin/true"])
+    spec = json.loads(plan.exec_argv[3])
+    assert spec["syscalls"] == {"arch": AUDIT_ARCH_X86_64, "deny": [101, 165]}
+    assert "syscalls" in plan.enforced
+
+
+def test_wrap_omits_the_syscall_layer_when_the_host_has_none(fake_abi, fake_filter):
+    """A host with Landlock but no seccomp denylist for its machine still gets
+    filesystem confinement — and is not told it got a syscall layer."""
+    fake_abi(3)
+    fake_filter(None)
+    plan = LandlockBackend().wrap(SandboxProfile(), ["/bin/true"])
+    assert "syscalls" not in json.loads(plan.exec_argv[3])
+    assert "syscalls" not in plan.enforced
 
 
 def test_selection_prefers_landlock_over_soft_when_bwrap_is_absent(monkeypatch):
@@ -205,3 +345,40 @@ def test_a_missing_granted_path_refuses_instead_of_running(tmp_path):
     assert result.returncode != 0
     assert "ran" not in result.stdout
     assert "cannot open" in result.stderr
+
+
+# --- real syscall confinement -------------------------------------------------
+# PTRACE_TRACEME is allowed for any unprivileged process, so its success is the
+# control and its EPERM is the filter - no capabilities involved either way.
+_PTRACE_PROBE = textwrap.dedent(
+    """
+    import ctypes
+    lib = ctypes.CDLL(None, use_errno=True)
+    rc = lib.ptrace(0, 0, 0, 0)  # PTRACE_TRACEME
+    print("%d %d" % (rc, ctypes.get_errno()))
+    """
+)
+
+
+def _interpreter_profile():
+    """This interpreter's prefix, read-only: enough to start python."""
+    return SandboxProfile().with_paths(read=[sys.prefix])
+
+
+@_NEEDS_SECCOMP
+@_NEEDS_LANDLOCK
+def test_a_privileged_syscall_is_refused_by_the_kernel():
+    result = Sandbox(_interpreter_profile(), backend="landlock").run(
+        [sys.executable, "-I", "-c", _PTRACE_PROBE])
+    assert "syscalls" in result.enforced
+    assert result.stdout.strip() == "-1 1", result.stderr  # EPERM
+
+
+@_NEEDS_SECCOMP
+def test_the_same_call_succeeds_without_the_filter():
+    """Control: the identical probe on the soft backend, which claims no
+    syscall layer. It succeeds, so the EPERM above came from the filter."""
+    result = Sandbox(_interpreter_profile(), backend="soft").run(
+        [sys.executable, "-I", "-c", _PTRACE_PROBE])
+    assert "syscalls" not in result.enforced
+    assert result.stdout.strip() == "0 0", result.stderr
