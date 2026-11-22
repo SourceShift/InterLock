@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..enforce import Decision, Verdict
+from ..enforce import MAX_REMEDIATION, Decision, Verdict
 from ..event import SensorEvent, result_payload, strip_trust_labels
 from ..policy.engine import epoch_of
 from ..receipt import emit_receipt
@@ -85,11 +85,19 @@ class HookOutcome:
     modified_args: Optional[Dict[str, Any]] = None
     modified_result: Any = None
     observed: bool = False
+    # The policy's one-line hint at what would be allowed instead (from
+    # ``Decision.remediation``), appended to the message for a non-ALLOW
+    # verdict. Clipped to MAX_REMEDIATION: this text is model input.
+    remediation: Optional[str] = None
 
     @property
     def message(self) -> str:
         label = " [{}]".format(self.policy_id) if self.policy_id else ""
-        return "interlock: {}{}".format(self.reason or "policy decision", label)
+        text = "interlock: {}{}".format(self.reason or "policy decision", label)
+        hint = self.remediation if self.verdict != Verdict.ALLOW else None
+        if isinstance(hint, str) and hint:
+            text = "{} - {}".format(text, hint[:MAX_REMEDIATION])
+        return text
 
 
 class Adapter:
@@ -383,10 +391,12 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
         emit(primary, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed,
              policy_artifact=artifact)
         return adapter.render(call, HookOutcome(Verdict.ALLOW, decision.reason,
-                                                decision.policy_id, policy, observed=True))
+                                                decision.policy_id, policy, observed=True,
+                                                remediation=decision.remediation))
 
     outcome = HookOutcome(policy, decision.reason, decision.policy_id, policy,
-                          modified_args=decision.modified_args)
+                          modified_args=decision.modified_args,
+                          remediation=decision.remediation)
     approval = None
     use_queue = reviews is not None and (review_mode == "always" or (
         review_mode == "fallback" and not call.can_ask))
@@ -460,7 +470,8 @@ def _decide_call(adapter: Adapter, call: HookCall, engine: Any, enforcement: str
                           reason="unhandled verdict, denied fail-closed")
     enforced = Decision(outcome.verdict, outcome.reason, decision.policy_id,
                         decision.modified_args if outcome.verdict == Verdict.MODIFY else None,
-                        attributed_to=decision.attributed_to)
+                        attributed_to=decision.attributed_to,
+                        remediation=decision.remediation)
     emit(primary, enforced, policy_epoch=epoch, elapsed_us=elapsed,
          policy_verdict=policy.name if outcome.verdict != policy else None,
          approval=approval, policy_artifact=artifact)
@@ -493,11 +504,13 @@ def _decide_result(adapter: Adapter, call: HookCall, engine: Any, enforcement: s
         emit_receipt(event, decision, observed=True, policy_epoch=epoch, elapsed_us=elapsed,
                      policy_artifact=artifact)
         return adapter.render(call, HookOutcome(Verdict.ALLOW, decision.reason,
-                                                decision.policy_id, policy, observed=True))
+                                                decision.policy_id, policy, observed=True,
+                                                remediation=decision.remediation))
     verdict = Verdict.BLOCK if policy == Verdict.ESCALATE else policy
     outcome = HookOutcome(verdict, decision.reason, decision.policy_id, policy,
                           modified_result=rebuild(decision.modified_result)
-                          if verdict == Verdict.MODIFY else decision.modified_result)
+                          if verdict == Verdict.MODIFY else decision.modified_result,
+                          remediation=decision.remediation)
     emit_receipt(event, replace(decision, verdict=verdict), policy_epoch=epoch,
                  elapsed_us=elapsed,
                  policy_verdict=policy.name if verdict != policy else None,

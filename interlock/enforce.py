@@ -5,6 +5,11 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Dict, Optional
 
+#: Longest ``Decision.remediation`` text an agent is shown. The hint is model
+#: input, so it is clipped to one short line: a policy file cannot use it to
+#: smuggle a paragraph into the agent's context.
+MAX_REMEDIATION = 200
+
 
 class Verdict(IntEnum):
     """What the guard does with an action. The integer values are the wire
@@ -49,6 +54,11 @@ class Decision:
     # (an ungranted community block). Set only by the declarative loader; with
     # no approver installed such an escalation is recorded, not refused.
     mesh_ceiling: Optional[str] = None
+    # What would be allowed instead, in one line, shown to the agent beside a
+    # non-ALLOW verdict. Name the alternative, never an argument value or a
+    # path: this text reaches the model, and it is bounded at
+    # MAX_REMEDIATION characters when rendered.
+    remediation: Optional[str] = None
 
     @classmethod
     def allow(cls, reason: str = "", policy_id: Optional[str] = None) -> "Decision":
@@ -60,8 +70,10 @@ class Decision:
         reason: str,
         policy_id: Optional[str] = None,
         attributed_to: Optional[str] = None,
+        remediation: Optional[str] = None,
     ) -> "Decision":
-        return cls(Verdict.BLOCK, reason, policy_id, attributed_to=attributed_to)
+        return cls(Verdict.BLOCK, reason, policy_id, attributed_to=attributed_to,
+                   remediation=remediation)
 
     @classmethod
     def modify(
@@ -70,10 +82,11 @@ class Decision:
         reason: str = "",
         policy_id: Optional[str] = None,
         attributed_to: Optional[str] = None,
+        remediation: Optional[str] = None,
     ) -> "Decision":
         return cls(
             Verdict.MODIFY, reason, policy_id, modified_args,
-            attributed_to=attributed_to,
+            attributed_to=attributed_to, remediation=remediation,
         )
 
     @classmethod
@@ -82,6 +95,7 @@ class Decision:
         reason: str,
         policy_id: Optional[str] = None,
         attributed_to: Optional[str] = None,
+        remediation: Optional[str] = None,
     ) -> "Decision":
         """Build an ESCALATE: pause the call until an approver decides.
 
@@ -89,7 +103,8 @@ class Decision:
         approval, so write it for a human: what the call does and why it needs
         a decision. ``attributed_to`` names the argument that triggered it.
         """
-        return cls(Verdict.ESCALATE, reason, policy_id, attributed_to=attributed_to)
+        return cls(Verdict.ESCALATE, reason, policy_id, attributed_to=attributed_to,
+                   remediation=remediation)
 
     @classmethod
     def modify_result(
@@ -98,11 +113,13 @@ class Decision:
         reason: str = "",
         policy_id: Optional[str] = None,
         attributed_to: Optional[str] = None,
+        remediation: Optional[str] = None,
     ) -> "Decision":
         """Build a MODIFY that replaces a tool result instead of its args."""
         return cls(
             Verdict.MODIFY, reason, policy_id, None,
             attributed_to=attributed_to, modified_result=result,
+            remediation=remediation,
         )
 
 

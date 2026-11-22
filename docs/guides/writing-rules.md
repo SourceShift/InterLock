@@ -51,6 +51,44 @@ If the test itself crashes, `deny_when` blocks the call rather than letting it
 through. That makes it the safest wrapper for any check that might hit a missing
 key or a surprising type.
 
+## Say what would be allowed
+
+A bare "blocked" leaves the agent guessing, so it retries the same call or
+gives up. A `remediation` line tells it the shape of a call that would pass,
+and the hook appends it to the reason the model reads:
+
+```python
+from interlock import Decision
+
+def no_rm_rf(event):
+    command = str(event.args.get("command", ""))
+    if event.action != "Bash" or "rm -rf" not in command:
+        return None
+    return Decision.block(
+        "recursive delete",
+        policy_id="fs.v1",
+        attributed_to="command",
+        remediation="delete the individual files, or move them to a temp dir",
+    )
+```
+
+In a policy file the same hint is a rule key, on a plain rule or a detector
+rule:
+
+```json
+{"id": "no-rm-rf", "verdict": "block",
+ "when": {"all": [{"action": "Bash"}, {"arg": "command", "contains": "rm -rf"}]},
+ "reason": "recursive delete",
+ "remediation": "delete the individual files, or move them to a temp dir"}
+```
+
+Two rules keep it safe to show the model: name an alternative, never an
+argument value or a path (the hint must not become a leak of what the call
+wanted to touch), and keep it to one line — anything past 200 characters is
+clipped when rendered, and a longer string is rejected at load. The hint is not
+written to a receipt; it steers the agent, the receipt records the decision.
+An `ALLOW` never shows one.
+
 ## Write your own rule
 
 When you need more than a yes/no test, write a function. Return a `Decision` to

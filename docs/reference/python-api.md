@@ -583,16 +583,17 @@ A dataclass describing what to do with one event.
 | `modified_args` | `dict` or `None` | For a call-side modify: the arguments to merge into the call. |
 | `attributed_to` | `str` or `None` | The **name** of the argument that triggered the decision (`"path"`), never its value. |
 | `modified_result` | any or `None` | For a result-side modify: the value that replaces the tool's result. |
+| `remediation` | `str` or `None` | One line saying what *would* be allowed instead, shown to the agent beside a non-ALLOW verdict. Name the alternative, never an argument value or a path; it is clipped to `MAX_REMEDIATION` (200) characters when rendered and is not stored in a receipt. |
 
 Build decisions with the class methods:
 
 | Constructor | Use it to |
 |---|---|
 | `Decision.allow(reason="", policy_id=None)` | State an explicit allow. Rarely needed: returning `None` does the same. |
-| `Decision.block(reason, policy_id=None, attributed_to=None)` | Deny the call. |
-| `Decision.modify(modified_args, reason="", policy_id=None, attributed_to=None)` | Let the call continue with some arguments replaced. Only the keys you pass change. |
-| `Decision.modify_result(result, reason="", policy_id=None, attributed_to=None)` | Replace a tool's result (use in a result-phase rule). |
-| `Decision.escalate(reason, policy_id=None, attributed_to=None)` | Hold the call for a human approver ([approvals](../guides/approvals.md)). A block from any other rule still wins. |
+| `Decision.block(reason, policy_id=None, attributed_to=None, remediation=None)` | Deny the call. |
+| `Decision.modify(modified_args, reason="", policy_id=None, attributed_to=None, remediation=None)` | Let the call continue with some arguments replaced. Only the keys you pass change. |
+| `Decision.modify_result(result, reason="", policy_id=None, attributed_to=None, remediation=None)` | Replace a tool's result (use in a result-phase rule). |
+| `Decision.escalate(reason, policy_id=None, attributed_to=None, remediation=None)` | Hold the call for a human approver ([approvals](../guides/approvals.md)). A block from any other rule still wins. |
 
 ### `Blocked`
 

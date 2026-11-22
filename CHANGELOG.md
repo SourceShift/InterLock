@@ -11,6 +11,20 @@ breaking changes land.
 
 ### Added
 
+- **Remediation hints on a denial** (`Decision.remediation`, the `remediation`
+  rule key). A block that says only "blocked" leaves the agent retrying blindly
+  or giving up; a block that says what *would* be allowed lets it converge.
+  `Decision` now carries an optional one-line `remediation`, every constructor
+  accepts it, and the hook appends it to the reason the agent reads (Claude
+  Code, Codex and Cursor all render the same message). A policy file can set it
+  on a plain rule or a detector rule; the declarative loader attaches it to
+  whatever non-ALLOW decision the rule returns, after any ceiling escalation,
+  and never overwrites a hint a detector set itself. The text is model input, so
+  it is bounded: one line, clipped to 200 characters when rendered
+  (`MAX_REMEDIATION`), rejected at load when longer or empty, and not written to
+  a receipt — the hint steers the agent, the receipt records the decision. An
+  `ALLOW` never shows one.
+
 - **Sequence policies** (`sequence_guard`). Every rule so far judged one event
   in isolation, so the incident shapes that only exist in order - read a
   credential then open a network connection, install a dependency then run its

@@ -96,7 +96,7 @@ import time
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from ..actions import canonical_action, canonical_actions, command_values
-from ..enforce import Decision, Verdict
+from ..enforce import MAX_REMEDIATION, Decision, Verdict
 from ..event import SensorEvent
 from .engine import PolicyEngine, Rule
 
@@ -126,7 +126,8 @@ RULE_ORIGINS: FrozenSet[str] = frozenset({"mesh"})
 #: never change what a rule decides.
 _RULE_KEYS = frozenset(
     {"id", "verdict", "reason", "when", "set", "locked", "phase", "detector", "with",
-     "widenable", "description", "on", "status", "mode", "ceiling", "origin", "license"}
+     "widenable", "description", "on", "status", "mode", "ceiling", "origin", "license",
+     "remediation"}
 )
 _DOC_KEYS = frozenset({"version", "name", "description", "extends", "rules", "disable", "tools",
                        "channel", "license", "provenance"})
@@ -808,6 +809,13 @@ def _compile_rule(raw: Any, where: str) -> _Compiled:
     if not isinstance(raw, dict):
         raise PolicyError("a rule must be an object", where)
     _check_keys(raw, _RULE_KEYS, where, "rule")
+    remediation = raw.get("remediation")
+    if remediation is not None:
+        if not isinstance(remediation, str) or not remediation.strip():
+            raise PolicyError("'remediation' must be a non-empty string", where)
+        if len(remediation) > MAX_REMEDIATION:
+            raise PolicyError(
+                "'remediation' must be at most {} characters".format(MAX_REMEDIATION), where)
     rule_id = raw.get("id")
     if not isinstance(rule_id, str) or not re.match(r"^[A-Za-z0-9_.:/-]{1,128}$", rule_id):
         raise PolicyError("'id' must be 1-128 characters of [A-Za-z0-9_.:/-]", where)
@@ -886,6 +894,11 @@ def _finish(rule_id: str, rule: Rule, raw: Mapping[str, Any], locked: bool, mode
             ceiling: Optional[str]) -> _Compiled:
     if ceiling is not None:
         rule = _ceilinged(rule, ceiling, mesh=raw.get("origin") == "mesh")
+    remediation = raw.get("remediation")
+    if isinstance(remediation, str) and remediation:
+        # Attach the hint last, so it survives a ceiling escalation and applies
+        # to whatever verdict the rule (or its detector) settled on.
+        rule = _remediated(rule, remediation)
     return _Compiled(rule_id, _labelled(rule, rule_id, locked), raw, locked, shadow=(mode == "shadow"))
 
 
@@ -922,6 +935,25 @@ def _scoped(rule: Rule, scope: Condition) -> Rule:
 
     scoped.phase = getattr(rule, "phase", "call")  # type: ignore[attr-defined]
     return scoped
+
+
+def _remediated(rule: Rule, text: str) -> Rule:
+    """Attach *text* to every non-ALLOW decision that carries no hint of its own.
+
+    A rule author writes one line saying what would be allowed instead; the
+    hint reaches the agent beside the denial. A detector's own remediation, or
+    a decision that already carries one, is never overwritten.
+    """
+
+    def remediated(event: SensorEvent) -> Optional[Decision]:
+        decision = rule(event)
+        if (decision is not None and decision.verdict != Verdict.ALLOW
+                and not decision.remediation):
+            decision = dataclasses.replace(decision, remediation=text)
+        return decision
+
+    remediated.phase = getattr(rule, "phase", "call")  # type: ignore[attr-defined]
+    return remediated
 
 
 def _labelled(rule: Rule, rule_id: str, locked: bool) -> Rule:
