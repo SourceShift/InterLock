@@ -26,7 +26,7 @@ import os
 import re
 import stat
 import tempfile
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Union
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 #: Where Claude Code keeps skills, by default. Expanded per call.
 DEFAULT_ROOTS: Sequence[str] = ("~/.claude/skills",)
@@ -96,6 +96,57 @@ def find_skill(name: object, roots: Optional[Iterable[str]] = None) -> Optional[
             if os.path.isdir(candidate):
                 return candidate
     return None
+
+
+def discover_skills(
+    roots: Optional[Iterable[str]] = None,
+) -> List[Tuple[str, str]]:
+    """Return ``(name, directory)`` for every skill discoverable under ``roots``.
+
+    A directory directly under a root is a plain skill when it contains a
+    regular ``SKILL.md``; a directory ``<root>/<plugin>/skills/<skill>`` is a
+    ``plugin:skill`` when ``<skill>`` contains one. Names the component rule
+    would reject are skipped, so every returned name is one :func:`find_skill`
+    accepts. Symlinked directories are never followed: they are not part of the
+    tree the operator reviewed.
+
+    The result is sorted by name and deduplicated across roots (the first root
+    that names a skill wins). Only directory entries and ``SKILL.md`` presence
+    are read; nothing is hashed.
+    """
+    found: Dict[str, str] = {}
+
+    def _entries(directory: str) -> List[os.DirEntry]:
+        try:
+            with os.scandir(directory) as handle:
+                return list(handle)
+        except OSError:
+            return []
+
+    for root in _expand_roots(roots):
+        for outer in _entries(root):
+            if outer.is_symlink() or not outer.is_dir(follow_symlinks=False):
+                continue
+            plugin = outer.name
+            if not _safe_part(plugin):
+                continue
+            plugin_dir = outer.path
+            if os.path.isfile(os.path.join(plugin_dir, "SKILL.md")):
+                found.setdefault(plugin, plugin_dir)
+            skills_dir = os.path.join(plugin_dir, "skills")
+            if os.path.islink(skills_dir) or not os.path.isdir(skills_dir):
+                continue
+            for inner in _entries(skills_dir):
+                if inner.is_symlink() or not inner.is_dir(follow_symlinks=False):
+                    continue
+                skill = inner.name
+                if not _safe_part(skill):
+                    continue
+                if not os.path.isfile(os.path.join(inner.path, "SKILL.md")):
+                    continue
+                found.setdefault(
+                    "{}:{}".format(plugin, skill), inner.path)
+    return sorted(found.items())
 
 
 def skill_digest(path: str) -> str:

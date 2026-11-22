@@ -7,6 +7,7 @@ targets are not part of the reviewed directory), and must refuse a directory
 that exceeds the work bounds. Names must never escape a root, and the pin file
 must round-trip with mode ``0600`` through an atomic replace.
 """
+import json
 import os
 import stat
 
@@ -168,6 +169,44 @@ def test_find_skill_expands_the_home_default_at_call_time(tmp_path, monkeypatch)
     assert skills.find_skill("reviewed") == str(directory)
 
 
+# --- discovering every skill ------------------------------------------------
+
+
+def test_discover_skills_finds_a_plain_skill_only_with_skill_md(tmp_path):
+    root = tmp_path / "skills"
+    found = root / "reviewed"
+    found.mkdir(parents=True)
+    _write(found, "SKILL.md", "reviewed\n")
+    # A directory without SKILL.md, and one whose name the component rule
+    # rejects, are both skipped.
+    (root / "helper").mkdir()
+    _write(root / "helper", "README.md", "not a skill\n")
+    spaced = root / "bad name"
+    spaced.mkdir()
+    _write(spaced, "SKILL.md", "unsafe name\n")
+    assert skills.discover_skills([str(root)]) == [
+        ("reviewed", str(found))]
+
+
+def test_discover_skills_finds_the_plugin_layout(tmp_path):
+    root = tmp_path / "skills"
+    directory = root / "my-plugin" / "skills" / "reviewed"
+    directory.mkdir(parents=True)
+    _write(directory, "SKILL.md", "reviewed\n")
+    assert skills.discover_skills([str(root)]) == [
+        ("my-plugin:reviewed", str(directory))]
+
+
+def test_discover_skills_does_not_follow_a_symlinked_directory(tmp_path):
+    root = tmp_path / "skills"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _write(outside, "SKILL.md", "not reviewed here\n")
+    os.symlink(str(outside), str(root / "linked"))
+    assert skills.discover_skills([str(root)]) == []
+
+
 # --- the pin file -----------------------------------------------------------
 
 
@@ -278,3 +317,86 @@ def test_cli_check_uses_the_default_pin_file_and_exit_codes(
 
     assert main(["skills", "check", "absent"]) == 2
     assert "is not pinned" in capsys.readouterr().err
+
+
+def _audit_tree(tmp_path):
+    """A skills root with one pinned-and-matching skill and one unpinned one."""
+    root = tmp_path / "skills"
+    matched = root / "matched"
+    matched.mkdir(parents=True)
+    _write(matched, "SKILL.md", "matched instructions\n")
+    fresh = root / "fresh"
+    fresh.mkdir()
+    _write(fresh, "SKILL.md", "brand new instructions\n")
+    pins = tmp_path / "skills.json"
+    skills.save_pins(
+        str(pins), {"matched": skills.skill_digest(str(matched))})
+    return root, pins
+
+
+def _audit_args(root, pins, *extra):
+    return ["skills", "check", "--all", "--roots", str(root),
+            "--pins", str(pins), *extra]
+
+
+def test_cli_check_all_reports_ok_and_unpinned_and_exits_0(tmp_path, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+    assert main(_audit_args(root, pins)) == 0
+    statuses = {
+        line.split()[0]: line.split()[1]
+        for line in capsys.readouterr().out.splitlines()
+    }
+    assert statuses == {"fresh": "unpinned", "matched": "ok"}
+
+
+def test_cli_check_all_json_lists_each_status(tmp_path, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+    assert main(_audit_args(root, pins, "--json")) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["pins"] == str(pins)
+    assert {entry["name"]: entry["status"] for entry in payload["skills"]} == {
+        "fresh": "unpinned", "matched": "ok"}
+
+
+def test_cli_check_all_exits_2_on_drift(tmp_path, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+    _write(root / "matched", "SKILL.md", "changed after pinning\n")
+    assert main(_audit_args(root, pins)) == 2
+    out = capsys.readouterr().out
+    line = next(line for line in out.splitlines() if line.startswith("matched"))
+    assert line.split()[1] == "drift"
+
+
+def test_cli_check_all_exits_2_when_a_skill_cannot_be_hashed(
+        tmp_path, monkeypatch, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+
+    def boom(_path):
+        raise OSError("cannot read")
+
+    monkeypatch.setattr(skills, "skill_digest", boom)
+    assert main(_audit_args(root, pins)) == 2
+    statuses = {
+        line.split()[0]: line.split()[1]
+        for line in capsys.readouterr().out.splitlines()
+    }
+    assert statuses == {"fresh": "error", "matched": "error"}
+
+
+def test_cli_check_requires_exactly_one_of_name_or_all(tmp_path, capsys):
+    from interlock.cli import main
+
+    root, pins = _audit_tree(tmp_path)
+    assert main(["skills", "check", "matched", "--all",
+                 "--roots", str(root), "--pins", str(pins)]) == 64
+    assert "NAME or --all" in capsys.readouterr().err
+    assert main(["skills", "check"]) == 64
+    assert "NAME or --all" in capsys.readouterr().err

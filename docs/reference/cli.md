@@ -641,20 +641,24 @@ Pin a skill's on-disk content, and check it before activation.
 interlock skills pin NAME [--roots DIR ...] [--pins FILE] [--json]
 interlock skills list [--pins FILE] [--json]
 interlock skills check NAME [--roots DIR ...] [--pins FILE] [--json]
+interlock skills check --all [--roots DIR ...] [--pins FILE] [--json]
 ```
 
 A skill is a directory an agent loads under a trusted name. ``pin`` records the
 sha256 of the files behind that name in a pin file, ``list`` shows what is
 pinned, and ``check`` recomputes a skill's digest and compares it with its pin.
-The default pin file is ``~/.interlock/skills.json`` and the default roots are
-``~/.claude/skills``.
+With ``--all``, ``check`` walks the roots and audits every discoverable skill,
+reporting each as ``ok``, ``drift``, ``unpinned`` or ``error``. The audit is
+read-only: it never writes the pin file. The default pin file is
+``~/.interlock/skills.json`` and the default roots are ``~/.claude/skills``.
 
-Exit codes: 0 success / a matching digest, 2 a mismatch, an unknown skill or a
-missing skill, 64 no or unknown action.
+Exit codes: 0 success / a matching digest / an audit with no drift or error,
+2 a mismatch, an unknown or missing skill, or an unreadable one, 64 no or
+unknown action, or a ``check`` that names neither or both of NAME and ``--all``.
 
 ```text
 usage: interlock skills [-h] ACTION ...
 usage: interlock skills pin [-h] [--roots DIR [DIR ...]] [--pins FILE] [--json] name
 usage: interlock skills list [-h] [--pins FILE] [--json]
-usage: interlock skills check [-h] [--roots DIR [DIR ...]] [--pins FILE] [--json] name
+usage: interlock skills check [-h] [--all] [--roots DIR [DIR ...]] [--pins FILE] [--json] [name]
 ```
