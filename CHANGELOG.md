@@ -11,6 +11,20 @@ breaking changes land.
 
 ### Added
 
+- **The taint label survives the process.** The flow tracker's memory is per
+  process, so a hook host - one process per tool call - forgot a poisoned
+  result before the call that copied its text arrived. `interlock hook
+  --flow-state FILE` (or `$INTERLOCK_FLOW_STATE`) writes the fragments of a
+  result that carried an injection signature to
+  `interlock/flow_ledger.py` as SHA-256 digests - never the text - and the next
+  process recognises a fragment copied verbatim before a rule decides. Only
+  `taint:injection` is persisted; the tool and principal origins are recomputed
+  from the call. 512 digests per session with the stalest evicted, mode 0600,
+  created on the first poisoned result, a relative path refused, and a storage
+  fault warns once and falls back to the in-process memory. The match is
+  equality of a recorded fragment (a line or a >=16-character token), so a
+  paraphrase is still not labelled - the same limit the in-process tracker has.
+
 - **The principal counters survive the process.** `call_rate_limiter`,
   `egress_rate_limiter` and `failed_auth_lockout` kept their counts in the
   rule's closure, so a hook host - one process per tool call - handed every

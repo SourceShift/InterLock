@@ -44,10 +44,12 @@ import itertools
 import re
 import threading
 from collections import OrderedDict
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 from .actions import canonical_action
 from .event import SensorEvent
+from .flow_ledger import DEFAULT_MAX_ROWS as MAX_TAINT_DIGESTS
+from .flow_ledger import digest_of
 
 #: Label prefix for a value that entered through a tool result.
 TOOL_PREFIX = "tool:"
@@ -192,6 +194,17 @@ def _fragments(text: str) -> Iterable[str]:
                 yield token
 
 
+def _taint_label() -> str:
+    """The taint label, imported lazily: :mod:`interlock.taint` imports this module."""
+    from .taint import TAINT_INJECTION
+    return TAINT_INJECTION
+
+
+def _scope_key(span_id: Any) -> str:
+    """The ledger's scope for a span: the id, or ``""`` for an ad-hoc call."""
+    return span_id if isinstance(span_id, str) and span_id else ""
+
+
 class FlowTracker:
     """A bounded, thread-safe memory of values and where they entered.
 
@@ -200,6 +213,14 @@ class FlowTracker:
     it. A span id keeps two concurrent agent runs from tainting each other;
     events with no span (an ad-hoc call) share the ``None`` bucket, which is
     the only sensible scope for a caller that did not identify its run.
+
+    A hook host starts a new process for every tool call, so this memory is
+    gone by the next one. Pass ``taint=`` (a
+    :func:`~interlock.flow_ledger.durable` keeper) and the label that cannot be
+    recomputed - :data:`~interlock.taint.TAINT_INJECTION` - is also written as
+    fragment digests and consulted by the next process, for a fragment copied
+    verbatim. The other labels are recomputed from the call itself and need no
+    memory.
     """
 
     def __init__(
@@ -208,7 +229,11 @@ class FlowTracker:
         max_fragments: int = MAX_FRAGMENTS,
         min_fragment_chars: int = MIN_FRAGMENT_CHARS,
         max_record_chars: int = MAX_RECORD_CHARS,
+        taint: Optional[Any] = None,
     ) -> None:
+        # ``taint`` is a LazyFile over :class:`~interlock.flow_ledger.TaintLedger`,
+        # or None to keep even the taint label in this process only.
+        self._taint = taint
         self._lock = threading.RLock()
         # (span, fragment) -> origins, in insertion order for eviction. A dict
         # keeps insertion order on every supported Python, but OrderedDict also
@@ -227,13 +252,18 @@ class FlowTracker:
         """Remember every distinctive string under *value* as coming from *origins*.
 
         Empty and non-string labels are ignored. A value with no usable label
-        records nothing: provenance without a source is not provenance.
+        records nothing: provenance without a source is not provenance. When a
+        taint keeper is configured and the value carries the taint label, the
+        fragments are also remembered by digest, so a later process recognises
+        the same text copied verbatim.
         """
         labels = _as_origin_tuple(origins)
         if not labels:
             return
         found = list(_strings(value, ""))
         budget = self._max_record_chars
+        tainted = self._taint is not None and _taint_label() in labels
+        digests: List[str] = []
         with self._lock:
             for _path, text in found:
                 if budget <= 0:
@@ -248,8 +278,20 @@ class FlowTracker:
                     merged = tuple(dict.fromkeys(existing + labels))
                     self._fragments[key] = merged
                     self._fragments.move_to_end(key)
+                    if tainted and len(digests) < MAX_TAINT_DIGESTS:
+                        digests.append(digest_of(fragment))
             while len(self._fragments) > self._max_fragments:
                 self._fragments.popitem(last=False)
+        if digests and self._taint is not None:
+            # Outside the lock: the file is the slow part, and holding the
+            # in-process lock through it would serialise unrelated spans.
+            keeper = self._taint
+            ledger = keeper.get()
+            if ledger is not None:
+                try:
+                    ledger.remember(_scope_key(span_id), digests)
+                except Exception as exc:
+                    keeper.fail(exc)
 
     def origins_for(
         self, value: Any, *, span_id: Optional[str] = None
@@ -260,14 +302,26 @@ class FlowTracker:
         fragment as a substring. Only fragments recorded under the same span
         (or under no span, when *span_id* is None) are considered. A non-string
         scalar carries no text and therefore no provenance.
+
+        A durable taint keeper adds the label the current call cannot recompute:
+        a fragment copied verbatim from a result an earlier process saw as
+        poisoned carries the taint label here too. That match is equality of a
+        remembered fragment, not a substring test - the file stores digests.
         """
         with self._lock:
-            if not self._fragments:
-                return {}
             relevant = [(fragment, labels) for (span, fragment), labels
                         in self._fragments.items() if span == span_id]
-        if not relevant:
+        durable: Set[str] = set()
+        if self._taint is not None:
+            ledger = self._taint.get()
+            if ledger is not None:
+                try:
+                    durable = ledger.digests(_scope_key(span_id))
+                except Exception as exc:
+                    self._taint.fail(exc)
+        if not relevant and not durable:
             return {}
+        taint = _taint_label()
         found: Dict[str, Tuple[str, ...]] = {}
         budget = MAX_SCAN_CHARS
         for path, text in _strings(value, ""):
@@ -282,6 +336,11 @@ class FlowTracker:
                     for label in fragment_labels:
                         if label not in labels:
                             labels.append(label)
+            if durable and taint not in labels:
+                for fragment in _fragments(text):
+                    if len(fragment) >= self._min_chars and digest_of(fragment) in durable:
+                        labels.append(taint)
+                        break
             if labels:
                 key = path or "result"
                 found[key] = tuple(labels[:MAX_ORIGINS_PER_ARG])

@@ -55,6 +55,11 @@ def add_arguments(parser) -> None:
     parser.add_argument("--patch-key", metavar="FILE",
                         help="patch-gate record key (default ~/.interlock/patch-gates.key, "
                              "or $INTERLOCK_PATCH_KEY)")
+    parser.add_argument("--flow-state", metavar="FILE", default=None,
+                        help="remember poisoned tool results in this SQLite file across "
+                             "processes (fragment digests only), so a later call that "
+                             "copies their text carries the taint label (default "
+                             "$INTERLOCK_FLOW_STATE, else process-local)")
 
 
 def run(args) -> int:
@@ -63,6 +68,14 @@ def run(args) -> int:
 
     adapter = get_adapter(args.agent)
     fail_open = args.on_error == "allow"
+    flow_state = getattr(args, "flow_state", None) or os.environ.get("INTERLOCK_FLOW_STATE")
+    if flow_state is not None:
+        from .._sqlite import check_state_path
+        try:
+            flow_state = check_state_path(flow_state)
+        except ValueError as exc:
+            sys.stderr.write("interlock hook: {}\n".format(exc))
+            return 64
     call = None
     if getattr(args, "artifact", None) and (
             getattr(args, "policy", None) or getattr(args, "rules", None)):
@@ -106,6 +119,8 @@ def run(args) -> int:
         cwd = call.cwd if isinstance(call.cwd, str) else None
         engine = _patch_gate(_engine(args, cwd, artifact_engine), args)
         _install_sink(args)
+        if flow_state:
+            _install_flow_state(flow_state)
         queue = None
         if args.reviews != "off":
             from ..notify import from_env
@@ -126,6 +141,20 @@ def run(args) -> int:
         sys.stderr.write(stderr)
     sys.stdout.flush()
     return code
+
+
+def _install_flow_state(path: str) -> None:
+    """Give the process flow tracker a durable memory of poisoned fragments.
+
+    The tracker's own memory dies with the process, and a hook host starts one
+    per tool call - so the one label the next call cannot recompute, taint from
+    an injected result, is written here by digest and read back by the next
+    invocation. Only the taint label is persisted: every other origin is
+    recomputed from the call itself.
+    """
+    from ..flow import FlowTracker, set_tracker
+    from ..flow_ledger import durable
+    set_tracker(FlowTracker(taint=durable(path)))
 
 
 def _engine(args, cwd, artifact_engine=None):

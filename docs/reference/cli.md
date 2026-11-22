@@ -111,7 +111,7 @@ usage: interlock hook [-h] --agent {claude-code,codex,cursor} [--policy FILE] [-
                       [--no-receipts] [--no-overlay] [--monitor] [--on-error {deny,allow}]
                       [--reviews {fallback,always,off}] [--review-db FILE]
                       [--patch-gate {off,block,monitor}] [--patch-gates-dir DIR]
-                      [--patch-key FILE]
+                      [--patch-key FILE] [--flow-state FILE]
   --agent                    
   --policy                   policy file (default ~/.interlock/policy.json, else the built-in coding-agent pack)
   --artifact                 a manifest-delivered policy artifact, or a directory containing active.json; mutually exclusive with --policy
@@ -128,6 +128,7 @@ usage: interlock hook [-h] --agent {claude-code,codex,cursor} [--policy FILE] [-
   --patch-gate               also refuse a git commit/push/merge whose diff has not passed `interlock patch gate` (default $INTERLOCK_PATCH_GATE, else off)
   --patch-gates-dir          where patch-gate records live (default ~/.interlock/patch-gates, or $INTERLOCK_PATCH_GATES_DIR)
   --patch-key                patch-gate record key (default ~/.interlock/patch-gates.key, or $INTERLOCK_PATCH_KEY)
+  --flow-state               remember poisoned tool results in this SQLite file across processes (fragment digests only), so a later call that copies their text carries the taint label (default $INTERLOCK_FLOW_STATE, else process-local)
 ```
 
 ## `interlock install-hook`

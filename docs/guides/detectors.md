@@ -505,7 +505,11 @@ apply.
   state into a SQLite file, which a hook host (one process per tool call) needs
   to enforce anything at all. See
   [Across hook processes](policies.md#across-hook-processes) and
-  [Budget: how much](policies.md#budget-how-much).
+  [Budget: how much](policies.md#budget-how-much). The boundary's own memory of
+  poisoned results has the same gap and the same fix: `interlock hook
+  --flow-state FILE` persists the `taint:injection` label across processes (as
+  fragment digests), so a call that copies a poisoned result is still refused
+  when the next hook sees it.
 
 ## Next
 

@@ -186,6 +186,22 @@ fragments live in the process that saw them — an MCP server or a `@guard`
 runtime sees the whole chain, while a coding-agent host that runs every hook
 in a fresh process does not carry the label between them.
 
+That last gap can be closed for the hook host, which is the one that needs it:
+
+```bash
+interlock hook --agent claude-code --flow-state /var/lib/interlock/taint.db
+```
+
+The flag (or `$INTERLOCK_FLOW_STATE`) writes the fragments of a poisoned
+result to a SQLite file, as SHA-256 **digests** — never the text — and the next
+process recognises a fragment copied verbatim before a rule decides. Only this
+label is persisted: every other origin is recomputed from the call itself. The
+recognised unit is a fragment the tracker already records — a line, or an
+alphanumeric token of at least 16 characters — so a copied line, key or
+identifier is caught and a paraphrase is not. The file takes the same bounds as
+every other ledger: 512 digests per session, the stalest evicted first, mode
+`0600`, created on the first poisoned result rather than at load.
+
 ## Sequence: what came before
 
 A flat condition judges one call. Some of the worst shapes are about order:
